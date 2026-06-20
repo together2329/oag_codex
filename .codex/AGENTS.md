@@ -97,9 +97,10 @@ summaries, and then let the main agent validate and record ROCEV evidence.
 `agent_type` is a routing hint, so role requirements must also be pasted into
 the message. Prompt patterns live in
 `.codex/oag/subagent-workflows.md`. Evidence-producing OAG subagents are checked
-by the `SubagentStop` hook only when they are write-capable, and must end with
-`OAG_EVIDENCE_RECORDED: <relative-path>`. Subagents may never claim final
-completion; final closure requires OAG check/decide and the gate reviewer role.
+by the `SubagentStop` hook when they write implementation, validation, coverage,
+or gate-review evidence, and must end with `OAG_EVIDENCE_RECORDED:
+<relative-path>`. Subagents may never claim final completion from a receipt;
+final closure requires OAG check/decide and the gate reviewer role.
 The `SubagentStart` hook injects the OAG child-work contract and records a
 start event; it must not spawn subagents or replace native Codex orchestration.
 Before spawning a write-capable child, create a dispatch record with
@@ -111,9 +112,12 @@ dispatch fields plus `changed_paths` and `generated_side_effects`. The
 blocks receipts that fail schema validation, dispatch matching, or path scope
 checks. Use `python3 .codex/scripts/oag_validate_json.py` for direct schema
 validation when debugging records.
-For release-grade closure packages, `.codex/scripts/oag_closure_check.py` must pass
-with both an `oag_validation_report.v1` from `oag-evidence-validator` and an
-`oag_gate_decision.v1` PASS from `oag-gate-reviewer`.
+For release-grade closure packages, `.codex/scripts/oag_closure_check.py` must
+pass with `oag.check`, `oag.inspect`, an `oag_validation_report.v1` from
+`oag-evidence-validator`, and an `oag_gate_decision.v1` PASS from
+`oag-gate-reviewer`. Gate decisions must include `checked_artifact_hashes` for
+current closure artifacts; evidence added or changed after gate PASS makes the
+gate decision stale and requires re-validation and re-gate.
 
 Before releasing this pack to a team, run:
 

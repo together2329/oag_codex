@@ -399,9 +399,12 @@ the IP is complete. If it returns `allowed: true`, the decision receipt under
 are blocked unless `record_decision` is true.
 
 `oag_closure_check.py` is the release-grade package gate: it requires a passing
+`oag.check`, no `oag.inspect` artifact gaps, a passing
 `oag_validation_report.v1` from `oag-evidence-validator`, a PASS
-`oag_gate_decision.v1` from `oag-gate-reviewer`, and no custom subagent final
-closure claim.
+`oag_gate_decision.v1` from `oag-gate-reviewer`, checked artifact hashes for
+current closure artifacts, and no custom subagent final closure claim. If RTL,
+lint, simulation, scoreboard, coverage, validation, or generated evidence
+changes after gate PASS, the gate decision is stale and must be re-run.
 
 For `action=signoff`, OAG requires `ontology/policies.yaml` to use
 `closure_profile: signoff`, a compiled truth graph, a closed closure matrix,

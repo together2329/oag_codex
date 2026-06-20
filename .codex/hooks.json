@@ -69,7 +69,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^oag-(ontology-curator-agent|custom-worker|rtl-implementation-agent|tb-implementation-agent|sim-execution-agent)$",
+        "matcher": "^oag-(ontology-curator-agent|custom-worker|rtl-implementation-agent|tb-implementation-agent|rtl-lint-static-agent|sim-execution-agent|coverage-agent|mutation-guard-agent|evidence-validator|gate-reviewer)$",
         "hooks": [
           {
             "type": "command",

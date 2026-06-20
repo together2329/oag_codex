@@ -19,9 +19,11 @@ Tests green is not final completion. Final closure requires:
 
 - `oag.compile`
 - `oag.check`
+- no `oag.inspect` artifact gaps
 - `.codex/scripts/oag_closure_check.py` for release-grade closure packages
 - `oag.decide` with `record_decision=true`
-- gate-review evidence when the closure profile or release package requires it
+- gate-review evidence with `checked_artifact_hashes` when the closure profile
+  or release package requires it
 
 If evidence is missing, stale, unverifiable, or outside allowed paths, report
 the blocker instead of claiming completion.
@@ -148,6 +150,8 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 
 - Custom subagent output is never sufficient for final closure.
 - Missing validator or gate-review reports block release-grade closure.
+- Evidence added or changed after gate PASS makes the gate decision stale; run
+  evidence validation and gate review again before `oag.decide`.
 - Protected ontology, locked truth, waivers, enterprise promotion, and signoff
   policy transitions require explicit decision receipts.
 - Interview drafts are durable draft knowledge, not locked truth.

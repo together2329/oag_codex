@@ -13,6 +13,7 @@
     "decision",
     "validation_report",
     "checked_artifacts",
+    "checked_artifact_hashes",
     "blockers",
     "created_at"
   ],
@@ -45,6 +46,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "checked_artifact_hashes": {
+      "type": "object"
     },
     "blockers": {
       "type": "array"

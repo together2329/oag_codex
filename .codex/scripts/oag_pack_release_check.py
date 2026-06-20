@@ -100,6 +100,7 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_codex_config_doctor.py",
         "oag_dispatch.py",
         "oag_validate_json.py",
+        "checked_artifact_hashes",
         "SubagentStart",
         "SubagentStop",
         "schema",
@@ -112,6 +113,7 @@ REQUIRED_DOC_SNIPPETS = {
         "Do not continue as a manual",
         "oag_dispatch.py",
         "dispatch_id",
+        "checked_artifact_hashes",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
         "record_decision=true",
@@ -124,6 +126,7 @@ REQUIRED_DOC_SNIPPETS = {
         "OAG_EVIDENCE_RECORDED",
         "oag_dispatch.py",
         "dispatch_id",
+        "checked_artifact_hashes",
         "Do not run a Python",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
@@ -141,6 +144,7 @@ REQUIRED_DOC_SNIPPETS = {
         "STATIC_HANDOFF_PASS",
         "git status --short -uall -- <ip>",
         "dispatch_id",
+        "checked artifact hashes",
         "SubagentStart",
     ),
 }
@@ -263,8 +267,10 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     matcher = str(subagent.get("matcher") or "")
     if "custom-researcher" in matcher or "custom-reviewer" in matcher:
         issues.append(issue("SUBAGENT_MATCHER_TOO_BROAD", "SubagentStop should only require receipts from write-capable evidence producers.", CODEX_ROOT / "hooks.json"))
-    if "rtl-implementation-agent" not in matcher or "tb-implementation-agent" not in matcher:
-        issues.append(issue("SUBAGENT_MATCHER_MISSING_WRITE_AGENT", "SubagentStop matcher must include RTL/TB write agents.", CODEX_ROOT / "hooks.json"))
+    required_agents = ("rtl-implementation-agent", "tb-implementation-agent", "evidence-validator", "gate-reviewer")
+    missing_agents = [agent for agent in required_agents if agent not in matcher]
+    if missing_agents:
+        issues.append(issue("SUBAGENT_MATCHER_MISSING_AGENT", f"SubagentStop matcher must include: {', '.join(missing_agents)}.", CODEX_ROOT / "hooks.json"))
     mode_trigger = CODEX_ROOT / "hooks" / "codex_oag_mode_trigger.py"
     if mode_trigger.is_file():
         text = read_text(mode_trigger)

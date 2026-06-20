@@ -179,19 +179,23 @@ Spawn:
 - oag-evidence-validator to check records, hashes, scoreboard rows, coverage
   refs, and stale evidence from disk.
 - oag-gate-reviewer to independently approve or reject the final claim after
-  validator output is available.
+  validator output is available. Gate review must inspect `oag.check`,
+  `oag.inspect`, the validation report, and every current closure artifact. Its
+  decision must include `checked_artifacts` and `checked_artifact_hashes`.
 
 Wait for both. The main agent reports APPROVE/REJECT with artifact paths and
-does not override a blocker.
+does not override a blocker. If any closure artifact is added or changed after a
+gate PASS, the gate decision is stale and must be re-run.
 ```
 
 ## Start/Stop Hooks
 
 `hooks.json` registers a `SubagentStart` hook for OAG child threads and a
-`SubagentStop` hook for write-capable evidence-producing OAG agents. These
-hooks do not execute or spawn subagents; Codex native orchestration does that.
-The start hook injects the child-work contract and records a start event. The
-stop hook blocks a stopped write-capable child that lacks a valid
+`SubagentStop` hook for evidence-producing OAG agents, including implementation,
+validation, and gate-review agents. These hooks do not execute or spawn
+subagents; Codex native orchestration does that. The start hook injects the
+child-work contract and records a start event. The stop hook blocks a stopped
+evidence-producing child that lacks a valid
 `OAG_EVIDENCE_RECORDED: <relative-path>` receipt, dispatch link, schema-valid
 JSON payload, and path-scope verification. This mirrors the oh-my-openagent
 executor-verifier pattern while keeping final closure in OAG `check`/`decide`.

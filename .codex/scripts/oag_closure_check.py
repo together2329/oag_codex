@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,18 @@ CUSTOM_RECEIPT_DIRS = (
 )
 PASS_STATUSES = {"pass", "passed", "ok"}
 PASS_OR_WAIVED_STATUSES = PASS_STATUSES | {"waived", "waived_with_risk"}
+DEVELOPMENT_CLOSURE_ARTIFACTS = (
+    Path("rtl/rtl_compile.json"),
+    Path("lint/dut_lint.json"),
+    Path("sim/results.xml"),
+    Path("sim/scoreboard_events.jsonl"),
+    Path("cov/coverage.json"),
+)
+OPTIONAL_GATE_ARTIFACTS = (
+    Path("ontology/generated/design_truth_graph.json"),
+    Path("ontology/generated/design_facts_graph.json"),
+    Path("signoff/truth_coverage.json"),
+)
 CUSTOM_FINAL_TEXT_PATTERNS = (
     re.compile(r"\bmay_claim_complete\s*[:=]\s*true\b", re.IGNORECASE),
     re.compile(r"\bfinal_decision_authority\s*[:=]\s*true\b", re.IGNORECASE),
@@ -113,6 +128,70 @@ def read_json(path: Path, code: str, issues: list[dict[str, str]], ip_dir: Path)
     return payload
 
 
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run_oag_tool(ip_dir: Path, tool: str) -> dict[str, Any] | None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(CODEX_ROOT / "scripts" / "oag_cli.py"),
+            "call",
+            "--json",
+            json.dumps({"tool": tool, "arguments": {"ip_dir": str(ip_dir)}}),
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+    )
+    if proc.returncode != 0:
+        return {"_tool_error": proc.stderr or proc.stdout or f"{tool} failed"}
+    try:
+        payload = json.loads(proc.stdout)
+    except Exception as exc:
+        return {"_tool_error": f"{tool} returned invalid JSON: {exc}"}
+    result = payload.get("result") if isinstance(payload, dict) else None
+    return result if isinstance(result, dict) else {"_tool_error": f"{tool} returned no result object"}
+
+
+def validate_oag_development_closure(ip_dir: Path, issues: list[dict[str, str]]) -> None:
+    check = run_oag_tool(ip_dir, "oag.check")
+    if not isinstance(check, dict) or check.get("_tool_error"):
+        issues.append(issue("OAG_CHECK_UNAVAILABLE", str((check or {}).get("_tool_error") or "oag.check failed")))
+    elif check.get("ok") is not True:
+        check_issues = check.get("issues") if isinstance(check.get("issues"), list) else []
+        detail = "; ".join(str(item) for item in check_issues[:5]) or "oag.check did not pass"
+        issues.append(issue("OAG_CHECK_FAILED", detail))
+
+    inspect = run_oag_tool(ip_dir, "oag.inspect")
+    if not isinstance(inspect, dict) or inspect.get("_tool_error"):
+        issues.append(issue("OAG_INSPECT_UNAVAILABLE", str((inspect or {}).get("_tool_error") or "oag.inspect failed")))
+    else:
+        gaps = inspect.get("gaps") if isinstance(inspect.get("gaps"), list) else []
+        if gaps:
+            issues.append(issue("OAG_INSPECT_GAPS", "; ".join(str(item) for item in gaps[:8])))
+
+
+def required_gate_artifacts(ip_dir: Path, validation_path: Path) -> list[str]:
+    paths = [validation_path]
+    paths.extend(ip_dir / rel for rel in DEVELOPMENT_CLOSURE_ARTIFACTS)
+    paths.extend(ip_dir / rel for rel in OPTIONAL_GATE_ARTIFACTS if (ip_dir / rel).is_file())
+    result: list[str] = []
+    for path in paths:
+        if path.is_file():
+            rendered = display_path(ip_dir, path)
+            if rendered:
+                result.append(rendered)
+    return sorted(set(result))
+
+
 def normalized_status(value: Any) -> str:
     if isinstance(value, bool):
         return "pass" if value else "fail"
@@ -194,6 +273,28 @@ def validate_gate_report(
     checked = report.get("checked_artifacts")
     if not isinstance(checked, list) or not checked:
         issues.append(issue("GATE_CHECKED_ARTIFACTS", "Gate decision must list checked_artifacts.", display_path(ip_dir, path)))
+        checked = []
+
+    checked_set = {str(item) for item in checked if isinstance(item, str)}
+    required_artifacts = required_gate_artifacts(ip_dir, validation_path)
+    for artifact in required_artifacts:
+        if artifact not in checked_set:
+            issues.append(issue("GATE_REQUIRED_ARTIFACT_MISSING", "Gate decision did not check a current closure artifact.", artifact))
+
+    checked_hashes = report.get("checked_artifact_hashes")
+    if not isinstance(checked_hashes, dict):
+        issues.append(issue("GATE_HASHES_MISSING", "Gate decision must include checked_artifact_hashes.", display_path(ip_dir, path)))
+        checked_hashes = {}
+    for artifact in required_artifacts:
+        artifact_path = resolve_inside_ip(ip_dir, artifact, "GATE_HASH_PATH", issues)
+        if not artifact_path or not artifact_path.is_file():
+            continue
+        expected_hash = str(checked_hashes.get(artifact) or "")
+        current_hash = sha256(artifact_path)
+        if not expected_hash:
+            issues.append(issue("GATE_ARTIFACT_HASH_MISSING", "Gate decision lacks a hash for a current closure artifact.", artifact))
+        elif expected_hash != current_hash:
+            issues.append(issue("GATE_ARTIFACT_STALE", "Gate decision hash is stale; re-run evidence validation and gate review.", artifact))
 
     validation_ref = report.get("validation_report")
     if not isinstance(validation_ref, str) or not validation_ref.strip():
@@ -305,6 +406,7 @@ def check_closure(ip_dir_arg: str, validation_arg: str | None, gate_arg: str | N
     if gate_report and gate_path and validation_path:
         validate_gate_report(gate_report, gate_path, validation_path, ip_dir, issues)
 
+    validate_oag_development_closure(ip_dir, issues)
     scan_custom_completion_claims(ip_dir, issues)
     return build_result(ip_dir, validation_path, gate_path, catalog_result, issues)
 

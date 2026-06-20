@@ -406,6 +406,21 @@ def write_ip_validator_report(ip: Path) -> None:
     )
 
 
+def closure_gate_artifacts(ip: Path) -> list[str]:
+    candidates = [
+        "knowledge/validations/oag_validation_report.json",
+        "rtl/rtl_compile.json",
+        "lint/dut_lint.json",
+        "sim/results.xml",
+        "sim/scoreboard_events.jsonl",
+        "cov/coverage.json",
+        "ontology/generated/design_truth_graph.json",
+        "ontology/generated/design_facts_graph.json",
+        "signoff/truth_coverage.json",
+    ]
+    return [rel for rel in candidates if (ip / rel).is_file()]
+
+
 def close_demo_counter(ip: Path, *, claim: str, evidence_files: list[str] | None = None) -> dict:
     return call(
         {
@@ -463,6 +478,7 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
         + "\n",
         encoding="utf-8",
     )
+    checked_artifacts = closure_gate_artifacts(ip)
     gate_path.write_text(
         json.dumps(
             {
@@ -473,7 +489,8 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
                 "role_name": "oag-gate-reviewer",
                 "decision": gate_decision,
                 "validation_report": "knowledge/validations/oag_validation_report.json",
-                "checked_artifacts": ["knowledge/validations/oag_validation_report.json"],
+                "checked_artifacts": checked_artifacts,
+                "checked_artifact_hashes": {rel: sha256(ip / rel) for rel in checked_artifacts},
                 "blockers": [] if gate_decision == "PASS" else ["smoke blocker"],
                 "created_at": "2026-01-01T00:00:00Z",
             },
@@ -519,6 +536,8 @@ def main() -> int:
         assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
         assert "oag-" in subagent_hooks["matcher"], hooks
+        assert "evidence-validator" in subagent_hooks["matcher"], hooks
+        assert "gate-reviewer" in subagent_hooks["matcher"], hooks
         assert subagent_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_gate.py", hooks
         post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
@@ -804,11 +823,21 @@ def main() -> int:
         assert any(item["code"] == "OWNED_PATH_OUT_OF_SCOPE" for item in bad_verify_result["issues"]), bad_verify_result
 
         closure_ip = make_ip(Path(tmp) / "closure_check")
+        close_demo_counter(closure_ip, claim="closure check smoke counter closed")
         write_closure_reports(closure_ip)
         closure_pass = run_closure_check(closure_ip)
         assert closure_pass.returncode == 0, closure_pass.stderr or closure_pass.stdout
         closure_pass_result = json.loads(closure_pass.stdout)
         assert closure_pass_result["status"] == "pass", closure_pass_result
+
+        stale_gate_ip = make_ip(Path(tmp) / "stale_gate_closure")
+        close_demo_counter(stale_gate_ip, claim="stale gate smoke counter closed")
+        write_closure_reports(stale_gate_ip)
+        (stale_gate_ip / "cov" / "coverage.json").write_text(json.dumps({"status": "pass", "post_gate": True}), encoding="utf-8")
+        stale_gate = run_closure_check(stale_gate_ip)
+        assert stale_gate.returncode != 0, stale_gate.stdout
+        stale_gate_result = json.loads(stale_gate.stdout)
+        assert any(item["code"] == "GATE_ARTIFACT_STALE" for item in stale_gate_result["issues"]), stale_gate_result
 
         missing_closure_ip = make_ip(Path(tmp) / "missing_closure")
         closure_missing = run_closure_check(missing_closure_ip)
@@ -818,6 +847,7 @@ def main() -> int:
         assert {"VALIDATION_REPORT_MISSING", "GATE_REPORT_MISSING"}.issubset(missing_codes), closure_missing_result
 
         bad_gate_ip = make_ip(Path(tmp) / "bad_gate_closure")
+        close_demo_counter(bad_gate_ip, claim="bad gate smoke counter closed")
         write_closure_reports(bad_gate_ip, gate_decision="FAIL")
         closure_bad_gate = run_closure_check(bad_gate_ip)
         assert closure_bad_gate.returncode != 0, closure_bad_gate.stdout
@@ -825,6 +855,7 @@ def main() -> int:
         assert any(item["code"] == "GATE_DECISION" for item in closure_bad_gate_result["issues"]), closure_bad_gate_result
 
         custom_claim_ip = make_ip(Path(tmp) / "custom_claim_closure")
+        close_demo_counter(custom_claim_ip, claim="custom claim smoke counter closed")
         write_closure_reports(custom_claim_ip)
         custom_receipt = custom_claim_ip / "knowledge" / "subagents" / "custom_worker.json"
         custom_receipt.parent.mkdir(parents=True, exist_ok=True)

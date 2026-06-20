@@ -196,7 +196,7 @@ may_claim_complete = true
 final_decision_authority = true
 decision_types = ["PASS", "FAIL", "BLOCKED", "WAIVED_WITH_RISK"]
 requires_oag_context = true
-required_evidence = ["gate review receipt", "checked artifact paths", "approve or reject recommendation"]
+required_evidence = ["gate review receipt", "checked artifact paths", "checked artifact hashes", "approve or reject recommendation"]
 forbidden_actions = ["modify implementation while reviewing", "approve unsupported claims"]
 handoff_targets = []
 
