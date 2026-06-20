@@ -1,7 +1,7 @@
 # OAG Tool-call Contract
 
-OAG is the common interface for Codex, Claude, common_ai_agent, CI, and human
-shells. Runtimes should call OAG instead of implementing ontology policy.
+OAG is the common interface for Codex, CI, and human shells. Runtimes should
+call OAG instead of implementing ontology policy.
 
 ## Envelope
 
@@ -375,10 +375,9 @@ silently weakening prior closure.
 - `reset_xprop_coverage`: reset/X-prop closure must name reset scenarios or
   X-prop checks and cite observed evidence.
 
-The last five are SSOT-aligned signoff domain gates inspired by common_ai_agent
-sections such as `clock_reset_domains`, `cdc_requirements`,
-`rdc_requirements`, interface `protocol`, `timing.sta_expectations`, and
-coverage outputs. DFT and power are deliberately not default OAG v1 gates.
+The last five are SSOT-aligned signoff domain gates for clock/reset domains,
+CDC/RDC requirements, interface protocols, timing/STA expectations, and coverage
+outputs. DFT and power are deliberately not default OAG v1 gates.
 
 The scaffold leaves semantic hazard examples as `status: template`. When an IP
 actually has the hazard, create or activate an instance:

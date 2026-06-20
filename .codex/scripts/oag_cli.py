@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Local OAG JSON tool-call gateway for Codex experiments.
-
-The script prefers a real common_ai_agent backend when available:
-
-  $OAG_COMMON_AI_AGENT/scripts/oag.py
-  $COMMON_AI_AGENT_HOME/scripts/oag.py
-
-It also includes a small fallback implementation so the plugin can be tested
-against legacy IP folders before the full OAG backend is installed.
-"""
+"""Local OAG JSON tool-call gateway for Codex-managed IP development."""
 
 from __future__ import annotations
 
@@ -172,73 +163,6 @@ def _read_json(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("tool-call envelope must be a JSON object")
     return payload
-
-
-def _candidate_backends() -> list[Path]:
-    if str(os.environ.get("OAG_DISABLE_BACKEND") or "").lower() in {"1", "true", "yes"}:
-        return []
-    values = [
-        os.environ.get("OAG_COMMON_AI_AGENT", ""),
-        os.environ.get("COMMON_AI_AGENT_HOME", ""),
-        "/Users/brian/Desktop/Project/brian_hw-ontology-agent-os/common_ai_agent",
-        "/Users/brian/Desktop/Project/brian_hw/common_ai_agent",
-        "/Users/brian/Desktop/Project/brian_hw_stagecheck/common_ai_agent",
-    ]
-    seen: set[Path] = set()
-    paths: list[Path] = []
-    for raw in values:
-        if not raw:
-            continue
-        path = Path(os.path.expandvars(raw)).expanduser()
-        script = path / "scripts" / "oag.py"
-        if script.is_file() and script not in seen:
-            seen.add(script)
-            paths.append(script)
-    return paths
-
-
-def _delegate_to_backend(envelope: dict[str, Any]) -> dict[str, Any] | None:
-    tool = _tool_name(str(envelope.get("tool") or envelope.get("name") or ""))
-    if tool in {
-        "inspect",
-        "scaffold",
-        "compile",
-        "configure",
-        "init",
-        "check",
-        "context",
-        "record",
-        "ticket",
-        "draft",
-        "decide",
-        "run.start",
-        "run.next",
-        "run.record",
-        "run.checkpoint",
-        "stop_check",
-        "review",
-        "metrics",
-        "handoff",
-    }:
-        return None
-    for backend in _candidate_backends():
-        proc = subprocess.run(
-            [sys.executable, str(backend), "call", "--json", json.dumps(envelope)],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if proc.stdout.strip():
-            try:
-                response = json.loads(proc.stdout)
-                if tool == "context":
-                    result = response.get("result") if isinstance(response.get("result"), dict) else {}
-                    if not str(result.get("prompt_block") or "").strip():
-                        return None
-                return response
-            except Exception:
-                pass
-    return None
 
 
 def _ip_dir(arguments: dict[str, Any]) -> Path:
@@ -6260,9 +6184,6 @@ def _configure(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def dispatch_call(envelope: dict[str, Any]) -> dict[str, Any]:
-    delegated = _delegate_to_backend(envelope)
-    if delegated is not None:
-        return delegated
     tool = _tool_name(str(envelope.get("tool") or envelope.get("name") or ""))
     arguments = envelope.get("arguments") or {}
     if not isinstance(arguments, dict):

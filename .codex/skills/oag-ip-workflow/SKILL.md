@@ -77,6 +77,53 @@ context transition, call `oag.draft` with the current facts, decisions,
 assumptions, and open questions. Drafts are not locked truth; they are captured
 under `req/interview_draft.md`, `ontology/drafts/`, and `knowledge/records/`.
 
+## Subagents
+
+Codex-facing OAG roles are individual `.codex/agents/oag-*.toml` custom agent
+files. OAG metadata for those roles lives in `.codex/oag/agent-catalog.toml`.
+The stable set is 13 core duties plus 3 custom dynamic duties:
+
+- `oag-custom-researcher`: bounded research shard.
+- `oag-custom-worker`: bounded implementation or repair shard.
+- `oag-custom-reviewer`: bounded review shard.
+
+Before using these roles, validate the catalog:
+
+```bash
+python3 scripts/oag_agent_catalog_check.py
+```
+
+Subagents are native Codex `multi_agent_v1` workers, not Python runners. Use
+self-contained spawn assignments like:
+
+```text
+multi_agent_v1.spawn_agent({
+  "message": "TASK: act as the OAG legacy/reference IP analyzer. DELIVERABLE: source paths, extracted behavior, inferred requirements, gaps, leakage risks, and evidence needs. SCOPE: <reference paths>. VERIFY: cite exact files/lines or return INCONCLUSIVE. This is an executable assignment, not a context handoff.",
+  "agent_type": "oag-legacy-ip-analyzer",
+  "fork_context": false
+})
+```
+
+For implementation splits:
+
+```text
+multi_agent_v1.spawn_agent({
+  "message": "TASK: act as the OAG RTL implementation agent. DELIVERABLE: the smallest RTL change plus changed paths, evidence command, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. VERIFY: compile or return the exact blocker. Write a non-empty receipt and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
+  "agent_type": "oag-rtl-implementation-agent",
+  "fork_context": false
+})
+```
+
+Use `multi_agent_v1.wait_agent` for mailbox signals; timeout means no new
+update, not failure. Use `multi_agent_v1.send_input` for targeted follow-up and
+`multi_agent_v1.close_agent` after integrating a completed or inconclusive lane.
+Treat `agent_type` as a routing hint and paste role requirements into the child
+message. See `.codex/oag/subagent-workflows.md` for more prompt shapes. Custom
+subagents are execution actors only. They must stay inside the prompted shard,
+preserve ROCEV traceability, and produce evidence paths. They cannot claim final
+completion, approve protected ontology edits, or replace `oag.check`,
+`oag.decide`, evidence validation, or gate review.
+
 ## During Work
 
 When a meaningful stage boundary is reached, append one record:

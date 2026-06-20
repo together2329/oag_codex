@@ -82,4 +82,4 @@ integration evaluation than a pure script test.
 2. Codex runtime hook firing
 3. Reviewer quality benchmark with intentionally flawed signoff claims
 4. Draft promotion workflow from `ontology/drafts` to locked truth
-5. Cross-agent compatibility tests for Codex, Claude, and common_ai_agent
+5. Cross-surface compatibility tests for Codex, CI, and human shell workflows

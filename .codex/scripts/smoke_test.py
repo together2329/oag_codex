@@ -23,7 +23,11 @@ EVAL = ROOT / "scripts" / "oag_eval.py"
 ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
 DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
+AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
+AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
+SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
+SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
 CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
 HOOKS_JSON = ROOT / "hooks.json"
@@ -106,12 +110,37 @@ def run_spec_to_rtl_loop(ip: Path, spec: Path, *, metrics: bool = False) -> subp
     )
 
 
+def run_agent_catalog_check() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(AGENT_CATALOG_CHECK), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+
+
 def stop_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     if extra_env:
         env.update(extra_env)
     return subprocess.run(
         [sys.executable, str(STOP_GATE)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def subagent_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(SUBAGENT_GATE)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
@@ -314,9 +343,13 @@ def main() -> int:
         assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        subagent_hooks = hooks["hooks"]["SubagentStop"][0]
+        assert "oag-" in subagent_hooks["matcher"], hooks
+        assert subagent_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_gate.py", hooks
         post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
         assert STOP_GATE.is_file(), STOP_GATE
+        assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
         assert CONTEXT_HOOK.is_file(), CONTEXT_HOOK
         assert DRAFT_HOOK.is_file(), DRAFT_HOOK
         assert PORTABLE_DB.is_file(), PORTABLE_DB
@@ -325,6 +358,56 @@ def main() -> int:
         assert ANSWER_KEY_EVAL.is_file(), ANSWER_KEY_EVAL
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
+        assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
+        assert AGENT_CATALOG.is_file(), AGENT_CATALOG
+        assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
+        assert not (ROOT / "agents" / "oag-agent-catalog.toml").exists()
+        assert all(path.suffix == ".toml" for path in (ROOT / "agents").iterdir() if path.is_file())
+        agent_catalog_check = run_agent_catalog_check()
+        assert agent_catalog_check.returncode == 0, agent_catalog_check.stderr or agent_catalog_check.stdout
+        agent_catalog_result = json.loads(agent_catalog_check.stdout)
+        assert agent_catalog_result["status"] == "pass", agent_catalog_result
+        assert agent_catalog_result["counts"] == {"core": 13, "custom": 3, "total": 16}, agent_catalog_result
+        assert agent_catalog_result["completion_authority"] == ["oag-gate-reviewer"], agent_catalog_result
+        subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
+        assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
+        assert "agent_type" in subagent_workflows, subagent_workflows
+        assert "Do not run a Python" in subagent_workflows and "script to spawn them" in subagent_workflows, subagent_workflows
+        config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
+        mcp_text = (ROOT / "mcp.json").read_text(encoding="utf-8")
+        user_home_prefix = "/" + "Users/"
+        assert user_home_prefix not in config_text, config_text
+        assert user_home_prefix not in mcp_text, mcp_text
+        assert 'multi_agent = true' in config_text, config_text
+
+        hook_cwd = Path(tmp) / "subagent_hook_project"
+        hook_cwd.mkdir(parents=True, exist_ok=True)
+        transcript_path = Path(tmp) / "subagent_transcript.txt"
+        transcript_path.write_text("normal transcript\n", encoding="utf-8")
+        invalid_payload = {
+            "hook_event_name": "SubagentStop",
+            "agent_type": "oag-custom-worker",
+            "agent_id": "worker-1",
+            "session_id": "smoke-session",
+            "cwd": str(hook_cwd),
+            "transcript_path": str(transcript_path),
+            "model": "gpt-5.5",
+            "permission_mode": "default",
+            "stop_hook_active": False,
+            "last_assistant_message": "done without receipt",
+        }
+        invalid_gate = subagent_gate(invalid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache.json")})
+        assert invalid_gate.returncode == 0, invalid_gate.stderr or invalid_gate.stdout
+        invalid_gate_payload = json.loads(invalid_gate.stdout)
+        assert invalid_gate_payload["decision"] == "block", invalid_gate_payload
+        assert "OAG_EVIDENCE_RECORDED" in invalid_gate_payload["reason"], invalid_gate_payload
+        receipt = hook_cwd / ".codex" / "oag" / "subagent-receipts" / "smoke.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(json.dumps({"status": "pass", "schema_version": "oag_subagent_receipt.v1"}) + "\n", encoding="utf-8")
+        valid_payload = {**invalid_payload, "last_assistant_message": "OAG_EVIDENCE_RECORDED: .codex/oag/subagent-receipts/smoke.json"}
+        valid_gate = subagent_gate(valid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_valid.json")})
+        assert valid_gate.returncode == 0, valid_gate.stderr or valid_gate.stdout
+        assert valid_gate.stdout == "", valid_gate.stdout
 
         ip = make_ip(Path(tmp))
         compiled = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})

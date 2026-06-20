@@ -4,7 +4,10 @@ Primary assets:
 
 - `skills/oag-ip-workflow/SKILL.md`
 - `rules/oag-rocev.rules.md`
-- `agents/ontology-ip-agent.md`
+- `agents/oag-*.toml`
+- `oag/agent-catalog.toml`
+- `oag/ontology-ip-agent.md`
+- `oag/subagent-workflows.md`
 - `hooks/oag_pre_work.py`
 - `hooks/oag_interview_draft.py`
 - `hooks/oag_stop_check.py`
@@ -12,6 +15,7 @@ Primary assets:
 - `hooks/codex_context_inject.py`
 - `hooks/codex_draft_pressure.py`
 - `hooks/codex_stop_gate.py`
+- `hooks/codex_subagent_oag_gate.py`
 - `hooks.json`
 - `scripts/oag_cli.py`
 - `scripts/oag_mcp_server.py`
@@ -20,11 +24,39 @@ Primary assets:
 - `scripts/oag_portable_db.py`
 - `scripts/oag_okf.py`
 - `scripts/oag_eval.py`
+- `scripts/oag_agent_catalog_check.py`
 - `mcp.json`
 - `config.toml`
 
 Use OAG as the common interface for Requirement -> Obligation -> Contract ->
 Evidence -> Validation IP work.
+
+Use `.codex/agents/*.toml` as Codex custom agent definitions. Each TOML file
+must be a standalone Codex agent file with `name`, `description`, and
+`developer_instructions`. OAG metadata for those agents lives outside that
+loader path in `.codex/oag/agent-catalog.toml`.
+
+The OAG role catalog defines 13 core duties plus 3 custom dynamic duties. The
+role TOMLs are prompts and guardrails; durable state is still the IP ontology,
+ledger, records, receipts, and evidence artifacts.
+
+Before using a subagent role, run:
+
+```bash
+python3 .codex/scripts/oag_agent_catalog_check.py
+```
+
+Codex subagents are native `multi_agent_v1` workers, not Python-triggered
+workers. Ask Codex to spawn named custom agents from `.codex/agents/*.toml`
+using `multi_agent_v1.spawn_agent`, give each one a bounded self-contained
+`TASK/DELIVERABLE/SCOPE/VERIFY` message, wait for summaries with
+`multi_agent_v1.wait_agent`, and then let the main agent validate and record
+ROCEV evidence. `agent_type` is a routing hint, so role requirements must also
+be pasted into the message. Prompt patterns live in
+`.codex/oag/subagent-workflows.md`. Evidence-producing OAG subagents are checked
+by the `SubagentStop` hook and must end with `OAG_EVIDENCE_RECORDED:
+<relative-path>`. Subagents may never claim final completion; final closure
+requires OAG check/decide and the gate reviewer role.
 
 Use the OAG run loop when a task should continue across edits, tests, stops, or
 agent surfaces. `oag.run.start` writes `ontology/runs/<run_id>/run_state.json`,
@@ -91,15 +123,15 @@ reference_model, scoreboard, coverage, env, and test.
 For signoff-grade domain closure, use SSOT-aligned rule instances:
 `cdc_crossing_coverage`, `protocol_compliance`, `timing_closure`,
 `functional_coverage_closure`, and `reset_xprop_coverage`. These mirror the
-common_ai_agent SSOT concepts for `clock_reset_domains`, `cdc_requirements`,
-`rdc_requirements`, interface protocols, timing/STA expectations, coverage
-goals, and reset/X-prop robustness. Closed instances must carry ROCEV links and
-real evidence files; coverage-related instances must cite coverage refs observed
-in scoreboard or coverage JSON. Timing instances must declare target frequency
-or target clocks, and their SDC should be derived from target clocks plus CDC
-async clock groups/exceptions; default input/output delay is 50% of clock period
-unless explicitly overridden. DFT and power are intentionally not seeded as OAG
-v1 gates.
+portable SSOT concepts for clock/reset domains, CDC/RDC requirements, interface
+protocols, timing/STA expectations, coverage goals, and reset/X-prop robustness.
+Closed instances must carry ROCEV links and real evidence files;
+coverage-related instances must cite coverage refs observed in scoreboard or
+coverage JSON. Timing instances must declare target frequency or target clocks,
+and their SDC should be derived from target clocks plus CDC async clock
+groups/exceptions; default input/output delay is 50% of clock period unless
+explicitly overridden. DFT and power are intentionally not seeded as OAG v1
+gates.
 
 Keep structure and implementation shape in ontology, not in prose. The authored
 source files are `ontology/structure.yaml` and `ontology/decomposition.yaml`;

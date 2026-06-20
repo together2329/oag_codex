@@ -12,16 +12,21 @@ OAG, not through chat memory.
 5. Call `oag.context` for ontology memory.
    If Codex hooks are enabled, UserPromptSubmit may inject this context
    automatically; still verify the active IP/stage before acting.
-6. For goal-driven work, call `oag.run.start`; then use `oag.run.next` to get
+6. If work is sharded across Codex subagents, validate
+   `.codex/oag/agent-catalog.toml`, then use native
+   `multi_agent_v1.spawn_agent` with named agents from `.codex/agents/*.toml`.
+   Each child message must include TASK, DELIVERABLE, SCOPE, VERIFY, and an
+   explicit shard scope.
+7. For goal-driven work, call `oag.run.start`; then use `oag.run.next` to get
    one next action.
-7. During deep requirement interviews, call `oag.draft` after meaningful user
+8. During deep requirement interviews, call `oag.draft` after meaningful user
    answers and before context pressure can lose the conversation.
-8. When the user asks for status, structure, dependencies, or gaps, build the
+9. When the user asks for status, structure, dependencies, or gaps, build the
    graph with `.codex/scripts/oag_graph.py`.
-9. Do the smallest required implementation or evidence step.
-10. Call `oag.record` or `oag.run.record` at a meaningful boundary.
-11. Use `oag.ticket` for routed failure repair.
-12. Call `oag.check` and `oag.decide` before closure claims, or
+10. Do the smallest required implementation or evidence step.
+11. Call `oag.record` or `oag.run.record` at a meaningful boundary.
+12. Use `oag.ticket` for routed failure repair.
+13. Call `oag.check` and `oag.decide` before closure claims, or
     `oag.run.checkpoint` when a run is active.
 
 ## Decision Policy
@@ -34,6 +39,10 @@ OAG, not through chat memory.
   OAG NEXT ACTION instead of stopping.
 - Interview drafts are durable memory, not locked truth. Promote only after
   explicit human confirmation.
+- Subagent assignments are Codex `multi_agent_v1` agent threads. They do not
+  replace ROCEV evidence, OAG decisions, or gate review.
+- Custom subagents require explicit shard scope in the prompt and may not claim
+  final completion.
 - Missing obligations, missing contracts, missing evidence, stale evidence
   hashes, stale ledgers, and failed scoreboard rows are blockers.
 - Closed records without explicit `rocev.validation.status` are blockers.

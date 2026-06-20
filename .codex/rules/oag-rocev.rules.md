@@ -14,10 +14,19 @@ Before IP work:
   keep ontology/design_rules.yaml present with required common rule kinds
   keep ontology/structure.yaml and ontology/decomposition.yaml present
   keep ontology/protection.yaml and knowledge/ledger.jsonl present
+  validate Codex agent roles with .codex/scripts/oag_agent_catalog_check.py before subagent-style sharding
+  trigger subagents through Codex multi_agent_v1.spawn_agent, naming .codex/agents/*.toml agents and bounded shard scopes
+  every spawn message starts with TASK and includes DELIVERABLE, SCOPE, and VERIFY
+  use fork_context=false unless the child truly needs full parent history
 
 During IP work:
   keep claims linked to requirement, obligation, contract, evidence, validation
   record findings with actor.kind and actor.id
+  when using subagents, the main prompt must name agent_type, shard scope, owned obligation or contract target, expected summary shape, and evidence outputs
+  treat agent_type as routing hint; paste role requirements into the child message
+  wait_agent timeout is mailbox silence, not failure; do not count a child result as approval without delivered evidence
+  do not allow custom subagents to claim final closure, edit protected ontology, or work outside their prompted shard
+  evidence-producing OAG subagents must end with OAG_EVIDENCE_RECORDED: <relative-path>
   rely on oag.record, oag.draft, and oag.ticket to append ledger events
   if an OAG run is active, use oag.run.record at evidence boundaries
   keep ontology/runs/<run_id>/run_state.json as durable execution state, not source truth
