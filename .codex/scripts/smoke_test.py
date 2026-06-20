@@ -30,6 +30,7 @@ PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
+OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
 OAG_MODE_TRIGGER = ROOT / "hooks" / "codex_oag_mode_trigger.py"
@@ -495,6 +496,7 @@ def main() -> int:
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
+        assert OAG_IP_WORKFLOW_SKILL.is_file(), OAG_IP_WORKFLOW_SKILL
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -518,6 +520,11 @@ def main() -> int:
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
         assert "agent_type" in subagent_workflows, subagent_workflows
         assert "native Codex collaboration workers" in subagent_workflows, subagent_workflows
+        skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
+        assert "python3 scripts/" not in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_cli.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_agent_catalog_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")

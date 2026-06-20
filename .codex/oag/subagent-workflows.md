@@ -17,7 +17,7 @@ support through `[features].multi_agent = true` and
 `[features.multi_agent_v2].enabled = false`. This mirrors the OMO Codex runtime
 pattern: v1 is not directly enabled; v2 is re-disabled so Codex can resolve to
 the v1 multi-agent path when native subagents are available. Use
-`scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
+`python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
 patch user-level Codex config for team members, or rely on the SessionStart hook
 to do the same at startup. The active Codex runtime still has to expose the
 native subagent facility after restart or a fresh trusted project session. Do

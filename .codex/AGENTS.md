@@ -64,7 +64,7 @@ Project config must keep `[features].multi_agent = true`,
 follows the OMO Codex runtime pattern: v1 is not directly forced; v2 is
 force-disabled so Codex falls back to the v1 multi-agent path when native
 subagents are available. Use
-`scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
+`python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
 patch a team member's user config, then restart Codex or open a fresh trusted
 project session. Do not treat missing tool-namespace visibility in one agent
 surface as proof that native subagents are unavailable; Codex CLI/App may
@@ -91,7 +91,7 @@ the message. Prompt patterns live in
 by the `SubagentStop` hook only when they are write-capable, and must end with
 `OAG_EVIDENCE_RECORDED: <relative-path>`. Subagents may never claim final
 completion; final closure requires OAG check/decide and the gate reviewer role.
-For release-grade closure packages, `scripts/oag_closure_check.py` must pass
+For release-grade closure packages, `.codex/scripts/oag_closure_check.py` must pass
 with both an `oag_validation_report.v1` from `oag-evidence-validator` and an
 `oag_gate_decision.v1` PASS from `oag-gate-reviewer`.
 
@@ -213,21 +213,21 @@ Use git as the durable version baseline for OAG-managed implementation and
 evidence over time: records, stage receipts, and facts graph provenance should
 carry commit IDs or file hashes for RTL, TB, filelists, SDC, docs, generated
 facts, and signoff artifacts.
-Use `scripts/oag_portable_db.py` to move durable OAG DB state between agent
+Use `.codex/scripts/oag_portable_db.py` to move durable OAG DB state between agent
 surfaces or workspaces. The portable DB archive is platform-neutral: it carries
 IP `req/`, `ontology/`, `knowledge/`, compact evidence artifacts, optional
 source directories, optional common rules/adapters, a manifest, file SHA-256
 fingerprints, and git provenance. Treat import/export as a bridge between
 Codex, Cursor, CI, and future OAG UIs; do not copy chat transcripts as the
 source of continuity.
-Use `scripts/oag_okf.py` for Open Knowledge Format views. OKF exports are
+Use `.codex/scripts/oag_okf.py` for Open Knowledge Format views. OKF exports are
 generated markdown/frontmatter concepts for sharing, review, search, and other
 agents. They are not locked truth and do not replace OAG checks. OKF imports
 must enter as draft knowledge first, then be promoted through human-approved OAG
 gates if they should affect requirements or signoff. OKF import must preserve
 existing authored OAG concepts and Locked Truth: it may append draft knowledge,
 but it must not rewrite canonical requirement or ontology source files.
-Use `scripts/oag_okf.py export --profile obsidian` or `make okf-export-obsidian`
+Use `python3 .codex/scripts/oag_okf.py export --profile obsidian` or `make okf-export-obsidian`
 for Obsidian vault output. The Obsidian profile is still a generated view; it
 adds wiki links, aliases, graph-friendly frontmatter, and an `OAG Knowledge.base`
 file without changing canonical OAG concepts.

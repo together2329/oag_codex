@@ -113,6 +113,12 @@ REQUIRED_DOC_SNIPPETS = {
         "Do not run a Python",
         "BLOCKED: native Codex subagent unavailable in this surface",
     ),
+    CODEX_ROOT / "skills" / "oag-ip-workflow" / "SKILL.md": (
+        "python3 .codex/scripts/oag_cli.py",
+        "python3 .codex/scripts/oag_agent_catalog_check.py",
+        "python3 .codex/scripts/oag_closure_check.py",
+        "native Codex collaboration workers",
+    ),
 }
 
 
@@ -271,6 +277,8 @@ def check_docs(issues: list[dict[str, str]]) -> None:
         for snippet in snippets:
             if snippet not in text:
                 issues.append(issue("DOC_SNIPPET_MISSING", f"Document must mention {snippet!r}.", path))
+        if "python3 scripts/" in text:
+            issues.append(issue("DOC_STALE_SCRIPT_PATH", "Executable examples must use project-root .codex/scripts/... paths.", path))
 
 
 def check_forbidden_strings(issues: list[dict[str, str]]) -> None:

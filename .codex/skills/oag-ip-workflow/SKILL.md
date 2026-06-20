@@ -14,7 +14,7 @@ For a new IP, scaffold the ontology-first folder layout before creating RTL,
 TB, or evidence artifacts:
 
 ```bash
-python3 scripts/oag_scaffold_ip.py create <ip> --owner <owner>
+python3 .codex/scripts/oag_scaffold_ip.py create <ip> --owner <owner>
 ```
 
 The scaffold creates `req`, `ontology`, `knowledge`, `rtl`, `tb`, `sim`,
@@ -34,9 +34,9 @@ standard evidence rows in `sim/scoreboard_events.jsonl`.
 Before editing or claiming analysis, call OAG for the active IP:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{"tool":"oag.inspect","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
-python3 scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
-python3 scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.inspect","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
 ```
 
 Use `oag.inspect` for legacy IP folders with no knowledge ledger. Use
@@ -48,8 +48,8 @@ For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
-python3 scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
 ```
 
 `oag.run.start` derives the active obligation from the closure matrix and writes
@@ -90,7 +90,7 @@ The stable set is 13 core duties plus 3 custom dynamic duties:
 Before using these roles, validate the catalog:
 
 ```bash
-python3 scripts/oag_agent_catalog_check.py
+python3 .codex/scripts/oag_agent_catalog_check.py
 ```
 
 Team prompts should use the exact `oag` keyword when they want OAG context and
@@ -102,7 +102,7 @@ forcing `[features.multi_agent_v2].enabled = false`. This matches the OMO Codex
 runtime pattern: v1 is not directly enabled; v2 is re-disabled so Codex can
 resolve to the v1 multi-agent path when native subagents are available. Team
 members can run
-`python3 scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply`
+`python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply`
 to patch their user Codex config, or let the SessionStart hook apply the same
 guard at startup. Restart Codex or open a fresh trusted project session after a
 config patch. Do not narrate speculative tool-namespace probes such as
@@ -157,7 +157,7 @@ completion, approve protected ontology edits, or replace `oag.check`,
 When a meaningful stage boundary is reached, append one record:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{
+python3 .codex/scripts/oag_cli.py call --json '{
   "tool": "oag.record",
   "arguments": {
     "ip_dir": "<ip>",
@@ -181,7 +181,7 @@ When an OAG run is active, use `oag.run.record` to record evidence against the
 current run target and refresh the next action:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{"tool":"oag.run.record","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","summary":"evidence inspected and validation recorded"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.record","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","summary":"evidence inspected and validation recorded"}}'
 ```
 
 Closed records require `rocev.validation.status` to be explicit. Evidence files
@@ -191,7 +191,7 @@ are SHA-256 fingerprinted by `oag.record`; if an evidence file changes later,
 For interview draft capture:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{
+python3 .codex/scripts/oag_cli.py call --json '{
   "tool": "oag.draft",
   "arguments": {
     "ip_dir": "<ip>",
@@ -292,7 +292,7 @@ period unless the IP overrides it. DFT and power are not OAG v1 default gates.
 When a failure needs routed repair, create one failure ticket:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{
+python3 .codex/scripts/oag_cli.py call --json '{
   "tool": "oag.ticket",
   "arguments": {
     "ip_dir": "<ip>",
@@ -330,16 +330,16 @@ search, type/status filters, node lists, and node detail inspection.
 Before claiming completion:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
-python3 scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
-python3 scripts/oag_closure_check.py --ip-dir <ip>
-python3 scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_closure_check.py --ip-dir <ip>
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 For an active run, prefer:
 
 ```bash
-python3 scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 If a stop hook is available, call `oag.stop_check`. If it returns
