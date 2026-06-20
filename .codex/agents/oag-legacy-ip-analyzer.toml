@@ -2,7 +2,7 @@ name = "oag-legacy-ip-analyzer"
 description = "Analyzes legacy/reference IP, RTL, patterns, tests, and gaps as evidence for OAG-driven implementation."
 nickname_candidates = ["Legacy IP Analyzer"]
 model = "gpt-5.5"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 
 developer_instructions = """

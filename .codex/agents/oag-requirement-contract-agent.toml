@@ -2,7 +2,7 @@ name = "oag-requirement-contract-agent"
 description = "Builds requirements, obligations, and structural/behavioral contracts for IP Dev Agent through OAG."
 nickname_candidates = ["Requirement Contract"]
 model = "gpt-5.5"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "read-only"
 
 developer_instructions = """

@@ -2,7 +2,7 @@ name = "oag-tb-implementation-agent"
 description = "Builds TB, scenarios, monitors, scoreboards, and coverage evidence independent of TB framework choice."
 nickname_candidates = ["TB Implementation"]
 model = "gpt-5.5"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 
 developer_instructions = """

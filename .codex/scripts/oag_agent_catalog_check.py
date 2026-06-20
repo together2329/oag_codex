@@ -75,6 +75,16 @@ WORKSPACE_WRITE_AGENTS = {
     "oag-custom-worker",
 }
 
+XHIGH_REASONING_AGENTS = {
+    "oag-requirement-contract-agent",
+    "oag-legacy-ip-analyzer",
+    "oag-ip-contract-agent",
+    "oag-rtl-implementation-agent",
+    "oag-tb-implementation-agent",
+    "oag-evidence-validator",
+    "oag-gate-reviewer",
+}
+
 NICKNAME_RE = re.compile(r"^[A-Za-z0-9 _-]+$")
 COMPLETION_AUTHORITY_PHRASES = (
     "only role allowed to issue final oag closure",
@@ -125,6 +135,9 @@ def validate_toml_agent(agent_id: str, kind: str, path: Path, issues: list[dict[
     expected = expected_sandbox(agent_id)
     if sandbox != expected:
         issues.append(issue("AGENT_SANDBOX_MODE", f"{agent_id}.sandbox_mode must be {expected}, found {sandbox!r}.", str(path)))
+
+    if agent_id in XHIGH_REASONING_AGENTS and toml.get("model_reasoning_effort") != "xhigh":
+        issues.append(issue("AGENT_REASONING_EFFORT", f"{agent_id}.model_reasoning_effort must be xhigh for OAG critical reasoning lanes.", str(path)))
 
     nicknames = toml.get("nickname_candidates")
     if nicknames is not None:

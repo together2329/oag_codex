@@ -2,7 +2,7 @@ name = "oag-rtl-implementation-agent"
 description = "Implements RTL from OAG contracts, structure, decomposition, and authoring packets."
 nickname_candidates = ["RTL Implementation"]
 model = "gpt-5.5"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 
 developer_instructions = """

@@ -51,6 +51,12 @@ The OAG role catalog defines 13 core duties plus 3 custom dynamic duties. The
 role TOMLs are prompts and guardrails; durable state is still the IP ontology,
 ledger, records, receipts, and evidence artifacts.
 
+Critical OAG reasoning lanes must use `model_reasoning_effort = "xhigh"`:
+requirement/contract, legacy/reference analysis, IP contract derivation, RTL
+implementation, TB implementation, evidence validation, and gate review.
+Procedural lanes such as lint/static checks, sim execution, coverage, and custom
+worker shards may stay lower for throughput.
+
 Before using a subagent role, run:
 
 ```bash
