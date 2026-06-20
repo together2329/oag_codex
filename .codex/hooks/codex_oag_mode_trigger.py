@@ -28,6 +28,7 @@ def read_directive() -> str:
             "OAG MODE ENABLED!",
             "Use Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision.",
             "Short new-IP requests enter requirement interview mode; do not edit locked truth, canonical ontology, RTL, TB, or tests until scope is confirmed.",
+            "Check oag.lock_status before implementation; no lock, no RTL, no TB, no closure.",
             "Use multi_agent_v1.spawn_agent with fork_context=false for bounded native Codex subagent work.",
             "Final closure requires oag.check, oag_closure_check.py, and oag.decide with record_decision=true.",
         ]

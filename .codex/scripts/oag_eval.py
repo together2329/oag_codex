@@ -35,6 +35,24 @@ HOOKS_DIR = smoke_test.ROOT / "hooks"
 PROJECT = smoke_test.ROOT.parent
 
 
+def _approve_eval_protected_update(ip: Path, *, summary: str) -> dict[str, Any]:
+    response = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "protected_ontology_eval_update",
+                "stage": "ontology",
+                "record_decision": True,
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "summary": summary,
+            },
+        }
+    )
+    assert response["result"]["decision_receipt"], response
+    return response["result"]
+
+
 def _start_run(ip: Path, *, intent: str) -> tuple[str, dict[str, Any]]:
     response = smoke_test.call(
         {
@@ -510,13 +528,38 @@ def case_no_vacuous_pass_blocks_empty_matrix(root: Path) -> dict[str, Any]:
     assert check["result"]["ok"] is False, check
     assert "closure matrix has no obligations" in check["result"]["issues"], check
     assert decision["result"]["allowed"] is False, decision
-    assert decision["result"]["reason"] == "knowledge_check_failed", decision
+    assert decision["result"]["reason"] == "scope_lock_required", decision
+    locked = smoke_test.call(
+        {
+            "tool": "oag.lock",
+            "arguments": {
+                "ip_dir": str(ip),
+                "summary": "Evaluation locks empty scope to verify vacuous closure remains blocked after lock.",
+                "confirmed_scope": ["empty matrix must not be accepted as closure"],
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+            },
+        }
+    )
+    assert locked["result"]["locked"] is True, locked
+    locked_decision = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "claim_complete",
+                "stage": "signoff",
+            },
+        }
+    )
+    assert locked_decision["result"]["allowed"] is False, locked_decision
+    assert locked_decision["result"]["reason"] == "knowledge_check_failed", locked_decision
     return {
         "ip": str(ip),
         "compile_status": compile_result["result"]["status"],
         "check_ok": check["result"]["ok"],
         "decision_allowed": decision["result"]["allowed"],
         "decision_reason": decision["result"]["reason"],
+        "locked_decision_reason": locked_decision["result"]["reason"],
         "matrix_issue": "closure matrix has no obligations",
     }
 
@@ -548,6 +591,7 @@ def case_module_per_file_boundary_blocks_greenfield(root: Path) -> dict[str, Any
     )
     decomp_path = ip / "ontology" / "decomposition.yaml"
     decomp_path.write_text(bad_decomposition, encoding="utf-8")
+    _approve_eval_protected_update(ip, summary="Approve temporary duplicate-file decomposition fixture.")
     blocked = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
     boundary_issues = [
         issue
@@ -566,6 +610,7 @@ def case_module_per_file_boundary_blocks_greenfield(root: Path) -> dict[str, Any
         ),
         encoding="utf-8",
     )
+    _approve_eval_protected_update(ip, summary="Approve shared-file rationale fixture update.")
     allowed = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
     assert not any(
         "greenfield_modular module file boundary requires unique file per current_ip module" in issue
@@ -612,6 +657,7 @@ def case_design_facts_graph_extraction_gate(root: Path) -> dict[str, Any]:
         ),
         encoding="utf-8",
     )
+    _approve_eval_protected_update(ip, summary="Approve design-facts decomposition fixture.")
     top = ip / "rtl" / "demo_counter_cx1.sv"
     leaf = ip / "rtl" / "counter_leaf.sv"
     top.write_text(

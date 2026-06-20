@@ -62,6 +62,7 @@ STRUCTURE_REL = Path("ontology/structure.yaml")
 DECOMPOSITION_REL = Path("ontology/decomposition.yaml")
 DRAFTS_REL = Path("ontology/drafts")
 PROTECTION_REL = Path("ontology/protection.yaml")
+SCOPE_LOCK_REL = Path("ontology/scope_lock.json")
 LEDGER_REL = Path("knowledge/ledger.jsonl")
 REQUIRED_DESIGN_RULE_KINDS = {
     "event_state_commit_consistency",
@@ -87,6 +88,23 @@ SIGNOFF_DESIGN_RULE_KINDS = {
     "reset_xprop_coverage": "reset/X-prop coverage",
     "rtl_language_subset": "RTL language subset",
 }
+POST_LOCK_ARTIFACT_PATTERNS = (
+    "rtl/*.sv",
+    "rtl/*.v",
+    "rtl/*.svh",
+    "tb/**/*.sv",
+    "tb/**/*.v",
+    "tb/**/*.py",
+    "rtl/rtl_compile.json",
+    "lint/dut_lint.json",
+    "sim/results.xml",
+    "sim/scoreboard_events.jsonl",
+    "cov/coverage.json",
+    "formal/*.json",
+    "sdc/*.sdc",
+    "signoff/*.json",
+    "signoff/*.yaml",
+)
 RUN_LIMIT_STAGE_ORDER = {
     "none": -1,
     "requirements": 0,
@@ -2185,6 +2203,219 @@ def _policy_profile(ip: Path) -> str:
         if match:
             return match.group(1)
     return "development"
+
+
+def _scope_lock_path(ip: Path) -> Path:
+    return ip / SCOPE_LOCK_REL
+
+
+def _implementation_artifacts(ip: Path) -> list[str]:
+    refs: list[str] = []
+    for pattern in POST_LOCK_ARTIFACT_PATTERNS:
+        for path in sorted(ip.glob(pattern)):
+            if not path.is_file() or path.name == ".gitkeep":
+                continue
+            try:
+                if path.stat().st_size == 0:
+                    continue
+                refs.append(str(path.relative_to(ip)))
+            except Exception:
+                refs.append(str(path))
+    return sorted(dict.fromkeys(refs))
+
+
+def _scope_lock_doc(ip: Path) -> dict[str, Any]:
+    path = _scope_lock_path(ip)
+    data = _read_json_file(path)
+    if isinstance(data, dict):
+        state = str(data.get("state") or data.get("status") or "draft").strip().lower()
+        if state not in {"draft", "locked"}:
+            state = "draft"
+        data = dict(data)
+        data["state"] = state
+        data.setdefault("schema_version", "oag_scope_lock.v1")
+        data.setdefault("ip", ip.name)
+        data.setdefault("path", str(path))
+        return data
+    return {
+        "schema_version": "oag_scope_lock.v1",
+        "ip": ip.name,
+        "state": "draft",
+        "path": str(path),
+        "missing": True,
+        "summary": "No scope lock file; treating IP as draft.",
+    }
+
+
+def _scope_lock_status(ip: Path) -> dict[str, Any]:
+    doc = _scope_lock_doc(ip)
+    artifacts = _implementation_artifacts(ip)
+    state = str(doc.get("state") or "draft")
+    locked = state == "locked"
+    blockers: list[str] = []
+    if not locked:
+        blockers.append("scope is not locked; user must confirm requirements before implementation or closure")
+    if artifacts and not locked:
+        blockers.append("post-lock artifacts exist while scope is draft")
+    return {
+        "schema_version": "oag_scope_lock_status.v1",
+        "ip": ip.name,
+        "state": state,
+        "locked": locked,
+        "can_implement": locked,
+        "can_close": locked,
+        "path": str(_scope_lock_path(ip)),
+        "missing": bool(doc.get("missing")),
+        "lock": doc,
+        "implementation_artifacts": artifacts,
+        "blockers": blockers,
+    }
+
+
+def _scope_lock_issues(ip: Path, *, require_locked: bool = False) -> list[str]:
+    status = _scope_lock_status(ip)
+    issues: list[str] = []
+    if require_locked and not status["locked"]:
+        issues.append("scope lock required before implementation or closure")
+    artifacts = [str(item) for item in status.get("implementation_artifacts") or []]
+    if artifacts and not status["locked"]:
+        issues.append("scope is draft while implementation artifacts exist: " + ", ".join(artifacts[:8]))
+    return issues
+
+
+def _scope_lock_actor(arguments: dict[str, Any], *, surface: str) -> dict[str, str]:
+    actor = arguments.get("actor") if isinstance(arguments.get("actor"), dict) else {}
+    return {
+        "kind": str(actor.get("kind") or "ai"),
+        "id": str(actor.get("id") or os.environ.get("USER") or "unknown"),
+        "session": str(actor.get("session") or ""),
+        "surface": str(actor.get("surface") or surface),
+    }
+
+
+def _write_scope_lock(ip: Path, payload: dict[str, Any]) -> None:
+    path = _scope_lock_path(ip)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
+    ip = _ip_dir(arguments)
+    _ensure_knowledge(ip)
+    actor = _scope_lock_actor(arguments, surface="oag.lock")
+    summary = str(arguments.get("summary") or arguments.get("scope_summary") or "").strip()
+    confirmed_scope = _str_items(arguments.get("confirmed_scope") or arguments.get("scope"))
+    if not summary and confirmed_scope:
+        summary = "; ".join(confirmed_scope)
+    if not summary:
+        raise ValueError("oag.lock requires summary or confirmed_scope")
+    payload_for_approval = {
+        "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+        "summary": summary,
+        "confirmed_scope": confirmed_scope,
+    }
+    if not _is_human_approved({"action": "scope_lock", "actor": actor, "payload": payload_for_approval}):
+        raise ValueError("oag.lock requires explicit human approval; use actor.kind=human or approval.approved=true")
+    previous = _scope_lock_doc(ip)
+    lock_id = f"LOCK_{_stamp()}_{_slug(summary)}"
+    doc = {
+        "schema_version": "oag_scope_lock.v1",
+        "ip": ip.name,
+        "state": "locked",
+        "lock_id": lock_id,
+        "summary": summary,
+        "confirmed_scope": confirmed_scope,
+        "source_draft": str(arguments.get("source_draft") or arguments.get("draft_id") or ""),
+        "open_questions": _str_items(arguments.get("open_questions")),
+        "assumptions": _str_items(arguments.get("assumptions")),
+        "locked_by": actor,
+        "locked_at": _now(),
+        "previous_state": str(previous.get("state") or "draft"),
+    }
+    _write_scope_lock(ip, doc)
+    ledger_event = _append_ledger(
+        ip,
+        action="scope_lock",
+        actor=actor,
+        subject=lock_id,
+        payload={"path": str(SCOPE_LOCK_REL), "lock": doc},
+    )
+    return {
+        "schema_version": "oag_scope_lock.v1",
+        "ip": ip.name,
+        "status": "locked",
+        "locked": True,
+        "path": str(_scope_lock_path(ip)),
+        "lock": doc,
+        "ledger_event": ledger_event["event_hash"],
+    }
+
+
+def _scope_unlock(arguments: dict[str, Any]) -> dict[str, Any]:
+    ip = _ip_dir(arguments)
+    _ensure_knowledge(ip)
+    actor = _scope_lock_actor(arguments, surface="oag.unlock")
+    reason = str(arguments.get("reason") or "scope changed").strip()
+    payload_for_approval = {
+        "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+        "reason": reason,
+    }
+    if not _is_human_approved({"action": "scope_unlock", "actor": actor, "payload": payload_for_approval}):
+        raise ValueError("oag.unlock requires explicit human approval; use actor.kind=human or approval.approved=true")
+    previous = _scope_lock_doc(ip)
+    doc = {
+        "schema_version": "oag_scope_lock.v1",
+        "ip": ip.name,
+        "state": "draft",
+        "summary": str(previous.get("summary") or ""),
+        "previous_lock_id": str(previous.get("lock_id") or ""),
+        "unlock_reason": reason,
+        "unlocked_by": actor,
+        "unlocked_at": _now(),
+    }
+    _write_scope_lock(ip, doc)
+    ledger_event = _append_ledger(
+        ip,
+        action="scope_unlock",
+        actor=actor,
+        subject=str(previous.get("lock_id") or "scope"),
+        payload={"path": str(SCOPE_LOCK_REL), "lock": doc},
+    )
+    return {
+        "schema_version": "oag_scope_unlock.v1",
+        "ip": ip.name,
+        "status": "draft",
+        "locked": False,
+        "path": str(_scope_lock_path(ip)),
+        "lock": doc,
+        "ledger_event": ledger_event["event_hash"],
+    }
+
+
+def _mark_scope_draft_after_interview(ip: Path, *, actor: dict[str, Any], draft_id: str, reason: str) -> dict[str, Any] | None:
+    previous = _scope_lock_doc(ip)
+    if str(previous.get("state") or "draft") != "locked":
+        return None
+    doc = {
+        "schema_version": "oag_scope_lock.v1",
+        "ip": ip.name,
+        "state": "draft",
+        "summary": str(previous.get("summary") or ""),
+        "previous_lock_id": str(previous.get("lock_id") or ""),
+        "stale_reason": reason,
+        "stale_source_draft": draft_id,
+        "updated_by": actor,
+        "updated_at": _now(),
+    }
+    _write_scope_lock(ip, doc)
+    ledger_event = _append_ledger(
+        ip,
+        action="scope_draft",
+        actor=actor,
+        subject=draft_id,
+        payload={"path": str(SCOPE_LOCK_REL), "lock": doc},
+    )
+    return {"lock": doc, "ledger_event": ledger_event["event_hash"]}
 
 
 def _truth_graph_path(ip: Path) -> Path:
@@ -4494,6 +4725,7 @@ def _inspect(arguments: dict[str, Any]) -> dict[str, Any]:
     receipt_issues = _stage_receipt_issues(ip)
     receipt_count = len(sorted((ip / STAGE_RECEIPTS_REL).glob("*.json"))) if (ip / STAGE_RECEIPTS_REL).is_dir() else 0
     closure_profile = _policy_profile(ip)
+    scope_lock = _scope_lock_status(ip)
     protection_issues = _protection_issues(ip)
     ledger_issues = _ledger_issues(ip)
     monotonic_issues = _monotonic_issues(ip)
@@ -4546,6 +4778,8 @@ def _inspect(arguments: dict[str, Any]) -> dict[str, Any]:
         gaps.append("monotonic closure invariant has issues")
     if closure_matrix["issues"]:
         gaps.append("closure matrix has open obligations")
+    if scope_lock.get("implementation_artifacts") and not scope_lock.get("locked"):
+        gaps.append("scope is not locked")
 
     validation = "closed" if not gaps else "partial"
     return {
@@ -4612,6 +4846,7 @@ def _inspect(arguments: dict[str, Any]) -> dict[str, Any]:
                 "packets": [str(path) for path in authoring_packets],
             },
             "stage_receipts": {"present": receipt_count > 0, "count": receipt_count, "issues": receipt_issues},
+            "scope_lock": scope_lock,
             "protection": {
                 "present": (ip / PROTECTION_REL).is_file(),
                 "path": str(ip / PROTECTION_REL),
@@ -4813,12 +5048,14 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
     issues.extend(_monotonic_issues(ip))
     issues.extend(_record_evidence_issues(ip))
     issues.extend(_stage_receipt_issues(ip))
+    issues.extend(_scope_lock_issues(ip))
     result = {
         "schema_version": "oag_check.v1",
         "ip": ip.name,
         "ok": not issues,
         "issues": issues,
         "policy": {"closure_profile": _policy_profile(ip)},
+        "scope_lock": _scope_lock_status(ip),
         "structure": {"profile": _structure_profile(ip), "path": str(ip / STRUCTURE_REL), "decomposition": str(ip / DECOMPOSITION_REL)},
         "truth_graph": {"compiled": _truth_graph_compiled(ip), "path": str(_truth_graph_path(ip))},
         "ledger": {"path": str(_ledger_path(ip)), "events": len(_ledger_entries(ip))},
@@ -4846,6 +5083,7 @@ def _context(arguments: dict[str, Any]) -> dict[str, Any]:
     truth_graph = _read_json_file(_truth_graph_path(ip))
     truth_status = str(truth_graph.get("status") or "missing") if isinstance(truth_graph, dict) else "missing"
     profile = _policy_profile(ip)
+    scope_lock = _scope_lock_status(ip)
     structure_issues, decomposition_summary = _decomposition_issues(ip)
     structure_profile = str(decomposition_summary.get("profile") or "")
     ticket_dir = ip / "handoff" / "failure_tickets"
@@ -4863,6 +5101,12 @@ def _context(arguments: dict[str, Any]) -> dict[str, Any]:
         f"closure_profile={profile} truth_graph={truth_status} ledger_events={ledger_events} "
         f"protected_fields={'ok' if not protection_issues else 'issue'} failure_tickets={len(tickets)}"
     )
+    lines.append(
+        f"scope_lock={scope_lock.get('state')} can_implement={str(scope_lock.get('can_implement')).lower()} "
+        f"lock_path={SCOPE_LOCK_REL}"
+    )
+    if not scope_lock.get("locked"):
+        lines.append("lock_rule=No lock, no RTL/TB/closure. Stay in draft/interview mode until the user says lock.")
     lines.append(
         f"structure_profile={structure_profile or 'missing'} modules={decomposition_summary.get('module_count') or 0} "
         f"structure={'ok' if not structure_issues else 'issue'} authoring_packets={len(sorted((ip / AUTHORING_PACKETS_REL).glob('*.json'))) if (ip / AUTHORING_PACKETS_REL).is_dir() else 0}"
@@ -4891,6 +5135,7 @@ def _context(arguments: dict[str, Any]) -> dict[str, Any]:
         "records": records,
         "truth_graph": {"present": isinstance(truth_graph, dict), "status": truth_status, "path": str(_truth_graph_path(ip))},
         "policy": {"closure_profile": profile},
+        "scope_lock": scope_lock,
         "structure": {
             "profile": structure_profile,
             "issues": structure_issues,
@@ -5075,6 +5320,17 @@ def _draft(arguments: dict[str, Any]) -> dict[str, Any]:
             "markdown_path": str(md_path.relative_to(ip)),
         },
     )
+    affects_scope = arguments.get("affects_scope")
+    if affects_scope is None:
+        affects_scope = stage.lower() in {"req", "requirement", "requirements", "scope", "interview"}
+    scope_update = None
+    if bool(affects_scope):
+        scope_update = _mark_scope_draft_after_interview(
+            ip,
+            actor=actor,
+            draft_id=record_id,
+            reason="new requirement draft after scope lock",
+        )
 
     return {
         "schema_version": "oag_draft.v1",
@@ -5086,6 +5342,8 @@ def _draft(arguments: dict[str, Any]) -> dict[str, Any]:
         "markdown_path": str(md_path),
         "promotion_state": "draft",
         "ledger_event": ledger_event["event_hash"],
+        "scope_lock": _scope_lock_status(ip),
+        "scope_update": scope_update,
     }
 
 
@@ -5321,13 +5579,19 @@ def _write_decision_receipt(
 
 def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
     action = str(arguments.get("action") or "")
+    ip = _ip_dir(arguments)
+    scope_lock = _scope_lock_status(ip)
     inspect = _inspect(arguments)
     check = _check(arguments)
     allowed = True
     reason = "allowed"
     next_action = ""
     if action in VALID_COMPLETION_ACTIONS:
-        if not check["ok"]:
+        if not scope_lock["locked"]:
+            allowed = False
+            reason = "scope_lock_required"
+            next_action = "ask the user to confirm scope, then run oag.lock before implementation or closure"
+        elif not check["ok"]:
             allowed = False
             reason = "knowledge_check_failed"
             next_action = "run oag.init or oag.record before claiming closure"
@@ -5383,6 +5647,7 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "next_action": next_action,
         "policy": {"closure_profile": _policy_profile(_ip_dir(arguments))},
+        "scope_lock": scope_lock,
         "inspect": inspect,
         "check": check,
         "decision_receipt": decision_receipt,
@@ -6198,6 +6463,9 @@ def dispatch_call(envelope: dict[str, Any]) -> dict[str, Any]:
         "context": _context,
         "record": _record,
         "draft": _draft,
+        "lock": _scope_lock,
+        "unlock": _scope_unlock,
+        "lock_status": lambda args: _scope_lock_status(_ip_dir(args)),
         "review": _review,
         "decide": _decide,
         "metrics": _metrics_snapshot,

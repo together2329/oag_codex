@@ -77,6 +77,11 @@ Protocol IP scope must be explicit for spec version, transport boundary,
 interfaces, single-packet versus multi-packet support, buffering/backpressure,
 filtering/addressing, and error/drop/status policy.
 
+Scope lock guard: implementation, validation, gate-review, and closure
+assignments require <ip>/ontology/scope_lock.json state=locked. If the lock is
+missing or draft, return BLOCKED and do not edit RTL, TB, canonical ontology,
+tests, filelists, or signoff evidence.
+
 Use HANDOFF_PASS, STATIC_HANDOFF_PASS, or RTL_HANDOFF_PASS for a bounded
 successful handoff. Do not use PASS, COMPLETE, DONE, SIGNOFF, RELEASED, or
 CLOSED to describe the IP.

@@ -39,6 +39,19 @@ python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments"
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
 ```
 
+Before canonical ontology enrichment, RTL, TB, validation, gate review, or
+closure, check the scope lock:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+```
+
+If `state=draft`, stop at interview/draft work. Ask the user to confirm scope.
+Only when the user says `lock`, `lock this`, `lock scope`, or `lock
+requirements`, call `oag.lock` with `actor.kind=human` and a concise
+`confirmed_scope`. New requirement drafts after a lock make the scope draft
+again. No lock, no RTL. No lock, no TB. No lock, no closure.
+
 For work that should continue across turns, use the OAG run loop:
 
 ```bash
@@ -152,6 +165,8 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   For prompts like "I need mctp rx ip", create at most a draft workspace and
   `oag.draft` notes; do not edit locked truth, canonical ontology, RTL, TB,
   tests, filelists, or signoff evidence until scope is confirmed.
+- `ontology/scope_lock.json` must be `locked` before implementation,
+  validation, gate review, or closure. `draft` means interview only.
 - Custom subagent output is never sufficient for final closure.
 - Missing validator or gate-review reports block release-grade closure.
 - Evidence added or changed after gate PASS makes the gate decision stale; run

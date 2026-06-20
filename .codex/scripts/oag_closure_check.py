@@ -162,6 +162,14 @@ def run_oag_tool(ip_dir: Path, tool: str) -> dict[str, Any] | None:
 
 
 def validate_oag_development_closure(ip_dir: Path, issues: list[dict[str, str]]) -> None:
+    lock_status = run_oag_tool(ip_dir, "oag.lock_status")
+    if not isinstance(lock_status, dict) or lock_status.get("_tool_error"):
+        issues.append(issue("SCOPE_LOCK_UNAVAILABLE", str((lock_status or {}).get("_tool_error") or "oag.lock_status failed")))
+    elif lock_status.get("locked") is not True:
+        blockers = lock_status.get("blockers") if isinstance(lock_status.get("blockers"), list) else []
+        detail = "; ".join(str(item) for item in blockers[:4]) or "scope is not locked"
+        issues.append(issue("SCOPE_LOCK_REQUIRED", detail, "ontology/scope_lock.json"))
+
     check = run_oag_tool(ip_dir, "oag.check")
     if not isinstance(check, dict) or check.get("_tool_error"):
         issues.append(issue("OAG_CHECK_UNAVAILABLE", str((check or {}).get("_tool_error") or "oag.check failed")))

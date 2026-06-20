@@ -230,6 +230,19 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  - syn",
             "  - signoff",
         ),
+        "ontology/scope_lock.json": json_text(
+            {
+                "schema_version": "oag_scope_lock.v1",
+                "ip": ip,
+                "state": "draft",
+                "summary": "Initial scaffold is draft-only. User must lock scope before canonical ontology enrichment, RTL, TB, or closure.",
+                "confirmed_scope": [],
+                "open_questions": [
+                    "Confirm product scope before implementation.",
+                ],
+                "created_at": now(),
+            }
+        ),
         "ontology/requirements.yaml": yaml_doc(
             "schema: ontology_requirements.v1",
             f"ip: {ip}",

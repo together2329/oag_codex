@@ -181,6 +181,15 @@ surface open questions for spec version, transport boundary, interfaces,
 single-packet versus multi-packet scope, buffering/backpressure,
 filtering/addressing, and error/drop/status policy.
 
+Use `ontology/scope_lock.json` as the implementation permission switch.
+`state=draft` allows only questions, summaries, options, and `oag.draft`
+records. `state=locked` means the user explicitly approved scope and
+implementation may proceed. No lock, no RTL. No lock, no TB. No lock, no
+closure. When the user says `lock`, `lock this`, `lock scope`, or
+`lock requirements`, call `oag.lock` with `actor.kind=human`. If a new
+requirement draft is recorded after lock, OAG returns the IP to draft and a
+fresh lock is required.
+
 Keep protected-field policy and ledger artifacts active. `ontology/protection.yaml`
 declares locked truth and policy fields that require human-approved decisions
 for semantic edits. `knowledge/ledger.jsonl` is append-only and hash chained;

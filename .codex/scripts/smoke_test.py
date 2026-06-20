@@ -48,6 +48,7 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_validation_report.schema.json",
     ROOT / "schemas" / "oag_gate_decision.schema.json",
     ROOT / "schemas" / "oag_closure_report.schema.json",
+    ROOT / "schemas" / "oag_scope_lock.schema.json",
 ]
 
 
@@ -331,9 +332,24 @@ def make_ip(root: Path) -> Path:
     assert (ip / "ontology" / "metrics" / "improvement_metrics.v1.yaml").is_file()
     assert (ip / "ontology" / "handoff_readiness.v1.yaml").is_file()
     assert (ip / "ontology" / "gates" / "gate_self_test_registry.yaml").is_file()
+    assert (ip / "ontology" / "scope_lock.json").is_file()
     assert (ip / "knowledge" / "_index.json").is_file()
     assert (ip / "knowledge" / "ledger.jsonl").is_file()
     assert (ip / "list" / "rtl.f").is_file()
+    lock_status = call({"tool": "oag.lock_status", "arguments": {"ip_dir": str(ip)}})
+    assert lock_status["result"]["state"] == "draft", lock_status
+    locked = call(
+        {
+            "tool": "oag.lock",
+            "arguments": {
+                "ip_dir": str(ip),
+                "summary": "Smoke test locks the demo counter seed scope before implementation evidence.",
+                "confirmed_scope": ["demo counter reset/count scoreboard closure"],
+                "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+            },
+        }
+    )
+    assert locked["result"]["locked"] is True, locked
     (ip / "rtl" / "rtl_compile.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     (ip / "lint" / "dut_lint.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     (ip / "sim" / "results.xml").write_text('<testsuite failures="0"/>\n', encoding="utf-8")
@@ -603,11 +619,18 @@ def main() -> int:
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
         assert "New IP Intake Guard" in skill_text, skill_text
+        assert "Scope Lock" in skill_text, skill_text
+        assert "oag.lock_status" in skill_text, skill_text
+        assert "No lock, no RTL" in skill_text, skill_text
         assert "short IP request" in skill_text, skill_text
         assert "do not enrich or rewrite `req/locked_truth.md`" in skill_text, skill_text
         assert "single-packet versus multi-packet" in skill_text, skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
+        assert "scope_lock.json" in agents_text, agents_text
+        assert "No lock, no RTL" in agents_text, agents_text
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
+        assert "oag.lock_status" in directive_text, directive_text
+        assert "No lock, no RTL" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
@@ -688,6 +711,8 @@ def main() -> int:
         assert "Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision" in trigger_context, trigger_on.stdout
         assert "short IP request is requirement-interview input" in trigger_context, trigger_on.stdout
         assert "multi_agent_v1.spawn_agent" in trigger_context, trigger_on.stdout
+        assert "oag.lock_status" in trigger_context, trigger_on.stdout
+        assert "No lock, no RTL" in trigger_context, trigger_on.stdout
         assert "record_decision=true" in trigger_context, trigger_on.stdout
 
         hook_cwd = Path(tmp) / "subagent_hook_project"
@@ -709,6 +734,8 @@ def main() -> int:
         assert "STATIC_HANDOFF_PASS" in start_context, start_hook.stdout
         assert "Short IP intake guard" in start_context, start_hook.stdout
         assert "single-packet versus multi-packet" in start_context, start_hook.stdout
+        assert "Scope lock guard" in start_context, start_hook.stdout
+        assert "scope_lock.json state=locked" in start_context, start_hook.stdout
         assert "OAG_EVIDENCE_RECORDED" in start_context, start_hook.stdout
         assert start_cache.is_file(), start_cache
         start_event = json.loads(start_cache.read_text(encoding="utf-8").splitlines()[-1])
@@ -734,9 +761,45 @@ def main() -> int:
         assert invalid_gate_payload["decision"] == "block", invalid_gate_payload
         assert "OAG_EVIDENCE_RECORDED" in invalid_gate_payload["reason"], invalid_gate_payload
         subprocess.run(["git", "init"], cwd=hook_cwd, text=True, capture_output=True, check=True)
+        unlocked_hook_ip = hook_cwd / "unlocked_smoke_ip"
+        (unlocked_hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
+        (unlocked_hook_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+        unlocked_dispatch = run_dispatch(
+            "create",
+            "--ip-dir",
+            str(unlocked_hook_ip),
+            "--agent-type",
+            "oag-custom-worker",
+            "--role-kind",
+            "custom",
+            "--stage",
+            "rtl",
+            "--allowed-write-path",
+            str(unlocked_hook_ip / "rtl" / "smoke.sv"),
+            "--receipt-path",
+            str(unlocked_hook_ip / "knowledge" / "subagents" / "smoke.json"),
+            "--json",
+            project_root=hook_cwd,
+        )
+        assert unlocked_dispatch.returncode != 0, unlocked_dispatch.stdout
+        assert "scope lock required" in (unlocked_dispatch.stderr + unlocked_dispatch.stdout), unlocked_dispatch.stderr or unlocked_dispatch.stdout
         hook_ip = hook_cwd / "smoke_ip"
         (hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
+        (hook_ip / "ontology").mkdir(parents=True, exist_ok=True)
         (hook_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+        (hook_ip / "ontology" / "scope_lock.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_scope_lock.v1",
+                    "ip": "smoke_ip",
+                    "state": "locked",
+                    "summary": "Smoke dispatch scope is locked.",
+                    "confirmed_scope": ["rtl smoke dispatch"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         dispatch_create = run_dispatch(
             "create",
             "--ip-dir",
@@ -1382,8 +1445,27 @@ def main() -> int:
         assert draft["result"]["status"] == "draft", draft
         assert Path(draft["result"]["draft_path"]).is_file(), draft
         assert Path(draft["result"]["markdown_path"]).is_file(), draft
+        assert draft["result"]["scope_lock"]["state"] == "draft", draft
+        assert draft["result"]["scope_update"], draft
+        unlocked_decide = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
+        assert unlocked_decide["result"]["allowed"] is False, unlocked_decide
+        assert unlocked_decide["result"]["reason"] == "scope_lock_required", unlocked_decide
+        relocked = call(
+            {
+                "tool": "oag.lock",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "summary": "Smoke owner reconfirmed scope after the interview draft.",
+                    "confirmed_scope": ["demo counter reset/count scoreboard closure remains approved"],
+                    "source_draft": draft["result"]["id"],
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                },
+            }
+        )
+        assert relocked["result"]["locked"] is True, relocked
         context = call({"tool": "oag.context", "arguments": {"ip_dir": str(ip), "stage": "sim", "intent": "scoreboard"}})
         assert "IP KNOWLEDGE LEDGER" in context["result"]["prompt_block"], context
+        assert "scope_lock=locked" in context["result"]["prompt_block"], context
         cache_path = ROOT / ".cache" / "context_inject.json"
         cache_path.unlink(missing_ok=True)
         context_payload = {"ip_dir": str(ip), "stage": "sim", "prompt": f"Continue sim work for {ip.name}"}

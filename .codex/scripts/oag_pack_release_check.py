@@ -54,6 +54,7 @@ REQUIRED_FILES = (
     SCHEMAS_DIR / "oag_validation_report.schema.json",
     SCHEMAS_DIR / "oag_gate_decision.schema.json",
     SCHEMAS_DIR / "oag_closure_report.schema.json",
+    SCHEMAS_DIR / "oag_scope_lock.schema.json",
 )
 
 FORBIDDEN_FILES = (
@@ -69,6 +70,7 @@ JSON_FILES = (
     SCHEMAS_DIR / "oag_validation_report.schema.json",
     SCHEMAS_DIR / "oag_gate_decision.schema.json",
     SCHEMAS_DIR / "oag_closure_report.schema.json",
+    SCHEMAS_DIR / "oag_scope_lock.schema.json",
 )
 
 TOML_FILES = (
@@ -101,6 +103,8 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_dispatch.py",
         "oag_validate_json.py",
         "checked_artifact_hashes",
+        "scope_lock.json",
+        "No lock, no RTL",
         "SubagentStart",
         "SubagentStop",
         "schema",
@@ -116,6 +120,8 @@ REQUIRED_DOC_SNIPPETS = {
         "checked_artifact_hashes",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
+        "oag.lock_status",
+        "No lock, no RTL",
         "record_decision=true",
         "CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE",
     ),
@@ -130,6 +136,8 @@ REQUIRED_DOC_SNIPPETS = {
         "Do not run a Python",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
+        "oag.lock_status",
+        "No lock, no",
         "git status --short -uall -- <ip>",
         "SubagentStart",
         "BLOCKED: native Codex subagent unavailable in this surface",
@@ -142,6 +150,8 @@ REQUIRED_DOC_SNIPPETS = {
         "native Codex collaboration workers",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
+        "oag.lock_status",
+        "No lock, no RTL",
         "git status --short -uall -- <ip>",
         "dispatch_id",
         "checked artifact hashes",

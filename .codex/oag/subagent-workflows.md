@@ -86,6 +86,17 @@ Write-heavy subagents must be assigned non-overlapping files or modules.
 Before spawning a write-capable subagent, the main agent must create a dispatch
 record and paste its fields into the child task:
 
+For implementation, validation, coverage, mutation, evidence-validator,
+gate-review, or closure subagents, the IP scope must already be locked:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+```
+
+If `ontology/scope_lock.json` is missing or `state=draft`, do not spawn the
+child. Ask the user to confirm scope and run `oag.lock` first. No lock, no
+RTL/TB/closure.
+
 ```bash
 python3 .codex/scripts/oag_dispatch.py create \
   --ip-dir <ip> \

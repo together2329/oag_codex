@@ -37,6 +37,18 @@ RECEIPT_SAFE_STATUSES = {
 }
 LEGACY_RECEIPT_STATUSES = {"PASS"}
 FORBIDDEN_STATUS_WORDS = ("COMPLETE", "DONE", "SIGNOFF", "RELEASED", "CLOSED")
+LOCK_REQUIRED_AGENT_FRAGMENTS = (
+    "rtl-implementation",
+    "tb-implementation",
+    "rtl-lint-static",
+    "sim-execution",
+    "coverage",
+    "mutation-guard",
+    "evidence-validator",
+    "gate-reviewer",
+    "custom-worker",
+)
+LOCK_REQUIRED_STAGES = {"rtl", "lint", "tb", "sim", "coverage", "cov", "formal", "signoff", "gate", "closure"}
 
 
 def utc_now() -> str:
@@ -142,6 +154,45 @@ def hash_known_paths(paths: list[str]) -> dict[str, str]:
     return hashes
 
 
+def scope_lock_status(ip_dir: Path) -> dict[str, Any]:
+    path = ip_dir / "ontology" / "scope_lock.json"
+    if not path.is_file():
+        return {"state": "draft", "locked": False, "missing": True}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"state": "draft", "locked": False, "invalid": True}
+    if not isinstance(data, dict):
+        return {"state": "draft", "locked": False, "invalid": True}
+    state = str(data.get("state") or data.get("status") or "draft").strip().lower()
+    return {"state": state, "locked": state == "locked", "path": project_rel(path), "lock": data}
+
+
+def dispatch_requires_lock(agent_type: str, stage: str, allowed_write_paths: list[str]) -> bool:
+    agent = agent_type.lower()
+    stage_name = stage.lower()
+    if any(fragment in agent for fragment in LOCK_REQUIRED_AGENT_FRAGMENTS):
+        return True
+    if stage_name in LOCK_REQUIRED_STAGES:
+        return True
+    protected_prefixes = (
+        "/req/locked_truth.md",
+        "/ontology/requirements.yaml",
+        "/ontology/obligations.yaml",
+        "/ontology/contracts.yaml",
+        "/ontology/structure.yaml",
+        "/ontology/decomposition.yaml",
+        "/rtl/",
+        "/tb/",
+        "/sim/",
+        "/lint/",
+        "/cov/",
+        "/formal/",
+        "/signoff/",
+    )
+    return any(any(prefix in f"/{path}" for prefix in protected_prefixes) for path in allowed_write_paths)
+
+
 def path_matches(path: str, patterns: list[str]) -> bool:
     path = path.strip("/")
     for pattern in patterns:
@@ -213,6 +264,13 @@ def create_dispatch(args: argparse.Namespace) -> dict[str, Any]:
     receipt_path = ensure_under_ip(args.receipt_path, ip_dir, field="receipt_path")
     if not path_matches(receipt_path, allowed_write_paths):
         allowed_write_paths.append(str(Path(receipt_path).parent).replace("\\", "/") + "/")
+    if dispatch_requires_lock(args.agent_type, args.stage, allowed_write_paths):
+        lock = scope_lock_status(ip_dir)
+        if lock.get("locked") is not True:
+            raise ValueError(
+                "scope lock required before implementation, validation, or gate dispatch; "
+                "ask the user to confirm scope and run oag.lock"
+            )
 
     for sequence in range(0, 100):
         dispatch_id = safe_dispatch_id(ip_dir.name, args.agent_type, sequence=sequence)

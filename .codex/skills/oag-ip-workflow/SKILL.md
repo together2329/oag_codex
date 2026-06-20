@@ -46,6 +46,43 @@ transport boundary, input/output interfaces, supported feature scope, buffering
 and backpressure, filtering/addressing, and error/drop/status policy. Store
 unconfirmed answers only as draft knowledge.
 
+## Scope Lock
+
+Each IP has one implementation permission switch:
+`ontology/scope_lock.json`.
+
+- `draft`: questions, summaries, draft requirements, and options only.
+- `locked`: user has confirmed the scope; canonical ontology enrichment, RTL,
+  TB, validation, gate review, and closure may proceed.
+
+No lock, no RTL. No lock, no TB. No lock, no closure.
+
+Check status before implementation or closure:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+```
+
+When the user explicitly says `lock`, `lock this`, `lock scope`, or `lock
+requirements`, record the approval:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{
+  "tool": "oag.lock",
+  "arguments": {
+    "ip_dir": "<ip>",
+    "summary": "Human-confirmed scope summary.",
+    "confirmed_scope": ["confirmed requirement or boundary"],
+    "actor": {"kind": "human", "id": "user", "surface": "codex"}
+  }
+}'
+```
+
+If the user changes requirements after lock, save the new answer with
+`oag.draft`; that returns the IP to draft state. Ask for a fresh lock before
+continuing implementation. Use `oag.unlock` only when the user explicitly
+withdraws approval.
+
 For a new IP, scaffold the ontology-first folder layout before creating RTL,
 TB, or evidence artifacts:
 
