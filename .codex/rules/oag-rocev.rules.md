@@ -18,8 +18,8 @@ Before IP work:
   use the exact oag keyword when team prompts should activate OAG mode; auto research, subagent, and signoff are work terms, not trigger words
   keep .codex/config.toml [features].multi_agent=true, [features].child_agents_md=true, [features.multi_agent_v2].enabled=false, and [agents].max_depth=1 for trusted-project subagent support
   use .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply to patch team user config when native subagents are not enabled
-  trigger subagents through Codex multi_agent_v1.spawn_agent, naming .codex/agents/*.toml agents and bounded shard scopes
-  if the current Codex runtime does not expose native subagents, state that and record fallback work as OAG evidence or draft knowledge
+  trigger subagents through native Codex subagents, using multi_agent_v1.spawn_agent where exposed or the equivalent Codex CLI/App spawn_agent collaboration event
+  if an explicit native spawn cannot be started in the active surface, report BLOCKED and do not substitute Python, shell wrappers, or manual child-role impersonation unless the user waives native subagents
   every spawn message starts with TASK and includes DELIVERABLE, SCOPE, and VERIFY
   use fork_context=false unless the child truly needs full parent history
 

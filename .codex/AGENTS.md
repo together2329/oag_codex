@@ -65,21 +65,27 @@ force-disabled so Codex falls back to the v1 multi-agent path when native
 subagents are available. Use
 `scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
 patch a team member's user config, then restart Codex or open a fresh trusted
-project session. If the native subagent tool is still not exposed, state that
-single runtime limitation and record the fallback work as OAG evidence or draft
-knowledge.
+project session. Do not treat missing tool-namespace visibility in one agent
+surface as proof that native subagents are unavailable; Codex CLI/App may
+surface the native collaboration path as an internal `spawn_agent` event. If a
+real native spawn cannot be started after an explicit subagent request, report
+`BLOCKED: native Codex subagent unavailable in this surface` and stop or ask the
+user to restart/open a fresh trusted `ip_dev` session. Do not replace the child
+agent with Python, shell scripts, or manual role-play unless the user explicitly
+waives the native-subagent requirement.
 
 Use the exact `oag` keyword for OAG mode in team workflows. Hooks should not
 inject OAG mode merely because a prompt mentions generic RTL, testing,
 subagent, auto-research, or signoff terms unless an IP directory is explicit.
 
-Codex subagents are native `multi_agent_v1` workers, not Python-triggered
+Codex subagents are native Codex collaboration workers, not Python-triggered
 workers. Ask Codex to spawn named custom agents from `.codex/agents/*.toml`
-using `multi_agent_v1.spawn_agent`, give each one a bounded self-contained
-`TASK/DELIVERABLE/SCOPE/VERIFY` message, wait for summaries with
-`multi_agent_v1.wait_agent`, and then let the main agent validate and record
-ROCEV evidence. `agent_type` is a routing hint, so role requirements must also
-be pasted into the message. Prompt patterns live in
+using the native subagent facility (`multi_agent_v1.spawn_agent` where exposed,
+or the equivalent Codex CLI/App `spawn_agent` collaboration event), give each
+one a bounded self-contained `TASK/DELIVERABLE/SCOPE/VERIFY` message, wait for
+summaries, and then let the main agent validate and record ROCEV evidence.
+`agent_type` is a routing hint, so role requirements must also be pasted into
+the message. Prompt patterns live in
 `.codex/oag/subagent-workflows.md`. Evidence-producing OAG subagents are checked
 by the `SubagentStop` hook only when they are write-capable, and must end with
 `OAG_EVIDENCE_RECORDED: <relative-path>`. Subagents may never claim final

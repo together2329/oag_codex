@@ -86,6 +86,8 @@ REQUIRED_DOC_SNIPPETS = {
     CODEX_ROOT / "AGENTS.md": (
         "oag-mode-directive.md",
         "multi_agent_v1.spawn_agent",
+        "native Codex collaboration workers",
+        "Do not replace the child",
         "enabled = false",
         "oag_agent_catalog_check.py",
         "oag_closure_check.py",
@@ -97,14 +99,18 @@ REQUIRED_DOC_SNIPPETS = {
         "OAG MODE ENABLED!",
         "Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision",
         "multi_agent_v1.spawn_agent",
+        "native Codex subagents",
+        "Do not continue as a manual",
         "record_decision=true",
         "CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE",
     ),
     CODEX_ROOT / "oag" / "subagent-workflows.md": (
         "multi_agent_v1.spawn_agent",
+        "native Codex collaboration workers",
         "enabled = false",
         "OAG_EVIDENCE_RECORDED",
         "Do not run a Python",
+        "BLOCKED: native Codex subagent unavailable in this surface",
     ),
 }
 

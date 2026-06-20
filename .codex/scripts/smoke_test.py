@@ -501,7 +501,9 @@ def main() -> int:
         subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
         assert "agent_type" in subagent_workflows, subagent_workflows
-        assert "Do not run a Python" in subagent_workflows and "script to spawn them" in subagent_workflows, subagent_workflows
+        assert "native Codex collaboration workers" in subagent_workflows, subagent_workflows
+        assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
+        assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
         mcp_text = (ROOT / "mcp.json").read_text(encoding="utf-8")
         user_home_prefix = "/" + "Users/"

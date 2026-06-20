@@ -13,8 +13,9 @@ OAG, not through chat memory.
    If Codex hooks are enabled, UserPromptSubmit may inject this context
    automatically; still verify the active IP/stage before acting.
 6. If work is sharded across Codex subagents, validate
-   `.codex/oag/agent-catalog.toml`, then use native
-   `multi_agent_v1.spawn_agent` with named agents from `.codex/agents/*.toml`.
+   `.codex/oag/agent-catalog.toml`, then use native Codex subagents with named
+   agents from `.codex/agents/*.toml`. Use `multi_agent_v1.spawn_agent` where
+   exposed, or the equivalent Codex CLI/App `spawn_agent` collaboration event.
    Each child message must include TASK, DELIVERABLE, SCOPE, VERIFY, and an
    explicit shard scope.
 7. For goal-driven work, call `oag.run.start`; then use `oag.run.next` to get
@@ -39,8 +40,10 @@ OAG, not through chat memory.
   OAG NEXT ACTION instead of stopping.
 - Interview drafts are durable memory, not locked truth. Promote only after
   explicit human confirmation.
-- Subagent assignments are Codex `multi_agent_v1` agent threads. They do not
-  replace ROCEV evidence, OAG decisions, or gate review.
+- Subagent assignments are native Codex agent threads. They do not replace
+  ROCEV evidence, OAG decisions, or gate review.
+- Do not substitute Python runners, shell wrappers, or manual role-play for a
+  requested native subagent unless the user explicitly waives native subagents.
 - Custom subagents require explicit shard scope in the prompt and may not claim
   final completion.
 - Missing obligations, missing contracts, missing evidence, stale evidence

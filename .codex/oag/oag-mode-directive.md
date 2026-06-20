@@ -65,14 +65,15 @@ CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE
 
 ## Native Codex Subagents
 
-Use native Codex `multi_agent_v1.spawn_agent` when work is parallel and bounded.
-Do not run a Python script to spawn subagents.
+Use native Codex subagents when work is parallel and bounded. Do not run a
+Python script, shell wrapper, or manual role-play substitute to spawn
+subagents.
 
 Every spawn assignment must be self-contained and start with `TASK:`. Include
 `DELIVERABLE`, `SCOPE`, and `VERIFY`. Use `fork_context=false` unless the child
 truly needs full parent history.
 
-Example shape:
+When the current surface exposes the v1 tool directly, use this shape:
 
 ```text
 multi_agent_v1.spawn_agent({
@@ -82,14 +83,25 @@ multi_agent_v1.spawn_agent({
 })
 ```
 
+In Codex CLI/App, the same native operation may appear as an internal
+`spawn_agent` collaboration event followed by `wait` and a child thread id. That
+is also native. Missing `multi_agent_v1` namespace visibility in one surface is
+not a reason to manually impersonate a child agent.
+
 Treat `agent_type` as a routing hint, not proof that a TOML role, model,
 reasoning effort, or service tier was selected. Put the role requirements inside
 the child message.
 
-Use `multi_agent_v1.wait_agent` for mailbox signals only. A timeout means no
-new mailbox update arrived; it is not proof of failure. Use
-`multi_agent_v1.send_input` for targeted follow-up and
-`multi_agent_v1.close_agent` after integrating a completed or inconclusive lane.
+Use native waiting/mailbox behavior for child results. A timeout means no new
+mailbox update arrived; it is not proof of failure. Use native child steering
+for targeted follow-up and close child threads after integrating a completed or
+inconclusive lane.
+
+If an explicit native spawn cannot be started in the active surface, report
+`BLOCKED: native Codex subagent unavailable in this surface` and ask for a fresh
+trusted `ip_dev` Codex CLI/App session. Do not continue as a manual
+requirement-contract, IP-contract, RTL, TB, or review "subagent" unless the user
+explicitly waives the native-subagent requirement.
 
 Evidence-producing write-capable OAG subagents must write a non-empty receipt
 and end with:

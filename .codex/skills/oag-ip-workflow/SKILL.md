@@ -105,13 +105,19 @@ members can run
 `python3 scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply`
 to patch their user Codex config, or let the SessionStart hook apply the same
 guard at startup. Restart Codex or open a fresh trusted project session after a
-config patch. Do not narrate a speculative probe such as "checking whether
-multi_agent_v1 is available." If a native spawn attempt is unavailable in the
-active runtime, state that single runtime limitation and record the fallback
-analysis as OAG draft knowledge or evidence.
+config patch. Do not narrate speculative tool-namespace probes such as
+"checking whether multi_agent_v1 is available." Missing `multi_agent_v1`
+visibility in one agent surface is not proof that native subagents are
+unavailable; Codex CLI/App can surface the same operation as an internal
+`spawn_agent` collaboration event. If an explicit native spawn cannot be
+started, report `BLOCKED: native Codex subagent unavailable in this surface`
+and stop or ask the user to restart/open a fresh trusted `ip_dev` session. Do
+not continue by manually applying the child role unless the user explicitly
+waives the native-subagent requirement.
 
-Subagents are native Codex `multi_agent_v1` workers, not Python runners. Use
-self-contained spawn assignments like:
+Subagents are native Codex collaboration workers, not Python runners. Use
+self-contained spawn assignments like this when the v1 tool is directly
+exposed:
 
 ```text
 multi_agent_v1.spawn_agent({
@@ -120,6 +126,11 @@ multi_agent_v1.spawn_agent({
   "fork_context": false
 })
 ```
+
+In Codex CLI/App traces, the same native operation can appear as a `spawn_agent`
+collaboration event, followed by a `wait` event and a child thread id. Treat
+that as native. Treat Python/shell worker processes or manual role-play as
+non-native and do not use them for "use subagent" requests.
 
 For implementation splits:
 
@@ -131,9 +142,9 @@ multi_agent_v1.spawn_agent({
 })
 ```
 
-Use `multi_agent_v1.wait_agent` for mailbox signals; timeout means no new
-update, not failure. Use `multi_agent_v1.send_input` for targeted follow-up and
-`multi_agent_v1.close_agent` after integrating a completed or inconclusive lane.
+Use native waiting/mailbox behavior for child results; timeout means no new
+update, not failure. Use native child steering for targeted follow-up and close
+child threads after integrating a completed or inconclusive lane.
 Treat `agent_type` as a routing hint and paste role requirements into the child
 message. See `.codex/oag/subagent-workflows.md` for more prompt shapes. Custom
 subagents are execution actors only. They must stay inside the prompted shard,

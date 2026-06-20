@@ -1,10 +1,10 @@
 # OAG Codex Subagent Workflows
 
-Codex subagents are native Codex `multi_agent_v1` workers. Do not run a Python
-script to spawn them. The main agent uses a prompt/directive to ask Codex to call
-`multi_agent_v1.spawn_agent`, waits for mailbox signals with
-`multi_agent_v1.wait_agent`, integrates the result, then records durable OAG
-evidence through the normal ROCEV flow.
+Codex subagents are native Codex collaboration workers. Do not run a Python
+script, shell wrapper, or manual role-play substitute to spawn them. The main
+agent uses a prompt/directive to ask Codex to start native subagents, waits for
+their results, integrates the result, then records durable OAG evidence through
+the normal ROCEV flow.
 
 Project-scoped custom agent definitions live in `.codex/agents/*.toml`. OAG
 metadata for those roles lives in `.codex/oag/agent-catalog.toml`.
@@ -20,14 +20,20 @@ the v1 multi-agent path when native subagents are available. Use
 `scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
 patch user-level Codex config for team members, or rely on the SessionStart hook
 to do the same at startup. The active Codex runtime still has to expose the
-native subagent tool after restart or a fresh trusted project session. Do not
-narrate a speculative probe; if a native spawn attempt is unavailable, record
-the intended subagent assignment and fallback analysis as OAG draft knowledge or
-evidence instead of claiming a child agent ran.
+native subagent facility after restart or a fresh trusted project session. Do
+not narrate speculative tool-namespace probes. Missing `multi_agent_v1` in one
+agent surface is not proof that native subagents are unavailable; Codex CLI/App
+may surface the same operation as an internal `spawn_agent` collaboration event.
+If an explicit native spawn cannot be started, report
+`BLOCKED: native Codex subagent unavailable in this surface` and stop or ask the
+user to restart/open a fresh trusted `ip_dev` session. Do not continue by
+pretending a child agent ran, and do not manually apply a child role as a
+substitute unless the user explicitly waives the native-subagent requirement.
 
 ## Native Trigger
 
-The actual spawn is a Codex native tool call:
+The native spawn may appear as a Codex native tool call when the current surface
+exposes it:
 
 ```text
 multi_agent_v1.spawn_agent({
@@ -36,6 +42,11 @@ multi_agent_v1.spawn_agent({
   "fork_context": false
 })
 ```
+
+In Codex CLI/App traces the same native path can appear as a collaboration event
+such as `spawn_agent`, followed by a `wait` event and a child thread id. Both
+are native Codex subagents. A Python process that role-plays the instructions is
+not.
 
 Use `agent_type` as a routing hint, not as proof that a TOML role, model,
 reasoning effort, or service tier was selected. Always paste the role
@@ -46,8 +57,8 @@ Use `fork_context: false` unless the child truly needs full parent history. Full
 history can make the child continue stale parent context instead of the assigned
 task.
 
-Use `multi_agent_v1.wait_agent` for mailbox signals only. A wait timeout means
-"no new update arrived"; it is not proof that the child failed. For long work,
+Use native waiting/mailbox behavior for child results. A wait timeout means "no
+new update arrived"; it is not proof that the child failed. For long work,
 require the child to send:
 
 ```text
@@ -55,8 +66,8 @@ WORKING: <task> - <current phase>
 BLOCKED: <reason>
 ```
 
-Use `multi_agent_v1.send_input` only for targeted follow-up, and
-`multi_agent_v1.close_agent` after integrating a completed or inconclusive lane.
+Use native child steering only for targeted follow-up, and close child threads
+after integrating a completed or inconclusive lane.
 Do not mark a dependent step complete while an active child owns evidence for
 that step.
 
