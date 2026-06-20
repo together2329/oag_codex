@@ -23,6 +23,16 @@ SCRIPTS_DIR = CODEX_ROOT / "scripts"
 HOOKS_DIR = CODEX_ROOT / "hooks"
 SCHEMAS_DIR = CODEX_ROOT / "schemas"
 
+SOURCE_SCAN_EXCLUDED_PARTS = {
+    ".cache",
+    ".tmp",
+    "tmp",
+    "runs",
+    "sessions",
+    "shell_snapshots",
+    "__pycache__",
+}
+
 REQUIRED_FILES = (
     CODEX_ROOT / "AGENTS.md",
     CODEX_ROOT / "config.toml",
@@ -39,6 +49,7 @@ REQUIRED_FILES = (
     SCRIPTS_DIR / "oag_closure_check.py",
     SCRIPTS_DIR / "oag_cli.py",
     SCRIPTS_DIR / "oag_dispatch.py",
+    SCRIPTS_DIR / "oag_exec_auto_research.py",
     SCRIPTS_DIR / "oag_main_write_gate.py",
     SCRIPTS_DIR / "oag_validate_json.py",
     SCRIPTS_DIR / "smoke_test.py",
@@ -102,6 +113,7 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_closure_check.py",
         "oag_codex_config_doctor.py",
         "oag_dispatch.py",
+        "oag_exec_auto_research.py",
         "oag_main_write_gate.py",
         "oag_validate_json.py",
         "checked_artifact_hashes",
@@ -147,6 +159,8 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_main_write_gate.py",
         "git status --short -uall -- <ip>",
         "SubagentStart",
+        "oag_exec_auto_research.py",
+        "codex exec resume",
         "first attempt a minimal explicit",
         "native spawn",
         "observed",
@@ -348,7 +362,11 @@ def check_forbidden_strings(issues: list[dict[str, str]]) -> None:
         if root.is_file():
             files.append(root)
         elif root.is_dir():
-            files.extend(path for path in root.rglob("*") if path.is_file() and ".cache" not in path.parts and "__pycache__" not in path.parts)
+            files.extend(
+                path
+                for path in root.rglob("*")
+                if path.is_file() and not (SOURCE_SCAN_EXCLUDED_PARTS & set(path.relative_to(CODEX_ROOT).parts))
+            )
     for path in files:
         if path.suffix in {".pyc"}:
             continue

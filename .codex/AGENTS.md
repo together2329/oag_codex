@@ -38,6 +38,7 @@ Primary assets:
 - `scripts/oag_dispatch.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_pack_release_check.py`
+- `scripts/oag_exec_auto_research.py`
 - `schemas/*.schema.json`
 - `mcp.json`
 - `config.toml`
@@ -152,6 +153,11 @@ agent/user. It writes `handoff/readiness_handoff.json` and history entries that
 derive `development_ready`, `signoff_ready`, blockers, and ranked next actions
 from current OAG metrics plus auto-research reports; development closure must
 not be presented as signoff readiness.
+Use `python3 .codex/scripts/oag_exec_auto_research.py` when auto research should
+run through a resumable `codex exec` or `codex exec resume` session. Prefer an
+exact `--session-id` over `--last`, keep JSONL traces and manifests under
+`.codex/runs/auto_research/`, and require observed native `spawn_agent`
+collaboration before counting the run as native subagent-backed.
 The Codex Stop hook in `hooks/codex_stop_gate.py` adapts this to the Codex hook
 contract: incomplete active runs print `{"decision":"block","reason":"..."}` and
 complete/no-run cases stay silent.

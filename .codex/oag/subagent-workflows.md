@@ -53,6 +53,30 @@ such as `spawn_agent`, followed by a `wait` event and a child thread id. Both
 are native Codex subagents. A Python process that role-plays the instructions is
 not.
 
+## Exec-Resume Auto Research
+
+For unattended or pane-independent auto research, use the wrapper:
+
+```bash
+python3 .codex/scripts/oag_exec_auto_research.py \
+  --ip-dir <ip> \
+  --session-id <exact-codex-session-id> \
+  --objective "<bounded research objective>" \
+  --yolo \
+  --bypass-hook-trust
+```
+
+The wrapper invokes `codex exec` or `codex exec resume`, captures JSONL events,
+and writes a manifest under `.codex/runs/auto_research/`. Prefer an exact
+session id over `--last`; `--last` can select the wrong pane or older thread.
+Do not count an auto-research run as native subagent-backed unless the manifest
+observes a `spawn_agent` collaboration event. The wrapper is orchestration
+evidence; it does not replace OAG records, dispatch receipts, validator reports,
+or gate review. Read-only wrapper runs should use a built-in explorer-style
+subagent. Use OAG custom/write-capable roles only after creating an OAG dispatch
+record and passing the dispatch id, path, allowed writes, side effects, and
+receipt path into the child assignment.
+
 Use `agent_type` as a routing hint, not as proof that a TOML role, model,
 reasoning effort, or service tier was selected. Always paste the role
 requirements into `message` so the child has a self-contained executable

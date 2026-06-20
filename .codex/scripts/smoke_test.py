@@ -14,6 +14,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = ROOT.parent
 OAG = ROOT / "scripts" / "oag_cli.py"
 GRAPH = ROOT / "scripts" / "oag_graph.py"
 MCP = ROOT / "scripts" / "oag_mcp_server.py"
@@ -23,6 +24,7 @@ EVAL = ROOT / "scripts" / "oag_eval.py"
 ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
 DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
+EXEC_AUTO_RESEARCH = ROOT / "scripts" / "oag_exec_auto_research.py"
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
 MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
@@ -626,6 +628,9 @@ def main() -> int:
         assert "git status --short -uall -- <ip>" in subagent_workflows, subagent_workflows
         assert "After user lock, main agent orchestrates" in subagent_workflows, subagent_workflows
         assert "oag_main_write_gate.py" in subagent_workflows, subagent_workflows
+        assert "oag_exec_auto_research.py" in subagent_workflows, subagent_workflows
+        assert "codex exec resume" in subagent_workflows, subagent_workflows
+        assert "spawn_agent" in subagent_workflows and ".codex/runs/auto_research/" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
         agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         directive_text = OAG_MODE_DIRECTIVE.read_text(encoding="utf-8")
@@ -650,6 +655,7 @@ def main() -> int:
         assert "No lock, no RTL" in agents_text, agents_text
         assert "After user lock, main agent orchestrates" in agents_text, agents_text
         assert "oag_main_write_gate.py" in agents_text, agents_text
+        assert "oag_exec_auto_research.py" in agents_text, agents_text
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
@@ -670,6 +676,44 @@ def main() -> int:
         assert 'enabled = false' in config_text, config_text
         assert 'max_concurrent_threads_per_session = 10000' in config_text, config_text
         assert 'max_depth = 1' in config_text, config_text
+
+        dry_run_root = Path(tmp) / "exec_auto_research_runs"
+        exec_auto_research = subprocess.run(
+            [
+                sys.executable,
+                str(EXEC_AUTO_RESEARCH),
+                "--ip-dir",
+                "timer_ip",
+                "--objective",
+                "dry-run wrapper contract check",
+                "--run-root",
+                str(dry_run_root),
+                "--dry-run",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=PROJECT_ROOT,
+        )
+        assert exec_auto_research.returncode == 0, exec_auto_research.stderr or exec_auto_research.stdout
+        exec_auto_research_result = json.loads(exec_auto_research.stdout)
+        assert exec_auto_research_result["status"] == "dry_run", exec_auto_research_result
+        assert exec_auto_research_result["dry_run"] is True, exec_auto_research_result
+        assert exec_auto_research_result["prompt_sha256"], exec_auto_research_result
+        prompt_text = Path(exec_auto_research_result["prompt_path"]).read_text(encoding="utf-8")
+        assert "codex exec" in " ".join(exec_auto_research_result["command_preview"]), exec_auto_research_result
+        assert "spawn_agent" in prompt_text, prompt_text
+        assert "Use a native Codex subagent. Spawn one built-in explorer subagent." in prompt_text, prompt_text
+        assert "Do not run parent-side shell commands before the native spawn attempt" in prompt_text, prompt_text
+        assert "Product root:" in prompt_text, prompt_text
+        assert "from the product root, not from inside the IP directory" in prompt_text, prompt_text
+        assert "Do not decide native-spawn availability from the visible callable tool namespace alone" in prompt_text, prompt_text
+        assert "built-in explorer-style native subagent" in prompt_text, prompt_text
+        assert "not an OAG custom/write-capable role" in prompt_text, prompt_text
+        assert "FINAL_AUTO_RESEARCH_SUMMARY" in prompt_text, prompt_text
+        gitignore_text = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
+        assert ".codex/runs/" in gitignore_text, gitignore_text
 
         codex_home = Path(tmp) / "codex_home"
         codex_home.mkdir(parents=True, exist_ok=True)

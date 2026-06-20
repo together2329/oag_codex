@@ -5,6 +5,7 @@ __pycache__/
 .codex/.cache/
 .codex/.tmp/
 .codex/tmp/
+.codex/runs/
 .codex/sessions/
 .codex/shell_snapshots/
 .codex/*.sqlite
