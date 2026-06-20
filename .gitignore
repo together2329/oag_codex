@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+
+.codex/.cache/
+.codex/.tmp/
+.codex/tmp/
+.codex/sessions/
+.codex/shell_snapshots/
+.codex/*.sqlite
+.codex/*.sqlite-*

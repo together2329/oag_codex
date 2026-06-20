@@ -1,0 +1,46 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_context_inject.py",
+            "timeout": 10,
+            "statusMessage": "OAG: injecting IP context"
+          },
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_draft_pressure.py",
+            "timeout": 10,
+            "statusMessage": "OAG: checking interview draft pressure"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_stop_gate.py",
+            "timeout": 10,
+            "statusMessage": "OAG: checking active run completion"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_context_inject.py",
+            "timeout": 10,
+            "statusMessage": "OAG: restoring IP context after compact"
+          }
+        ]
+      }
+    ]
+  }
+}

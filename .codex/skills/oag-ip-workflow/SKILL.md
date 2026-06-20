@@ -1,0 +1,345 @@
+---
+name: oag-ip-workflow
+description: Use when working on hardware IP requirements, RTL, testbench, simulation, coverage, signoff, common design-rule review, or evidence review through the Ontology Agent Gateway. Calls OAG before acting, records ROCEV-backed findings with explicit validation status, checks closure matrix and completion decisions, keeps scoreboard evidence TB/simulator agnostic through scoreboard_rows.v1, protects locked truth fields, preserves append-only evidence ledger events, enforces monotonic closure and evidence freshness hashes, writes decision receipts, and applies common design rules such as same-cycle priority, event/state commit consistency, contract-to-proof coverage, fault-model coverage, verification role decomposition, and RTL language subset.
+---
+
+# OAG IP Workflow
+
+Use this skill for hardware IP work where requirement, obligation, contract,
+evidence, and validation must stay explicit.
+
+## Start
+
+For a new IP, scaffold the ontology-first folder layout before creating RTL,
+TB, or evidence artifacts:
+
+```bash
+python3 scripts/oag_scaffold_ip.py create <ip> --owner <owner>
+```
+
+The scaffold creates `req`, `ontology`, `knowledge`, `rtl`, `tb`, `sim`,
+`lint`, `cov`, `formal`, `syn`, `sdc`, `list`, `doc`, and `signoff` with seed
+Requirement -> Obligation -> Contract -> Evidence -> Validation files.
+It also creates stage contracts, closure policy, protected-field policy, gate
+registry, stage receipt schema, decision receipt schema, failure-ticket schema,
+an append-only `knowledge/ledger.jsonl`, and a common
+`ontology/design_rules.yaml` rulebook. It also creates
+`ontology/structure.yaml` for the shared signal/register/interface namespace and
+`ontology/decomposition.yaml` for module ownership and structure profile.
+
+Do not require a specific testbench implementation. Verilog, SystemVerilog,
+UVM, Python, cocotb, or a simulator adapter are all valid if they emit the
+standard evidence rows in `sim/scoreboard_events.jsonl`.
+
+Before editing or claiming analysis, call OAG for the active IP:
+
+```bash
+python3 scripts/oag_cli.py call --json '{"tool":"oag.inspect","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+python3 scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+```
+
+Use `oag.inspect` for legacy IP folders with no knowledge ledger. Use
+`oag.compile` after ontology edits. Use `oag.context` for prompt-ready ontology
+records. When Codex hooks are enabled, `codex_context_inject.py` can inject this
+context automatically on relevant UserPromptSubmit events.
+
+For work that should keep moving across edit/test/stop boundaries, start a
+durable run loop:
+
+```bash
+python3 scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
+```
+
+`oag.run.start` derives the active obligation from the closure matrix and writes
+`ontology/runs/<run_id>/run_state.json`, `next_action.json`, and
+`checkpoint_history.jsonl`. `oag.run.next` always returns one action to take
+next. The run loop is a driver; it does not replace ROCEV records or decision
+receipts.
+
+After `oag.compile`, treat `ontology/generated/design_spec.json`,
+`ontology/generated/authoring_packets/*.json`, and
+`ontology/generated/design_facts_graph.json` as read-only work inputs. The
+design spec and authoring packets are compiled projections from authored
+ontology. The design facts graph is extracted from current RTL with `pyslang`
+when available, falling back to a conservative parser when needed. If a
+projection is wrong, edit `ontology/requirements.yaml`,
+`ontology/obligations.yaml`, `ontology/contracts.yaml`,
+`ontology/structure.yaml`, `ontology/decomposition.yaml`, or
+`ontology/policies.yaml`, then compile again. If extracted facts disagree with
+decomposition, fix the RTL module names/files or the authored decomposition,
+not the generated facts file.
+
+For deep requirement interviews, do not wait for the user to say "save this" to
+preserve draft knowledge. After each meaningful user answer or before a long
+context transition, call `oag.draft` with the current facts, decisions,
+assumptions, and open questions. Drafts are not locked truth; they are captured
+under `req/interview_draft.md`, `ontology/drafts/`, and `knowledge/records/`.
+
+## During Work
+
+When a meaningful stage boundary is reached, append one record:
+
+```bash
+python3 scripts/oag_cli.py call --json '{
+  "tool": "oag.record",
+  "arguments": {
+    "ip_dir": "<ip>",
+    "stage": "sim",
+    "type": "finding",
+    "claim": "scoreboard reset rows closed",
+    "summary": "Observed reset rows matched expected state.",
+    "actor": {"kind": "ai", "id": "codex", "surface": "cli"},
+    "rocev": {
+      "requirement": {"id": "REQ_RESET", "source": "req/locked_truth.md"},
+      "obligation": {"id": "OBL_RESET_STATE", "text": "reset state is observable and stable"},
+      "contract": {"id": "CONTRACT_SIM_SCOREBOARD", "method": "scoreboard", "pass_condition": "mismatch count is zero"},
+      "evidence": {"files": ["sim/results.xml", "sim/scoreboard_events.jsonl"], "tests": [], "commit": ""},
+      "validation": {"status": "closed", "verdict": "pass", "rationale": "simulation and scoreboard evidence are clean"}
+    }
+  }
+}'
+```
+
+When an OAG run is active, use `oag.run.record` to record evidence against the
+current run target and refresh the next action:
+
+```bash
+python3 scripts/oag_cli.py call --json '{"tool":"oag.run.record","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","summary":"evidence inspected and validation recorded"}}'
+```
+
+Closed records require `rocev.validation.status` to be explicit. Evidence files
+are SHA-256 fingerprinted by `oag.record`; if an evidence file changes later,
+`oag.check` treats the record as stale until a fresh validation is recorded.
+
+For interview draft capture:
+
+```bash
+python3 scripts/oag_cli.py call --json '{
+  "tool": "oag.draft",
+  "arguments": {
+    "ip_dir": "<ip>",
+    "stage": "req",
+    "title": "requirement interview round",
+    "summary": "What was learned in this round.",
+    "facts": ["confirmed fact"],
+    "decisions": ["explicitly chosen default"],
+    "assumptions": ["temporary assumption"],
+    "open_questions": ["remaining question"]
+  }
+}'
+```
+
+`oag.record`, `oag.draft`, and `oag.ticket` append hash-chained events to
+`knowledge/ledger.jsonl`. Do not hand-edit this ledger. If `oag.check` reports
+ledger tampering, protected field changes, or a monotonic closure violation,
+stop and report the blocker.
+
+When a stage produces evidence that may be used for signoff, write a
+`stage_run_receipt.v1` JSON file under `ontology/evidence/stage_runs/` with
+input/output SHA-256 fingerprints.
+
+When designing RTL structure, choose the decomposition profile instead of
+hard-coding "all one file" or "always split":
+
+- `small_leaf_single_file`: tiny leaf IPs may keep one editable module with a
+  rationale.
+- `greenfield_modular`: new nontrivial IPs should split behavior into modules
+  with explicit obligation/contract ownership and interface boundaries. Each
+  current-IP module should map to a unique RTL file by default; shared files
+  require explicit `shared_file_rationale`.
+- `legacy_preserve`: imported legacy IPs keep existing hierarchy while OAG maps
+  requirements and evidence onto that hierarchy.
+- `wrapper_adapter`: a legacy/child core remains protected while wrapper or
+  adapter modules own new integration obligations.
+
+Every obligation and contract should have an owning module in
+`ontology/decomposition.yaml`. Module authoring should begin from the generated
+packet for that module when it exists.
+`ontology/generated/design_facts_graph.json` is the current implementation fact
+view: modules, ports, parameters, registers, memories, instances, source file
+hashes, extractor backend, and git HEAD when available. Use it to review large
+IP hierarchy/connectivity without treating it as locked truth.
+
+Do not change protected truth or policy fields silently. Protected paths are
+declared in `ontology/protection.yaml` and include locked requirements,
+obligations, contracts, structure/decomposition policy, and closure policy.
+Semantic edits require a human-approved decision record.
+
+When work exposes a common semantic hazard, activate a design-rule instance in
+`ontology/design_rules.yaml` instead of leaving it as chat prose. Use this for
+same-cycle priority conflicts, event/state commit consistency, and
+contract-to-proof coverage. For packet/message designs with multiple active
+contexts, use `interleaved_context_coverage` when packet-level interleaving must
+be proven, for example `A.SOM -> B.SOM -> A.EOM -> B.EOM`. Keep the RTL
+language subset rule active as the coding-policy baseline. Active instances must
+point back to the relevant requirement, obligation, contract, and evidence as
+the IP matures.
+
+When a coverage point becomes load-bearing evidence, add a
+`fault_model_coverage` instance instead of relying on hit count alone. The
+instance should connect `coverage_refs` to requirement-relevant `fault_models`
+and killed `mutation_results` with an evidence file such as
+`mutation/relevant_tc/relevant_mutation_summary.json`. If mutation is not
+applicable, set `mutation_not_required: true` and include a rationale.
+
+For signoff-grade testbench architecture, add a
+`verification_role_decomposition` instance. This imports UVM concepts without
+requiring UVM syntax or SystemVerilog classes: `sequence` owns stimulus intent,
+`driver` owns DUT input protocol driving, `monitor` owns DUT-facing observation,
+`reference_model` owns expected prediction, `scoreboard` owns compare,
+`coverage` owns coverage refs, `env` owns wiring/config/run control, and `test`
+owns scenario/seed selection. Closed instances must keep expected_source,
+observed_source, and compare_source as separate roles.
+
+For signoff-grade domain claims, activate the SSOT-aligned rule kind instead of
+leaving the claim as review prose:
+
+- `cdc_crossing_coverage`: clock/reset-domain crossings from
+  `clock_reset_domains`, `cdc_requirements`, or `rdc_requirements`.
+- `protocol_compliance`: AXI/APB/streaming/valid-ready protocol assertions,
+  monitors, VIP, or protocol scoreboard evidence.
+- `timing_closure`: target frequency or target clocks, SDC constraints derived
+  from those clocks and CDC policy, plus STA/sta-post setup and hold evidence.
+- `functional_coverage_closure`: coverage goals versus observed coverage refs
+  from `coverage_functional`, `coverage_ssot`, scoreboard rows, or coverage JSON.
+- `reset_xprop_coverage`: reset sequencing, async assert/sync deassert, reset
+  domain behavior, and X-prop robustness.
+
+Closed instances must link requirement, obligation, contract, and evidence
+files. Coverage-bearing instances must cite `coverage_refs` that appear in
+scoreboard rows or coverage JSON. For timing, use target clocks or
+`target_frequency_mhz` to derive `create_clock`; use CDC/RDC facts to derive
+async clock groups or CDC exceptions; default input/output delay is 50% of clock
+period unless the IP overrides it. DFT and power are not OAG v1 default gates.
+
+When a failure needs routed repair, create one failure ticket:
+
+```bash
+python3 scripts/oag_cli.py call --json '{
+  "tool": "oag.ticket",
+  "arguments": {
+    "ip_dir": "<ip>",
+    "stage": "sim",
+    "reason": "scoreboard mismatch",
+    "failing_contract": {"id": "CONTRACT_SIM_SCOREBOARD"},
+    "expected": {},
+    "observed": {},
+    "evidence": {"files": ["sim/scoreboard_events.jsonl"]},
+    "editable_files": ["rtl/<ip>.sv"],
+    "required_evidence_after_patch": ["sim/results.xml", "sim/scoreboard_events.jsonl"]
+  }
+}'
+```
+
+## Visualize
+
+When the user asks to understand the ontology, dependency shape, evidence
+coverage, or gaps, generate a graph viewer:
+
+```bash
+python3 .codex/scripts/oag_graph.py build \
+  --ip-dir <ip> \
+  --stage <stage> \
+  --intent "<task>" \
+  --json-out <ip>/ontology/generated/oag_graph.json \
+  --html-out <ip>/ontology/generated/oag_graph.html
+```
+
+Open the generated HTML directly in a browser. It is self-contained and supports
+search, type/status filters, node lists, and node detail inspection.
+
+## Finish
+
+Before claiming completion:
+
+```bash
+python3 scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
+python3 scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+```
+
+For an active run, prefer:
+
+```bash
+python3 scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+```
+
+If a stop hook is available, call `oag.stop_check`. If it returns
+`should_continue: true`, continue with the returned prompt block instead of
+claiming completion. If checkpoint repeats the same blocker three times, the run
+status becomes `needs_human`.
+
+If `oag.decide` returns `allowed: false`, report the blocker instead of saying
+the IP is complete. If it returns `allowed: true`, the decision receipt under
+`ontology/validations/` is the durable completion decision. Completion actions
+are blocked unless `record_decision` is true.
+
+For `action=signoff`, OAG requires `ontology/policies.yaml` to use
+`closure_profile: signoff`, a compiled truth graph, a closed closure matrix,
+fresh evidence hashes, fresh stage receipts, clean protected fields, a valid
+append-only ledger, monotonic closure, an independent `oag.review` reviewer
+receipt, and a decision receipt. The policy transition itself is protected;
+record a human decision when moving into signoff.
+Do not model single-worker vs orchestrator as separate ontology modes; record the
+actual runner in actor/execution metadata.
+Over time, keep OAG-managed implementation and evidence git-backed: RTL, TB,
+filelists, SDC, docs, generated facts, and signoff artifacts should be tied to
+commit IDs or SHA-256 fingerprints in records and stage receipts.
+
+If the runtime exposes context usage or compaction pressure and it is high
+(about 70% or more), save an `oag.draft` before continuing an interview. Do not
+rely on context compaction to preserve requirement decisions.
+When Codex hooks are enabled, `codex_draft_pressure.py` injects this reminder but
+does not invent facts; the agent must summarize confirmed facts into `oag.draft`.
+
+## Rule
+
+Do not collapse ROCEV into "tests passed." A compile pass, lint pass,
+simulation pass, scoreboard evidence, coverage, waveform, formal proof, and
+signoff close different obligations.
+
+For scoreboard evidence, standardize the row semantics, not the TB language.
+Use `scoreboard_rows.v1`: `goal_id`, `scenario_id`, `cycle`, `stimulus`,
+`expected`, `observed`, `observed_source`, `passed`, `mismatch`, and
+`coverage_refs`. `observed_source.kind` must name a DUT observation source such
+as `dut_signal`, `monitor`, `waveform`, `transaction`, or `assertion`; it must
+not be an FL/CL/model source.
+
+For RTL semantics, use the common design rulebook instead of IP-specific prose.
+OAG expects rules for event/state commit consistency, same-cycle priority
+declaration, scoreboard evidence schema, contract-to-proof coverage,
+module/file ownership boundary, the RTL language subset, and optional
+signoff-grade CDC/protocol/timing/functional-coverage/reset-X-prop domain
+closures. Timing closure requires target frequency/clocks before SDC/STA can be
+claimed. The default
+language subset allows `logic` and Verilog
+`generate`/`genvar`/`generate for` for static elaboration; procedural `for`,
+`while`, `repeat`, or `forever` loops outside generate blocks are forbidden. OAG
+extracts lightweight RTL facts through `design_facts_graph.json`; it does not
+replace lint, elaboration, formal, protocol VIP, or signoff tools. It checks
+that declared hazards and language policies are tied to ROCEV objects and that
+formal/assertion contracts name proof evidence.
+
+For closure semantics, OAG expects seven platform gates:
+
+- Protected fields: locked truth and signoff policy changes require a
+  human-approved decision record.
+- Append-only evidence ledger: event records are hash chained in
+  `knowledge/ledger.jsonl`.
+- Monotonic closure: once an object is closed or passed, an AI record cannot
+  silently weaken it back to draft/open/stale; use a decision or a refuted
+  record instead.
+- Explicit validation: evidence never auto-closes a record; closed records must
+  set `rocev.validation.status`.
+- Closure matrix: every obligation must map to a contract and a closed
+  validation record.
+- Evidence freshness: closed records store SHA-256 hashes for evidence files.
+- Independent reviewer: signoff/promote requires a passing `oag.review` receipt
+  from a different actor when the profile is signoff.
+- Decision receipt: completion decisions are written to `ontology/validations/`
+  and hash-chained into the ledger.
+
+For the tool schema and object vocabulary, read
+`references/oag-tool-call-contract.md`.

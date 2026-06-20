@@ -1,0 +1,2176 @@
+#!/usr/bin/env python3
+"""Smoke test for the .codex ontology IP agent pack."""
+
+from __future__ import annotations
+
+import json
+import os
+import hashlib
+import importlib.util
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OAG = ROOT / "scripts" / "oag_cli.py"
+GRAPH = ROOT / "scripts" / "oag_graph.py"
+MCP = ROOT / "scripts" / "oag_mcp_server.py"
+PORTABLE_DB = ROOT / "scripts" / "oag_portable_db.py"
+OKF = ROOT / "scripts" / "oag_okf.py"
+EVAL = ROOT / "scripts" / "oag_eval.py"
+ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
+DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
+SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
+STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
+CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
+DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
+HOOKS_JSON = ROOT / "hooks.json"
+
+
+def call(payload: dict) -> dict:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    proc = subprocess.run(
+        [sys.executable, str(OAG), "call", "--json", json.dumps(payload)],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout)
+    return json.loads(proc.stdout)
+
+
+def call_process(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(OAG), "call", "--json", json.dumps(payload)],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_dev_validator(ip: Path) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [
+            sys.executable,
+            str(DEV_VALIDATOR),
+            "--ip-dir",
+            str(ip),
+            "--stage",
+            "sim",
+            "--intent",
+            "smoke development validator",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_spec_to_rtl_loop(ip: Path, spec: Path, *, metrics: bool = False) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    command = [
+        sys.executable,
+        str(SPEC_RTL_LOOP),
+        "--ip-dir",
+        str(ip),
+        "--spec",
+        str(spec),
+        "--stage",
+        "sim",
+        "--intent",
+        "smoke spec-to-RTL loop",
+        "--write-static-summary",
+        "--json",
+    ]
+    if metrics:
+        command.append("--metrics")
+    return subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def stop_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(STOP_GATE)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def context_hook(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(CONTEXT_HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def hook_context(proc: subprocess.CompletedProcess[str]) -> str:
+    if not proc.stdout.strip():
+        return ""
+    payload = json.loads(proc.stdout)
+    output = payload.get("hookSpecificOutput") if isinstance(payload, dict) else {}
+    return str(output.get("additionalContext") or "") if isinstance(output, dict) else ""
+
+
+def hook_target_names(project: Path, payload: dict, *, require_signal: bool = True) -> list[str]:
+    spec = importlib.util.spec_from_file_location("oag_hook_utils_smoke", ROOT / "hooks" / "oag_hook_utils.py")
+    assert spec and spec.loader, spec
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.PROJECT = project
+    return [path.name for path in module.target_ip_dirs(payload, require_signal=require_signal)]
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def make_ip(root: Path) -> Path:
+    ip = root / "demo_counter_cx1"
+    scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
+    assert scaffold["ok"] is True, scaffold
+    assert scaffold["result"]["schema_version"] == "oag_scaffold_result.v1", scaffold
+    assert (ip / "ontology" / "ip.yaml").is_file()
+    assert (ip / "ontology" / "requirements.yaml").is_file()
+    assert (ip / "ontology" / "obligations.yaml").is_file()
+    assert (ip / "ontology" / "contracts.yaml").is_file()
+    assert (ip / "ontology" / "structure.yaml").is_file()
+    assert (ip / "ontology" / "decomposition.yaml").is_file()
+    assert (ip / "ontology" / "design_rules.yaml").is_file()
+    assert (ip / "ontology" / "drafts").is_dir()
+    assert (ip / "ontology" / "stages.yaml").is_file()
+    assert (ip / "ontology" / "policies.yaml").is_file()
+    policy_text = (ip / "ontology" / "policies.yaml").read_text(encoding="utf-8")
+    assert "execution_policy:" in policy_text, policy_text
+    assert "hook_auto_continue_until: all" in policy_text, policy_text
+    assert "graph_policy:" in policy_text, policy_text
+    assert "compile_skip_when_fresh: true" in policy_text, policy_text
+    assert (ip / "ontology" / "protection.yaml").is_file()
+    assert (ip / "ontology" / "evidence" / "scoreboard_rows.v1.yaml").is_file()
+    assert (ip / "ontology" / "evidence" / "stage_run_receipt.v1.yaml").is_file()
+    assert (ip / "ontology" / "decision_receipt.v1.yaml").is_file()
+    assert (ip / "ontology" / "run_state.v1.yaml").is_file()
+    assert (ip / "ontology" / "metrics").is_dir()
+    assert (ip / "ontology" / "metrics" / "improvement_metrics.v1.yaml").is_file()
+    assert (ip / "ontology" / "handoff_readiness.v1.yaml").is_file()
+    assert (ip / "ontology" / "gates" / "gate_self_test_registry.yaml").is_file()
+    assert (ip / "knowledge" / "_index.json").is_file()
+    assert (ip / "knowledge" / "ledger.jsonl").is_file()
+    assert (ip / "list" / "rtl.f").is_file()
+    (ip / "rtl" / "rtl_compile.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    (ip / "lint" / "dut_lint.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    (ip / "sim" / "results.xml").write_text('<testsuite failures="0"/>\n', encoding="utf-8")
+    rows = [
+        {
+            "goal_id": "GOAL_COUNTER_INC",
+            "scenario_id": "SC_INC_001",
+            "cycle": 1,
+            "stimulus": {"valid": 1},
+            "expected": {"count": 1},
+            "expected_source": {"kind": "manual_spec", "ref": "req/locked_truth.md"},
+            "observed": {"count": 1},
+            "observed_source": {"kind": "dut_signal", "path": "dut.count"},
+            "passed": True,
+            "mismatch": "",
+            "coverage_refs": ["COV_INC"],
+        },
+        {
+            "goal_id": "GOAL_COUNTER_INC",
+            "scenario_id": "SC_INC_002",
+            "cycle": 2,
+            "stimulus": {"valid": 1},
+            "expected": {"count": 2},
+            "expected_source": {"kind": "manual_spec", "ref": "req/locked_truth.md"},
+            "observed": {"count": 2},
+            "observed_source": {"kind": "monitor", "path": "counter_monitor.count"},
+            "passed": True,
+            "mismatch": "",
+            "coverage_refs": ["COV_INC"],
+        },
+    ]
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    (ip / "cov" / "coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    (ip / "signoff" / "truth_coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    return ip
+
+
+def write_stage_receipt(ip: Path, stage: str) -> None:
+    receipt = {
+        "schema_version": "stage_run_receipt.v1",
+        "stage": stage,
+        "owner": stage,
+        "status": "pass",
+        "command": "smoke-test",
+        "actor": {"kind": "tool", "id": "smoke_test"},
+        "started_at": "2026-01-01T00:00:00Z",
+        "completed_at": "2026-01-01T00:00:01Z",
+        "input_fingerprints": [
+            {"path": "rtl/rtl_compile.json", "sha256": sha256(ip / "rtl" / "rtl_compile.json")},
+            {"path": "lint/dut_lint.json", "sha256": sha256(ip / "lint" / "dut_lint.json")},
+        ],
+        "output_fingerprints": [
+            {"path": "sim/results.xml", "sha256": sha256(ip / "sim" / "results.xml")},
+            {"path": "sim/scoreboard_events.jsonl", "sha256": sha256(ip / "sim" / "scoreboard_events.jsonl")},
+        ],
+    }
+    out = ip / "ontology" / "evidence" / "stage_runs" / f"{stage}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+
+def write_ip_validator_report(ip: Path) -> None:
+    path = ip / "signoff" / "ip_validator_report.json"
+    path.write_text(
+        json.dumps({"schema_version": "ip_validator_report.v1", "status": "pass"}) + "\n",
+        encoding="utf-8",
+    )
+
+
+def close_demo_counter(ip: Path, *, claim: str, evidence_files: list[str] | None = None) -> dict:
+    return call(
+        {
+            "tool": "oag.record",
+            "arguments": {
+                "ip_dir": str(ip),
+                "stage": "sim",
+                "type": "finding",
+                "claim": claim,
+                "summary": "development validator smoke evidence closes the counter scoreboard obligation",
+                "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                "rocev": {
+                    "obligation": {"id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", "text": "scoreboard has no mismatches"},
+                    "contract": {
+                        "id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                        "method": "scoreboard",
+                        "pass_condition": "mismatch count is zero",
+                    },
+                    "evidence": {
+                        "files": evidence_files or ["sim/results.xml", "sim/scoreboard_events.jsonl"],
+                        "tests": [],
+                        "commit": "",
+                    },
+                    "validation": {"status": "closed", "verdict": "pass", "rationale": "all development validator gates have evidence"},
+                },
+            },
+        }
+    )
+
+
+def mcp_tools_list() -> dict:
+    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+    proc = subprocess.run(
+        [sys.executable, str(MCP)],
+        input=json.dumps(initialize) + "\n" + json.dumps(tools) + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or proc.stdout)
+    lines = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+    return lines[-1]
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory() as tmp:
+        hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
+        assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
+        stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
+        assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
+        assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert STOP_GATE.is_file(), STOP_GATE
+        assert CONTEXT_HOOK.is_file(), CONTEXT_HOOK
+        assert DRAFT_HOOK.is_file(), DRAFT_HOOK
+        assert PORTABLE_DB.is_file(), PORTABLE_DB
+        assert OKF.is_file(), OKF
+        assert EVAL.is_file(), EVAL
+        assert ANSWER_KEY_EVAL.is_file(), ANSWER_KEY_EVAL
+        assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
+        assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
+
+        ip = make_ip(Path(tmp))
+        compiled = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+        assert compiled["result"]["status"] == "pass", compiled
+        assert compiled["result"]["stats"]["design_rules"] >= 13, compiled
+        assert compiled["result"]["stats"]["modules"] >= 1, compiled
+        assert compiled["result"]["stats"]["design_facts_modules"] == 0, compiled
+        assert compiled["result"]["stats"]["authoring_packets"] >= 1, compiled
+        assert (ip / "ontology" / "generated" / "design_truth_graph.json").is_file()
+        assert (ip / "ontology" / "generated" / "design_spec.json").is_file()
+        assert (ip / "ontology" / "generated" / "compile_manifest.json").is_file()
+        compile_cached = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+        assert compile_cached["result"]["status"] == "pass", compile_cached
+        assert compile_cached["result"]["skipped"] is True, compile_cached
+        compile_forced = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip), "force": True}})
+        assert compile_forced["result"]["status"] == "pass", compile_forced
+        assert compile_forced["result"]["skipped"] is False, compile_forced
+        design_facts_path = ip / "ontology" / "generated" / "design_facts_graph.json"
+        assert design_facts_path.is_file()
+        design_facts = json.loads(design_facts_path.read_text(encoding="utf-8"))
+        assert design_facts["schema_version"] == "oag_design_facts_graph.v1", design_facts
+        assert design_facts["status"] == "pass", design_facts
+        assert design_facts["stats"]["rtl_source_files"] == 0, design_facts
+        assert "git_head" not in (design_facts.get("extractor") or {}), design_facts
+        truth_graph = json.loads((ip / "ontology" / "generated" / "design_truth_graph.json").read_text(encoding="utf-8"))
+        truth_facts = truth_graph.get("generated", {}).get("design_facts", {})
+        assert "git_head" not in (truth_facts.get("extractor") or {}), truth_graph
+        assert (ip / "ontology" / "generated" / "authoring_packets" / "module__demo_counter_cx1.json").is_file()
+        assert (ip / "ontology" / "runs").is_dir()
+        inspect = call({"tool": "oag.inspect", "arguments": {"ip_dir": str(ip), "stage": "sim"}})
+        assert inspect["result"]["validation"] == "partial", inspect
+        assert "closure matrix has open obligations" in inspect["result"]["gaps"], inspect
+        assert inspect["result"]["evidence"]["truth_graph"]["status"] == "pass", inspect
+        assert inspect["result"]["evidence"]["design_facts_graph"]["status"] == "pass", inspect
+        assert inspect["result"]["evidence"]["design_rules"]["count"] >= 13, inspect
+        assert inspect["result"]["evidence"]["structure"]["profile"] == "small_leaf_single_file", inspect
+        assert inspect["result"]["evidence"]["decomposition"]["modules"] >= 1, inspect
+        assert inspect["result"]["evidence"]["authoring_packets"]["count"] >= 1, inspect
+        scoreboard = inspect["result"]["evidence"]["scoreboard"]["summary"]
+        assert scoreboard["schema"] == "scoreboard_rows.v1", scoreboard
+        assert scoreboard["standard_rows"] == 2, scoreboard
+        assert scoreboard["schema_failed"] == 0, scoreboard
+        init = call({"tool": "oag.init", "arguments": {"ip_dir": str(ip)}})
+        assert init["ok"] is True, init
+        limit_ip = make_ip(Path(tmp) / "policy_limit")
+        limit_run = call(
+            {
+                "tool": "oag.run.start",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "stage": "sim",
+                    "intent": "smoke stage-limit policy",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        limit_run_id = limit_run["result"]["run_id"]
+        limit_config = call(
+            {
+                "tool": "oag.configure",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "hook_auto_continue_until": "rtl",
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                    "approval": {"kind": "human", "approved": True, "reason": "smoke limit"},
+                },
+            }
+        )
+        assert limit_config["result"]["updates"]["hook_auto_continue_until"] == "rtl", limit_config
+        limited_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
+        assert limited_stop["result"]["should_continue"] is False, limited_stop
+        assert limited_stop["result"]["reason"] == "policy_limit_reached", limited_stop
+        assert limited_stop["result"]["policy"]["next_action_stage"] == "sim", limited_stop
+        limited_hook = stop_gate({"ip_dir": str(limit_ip), "run_id": limit_run_id})
+        assert limited_hook.returncode == 0, limited_hook.stderr or limited_hook.stdout
+        assert limited_hook.stdout == "", limited_hook.stdout
+        sim_config = call(
+            {
+                "tool": "oag.configure",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "hook_auto_continue_until": "sim",
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                    "approval": {"kind": "human", "approved": True, "reason": "smoke limit"},
+                },
+            }
+        )
+        assert sim_config["result"]["updates"]["hook_auto_continue_until"] == "sim", sim_config
+        sim_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
+        assert sim_stop["result"]["should_continue"] is True, sim_stop
+        none_config = call(
+            {
+                "tool": "oag.configure",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "hook_auto_continue_until": "none",
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                    "approval": {"kind": "human", "approved": True, "reason": "smoke limit"},
+                },
+            }
+        )
+        assert none_config["result"]["updates"]["hook_auto_continue_until"] == "none", none_config
+        none_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
+        assert none_stop["result"]["should_continue"] is False, none_stop
+        command_ip = make_ip(Path(tmp) / "command_limit")
+        command_run = call(
+            {
+                "tool": "oag.run.start",
+                "arguments": {
+                    "ip_dir": str(command_ip),
+                    "stage": "sim",
+                    "intent": "smoke short chat run-limit command",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        command_hook = context_hook({"ip_dir": str(command_ip), "prompt": "rtl까지만"})
+        assert command_hook.returncode == 0, command_hook.stderr or command_hook.stdout
+        assert "OAG RUN LIMIT CONFIGURED" in hook_context(command_hook), command_hook.stdout
+        command_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(command_ip), "run_id": command_run["result"]["run_id"]}})
+        assert command_stop["result"]["should_continue"] is False, command_stop
+        assert command_stop["result"]["policy"]["hook_auto_continue_until"] == "rtl", command_stop
+        run_start = call(
+            {
+                "tool": "oag.run.start",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "sim",
+                    "intent": "smoke close reset scoreboard obligation",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert run_start["result"]["schema_version"] == "oag_run_start.v1", run_start
+        run_id = run_start["result"]["run_id"]
+        assert run_start["result"]["status"] == "in_progress", run_start
+        assert run_start["result"]["next_action"]["active_obligation"] == "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", run_start
+        assert "OAG NEXT ACTION" in run_start["result"]["next_action"]["prompt_block"], run_start
+        assert (ip / "ontology" / "runs" / run_id / "run_state.json").is_file(), run_start
+        assert (ip / "ontology" / "runs" / run_id / "next_action.json").is_file(), run_start
+        assert (ip / "ontology" / "runs" / run_id / "checkpoint_history.jsonl").is_file(), run_start
+        stop_before = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+        assert stop_before["result"]["should_continue"] is True, stop_before
+        assert "OAG NEXT ACTION" in stop_before["result"]["prompt_block"], stop_before
+        stop_hook_before = stop_gate({"ip_dir": str(ip), "run_id": run_id})
+        assert stop_hook_before.returncode == 0, stop_hook_before.stderr or stop_hook_before.stdout
+        stop_hook_block = json.loads(stop_hook_before.stdout)
+        assert stop_hook_block["decision"] == "block", stop_hook_block
+        assert "OAG NEXT ACTION" in stop_hook_block["reason"], stop_hook_block
+        assert "run incomplete" in stop_hook_block["reason"], stop_hook_block
+        stop_cache = Path(tmp) / "stop_gate_cache.json"
+        limited_env = {"OAG_STOP_GATE_CACHE": str(stop_cache), "OAG_STOP_GATE_MAX_BLOCK_REPEATS": "1"}
+        stop_hook_limited_first = stop_gate({"ip_dir": str(ip), "run_id": run_id}, limited_env)
+        assert stop_hook_limited_first.returncode == 0, stop_hook_limited_first.stderr or stop_hook_limited_first.stdout
+        assert json.loads(stop_hook_limited_first.stdout)["decision"] == "block", stop_hook_limited_first.stdout
+        stop_hook_limited_second = stop_gate({"ip_dir": str(ip), "run_id": run_id}, limited_env)
+        assert stop_hook_limited_second.returncode == 0, stop_hook_limited_second.stderr or stop_hook_limited_second.stdout
+        assert stop_hook_limited_second.stdout == "", stop_hook_limited_second.stdout
+        run_loop_record = call(
+            {
+                "tool": "oag.run.record",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "run_id": run_id,
+                    "stage": "sim",
+                    "summary": "run-loop smoke scoreboard evidence closes the reset obligation",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert run_loop_record["result"]["record"]["status"] == "closed", run_loop_record
+        assert run_loop_record["result"]["status"] == "checkpoint_ready", run_loop_record
+        run_checkpoint = call(
+            {
+                "tool": "oag.run.checkpoint",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "run_id": run_id,
+                    "stage": "sim",
+                    "intent": "smoke close reset scoreboard obligation",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert run_checkpoint["result"]["allowed"] is True, run_checkpoint
+        assert run_checkpoint["result"]["status"] == "complete", run_checkpoint
+        assert run_checkpoint["result"]["decision"]["decision_receipt"], run_checkpoint
+        run_state_path = ip / "ontology" / "runs" / run_id / "run_state.json"
+        run_history_path = ip / "ontology" / "runs" / run_id / "checkpoint_history.jsonl"
+        complete_state = json.loads(run_state_path.read_text(encoding="utf-8"))
+        complete_history = run_history_path.read_text(encoding="utf-8")
+        terminal_next = call({"tool": "oag.run.next", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+        assert terminal_next["result"]["status"] == "complete", terminal_next
+        assert terminal_next["result"]["terminal"] is True, terminal_next
+        assert terminal_next["result"]["reason"] == "run_complete", terminal_next
+        assert json.loads(run_state_path.read_text(encoding="utf-8"))["iteration"] == complete_state["iteration"], terminal_next
+        assert run_history_path.read_text(encoding="utf-8") == complete_history, terminal_next
+        stop_after = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+        assert stop_after["result"]["should_continue"] is False, stop_after
+        assert stop_after["result"]["reason"] == "run_complete", stop_after
+        stop_hook_after = stop_gate({"ip_dir": str(ip), "run_id": run_id})
+        assert stop_hook_after.returncode == 0, stop_hook_after.stderr or stop_hook_after.stdout
+        assert stop_hook_after.stdout == "", stop_hook_after.stdout
+        record = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "sim",
+                    "type": "finding",
+                    "claim": "counter scoreboard closed",
+                    "summary": "scoreboard rows are clean",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "rocev": {
+                        "obligation": {"id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", "text": "scoreboard has no mismatches"},
+                        "contract": {
+                            "id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                            "method": "scoreboard",
+                            "pass_condition": "mismatch count is zero",
+                        },
+                        "evidence": {"files": ["sim/results.xml", "sim/scoreboard_events.jsonl"], "tests": [], "commit": ""},
+                        "validation": {"status": "closed", "verdict": "pass", "rationale": "all scoreboard rows have mismatch=false"},
+                    },
+                },
+            }
+        )
+        assert record["result"]["status"] == "closed", record
+        assert len(record["result"]["record"]["evidence"]["file_hashes"]) == 2, record
+        assert record["result"]["ledger_event"], record
+        assert (ip / "knowledge" / "ledger.jsonl").read_text(encoding="utf-8").strip(), record
+        index_body = json.loads((ip / "knowledge" / "_index.json").read_text(encoding="utf-8"))
+        record_files = [
+            *sorted((ip / "knowledge" / "records").glob("*.json")),
+            *sorted((ip / "knowledge" / "records").glob("*.yaml")),
+            *sorted((ip / "knowledge" / "records").glob("*.yml")),
+        ]
+        assert index_body["record_count"] == len(record_files), index_body
+        indexed_record = next(item for item in index_body["records"] if item["id"] == record["result"]["id"])
+        assert indexed_record["obligation_id"] == "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", indexed_record
+        assert indexed_record["contract_id"] == "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", indexed_record
+        assert indexed_record["validation_status"] == "closed", indexed_record
+        assert indexed_record["evidence_files"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], indexed_record
+        metrics = call(
+            {
+                "tool": "oag.metrics",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "sim",
+                    "intent": "smoke numeric improvement snapshot",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert metrics["result"]["recorded"] is True, metrics
+        assert Path(metrics["result"]["path"]).is_file(), metrics
+        assert Path(metrics["result"]["history"]).is_file(), metrics
+        metric_body = metrics["result"]["metrics"]
+        assert metric_body["schema_version"] == "oag_improvement_metrics.v1", metric_body
+        assert metric_body["closure"]["closed"] == metric_body["closure"]["total"], metric_body
+        assert metric_body["closure"]["closed_percent"] == 100.0, metric_body
+        assert metric_body["check"]["issue_count"] == 0, metric_body
+        assert metric_body["evidence"]["files_present_count"] >= 2, metric_body
+        metrics_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip), "stage": "sim"}})
+        assert metrics_check["result"]["improvement_metrics"]["closure"]["closed_percent"] == 100.0, metrics_check
+        metrics_context = call({"tool": "oag.context", "arguments": {"ip_dir": str(ip), "stage": "sim", "intent": "metrics"}})
+        assert "metrics closure=1/1 (100.0%)" in metrics_context["result"]["prompt_block"], metrics_context
+        (ip / "signoff").mkdir(parents=True, exist_ok=True)
+        (ip / "signoff" / "truth_coverage.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "truth_coverage.v1",
+                    "evidence_summary": {
+                        "formal_assertion": {
+                            "status": "development_pass",
+                            "property_count": 3,
+                            "bound_cycles": 8,
+                            "numeric_summary": {
+                                "baseline_property_count": 1,
+                                "properties_checked": 3,
+                                "properties_added": 2,
+                                "baseline_bound_cycles": 4,
+                                "bound_cycles": 8,
+                                "bound_cycles_added": 4,
+                                "bounded_steps_checked": 8,
+                                "baseline_assertion_site_count": 2,
+                                "source_assertion_site_count": 5,
+                                "assertion_sites_added": 3,
+                                "bounded_property_step_checks": 24,
+                                "baseline_bounded_property_step_checks": 4,
+                                "bounded_property_step_checks_added": 20,
+                                "bounded_assertion_site_step_checks": 40,
+                                "issues_found": 0,
+                            },
+                        },
+                        "mutation": {
+                            "status": "pass",
+                            "mutants_run": 2,
+                            "mutants_killed": 2,
+                            "mutants_survived": 0,
+                            "fault_models": ["reset_missing", "count_stuck"],
+                        },
+                        "implementation_sta": {
+                            "status": "development_pass",
+                            "target_clocks": [{"name": "clk", "period_ns": 10.0}],
+                            "metrics": {
+                                "wns_ns": 0.0,
+                                "tns_ns": 0.0,
+                                "unconstrained_text_seen": False,
+                                "corner_count": 3,
+                                "corners_passed": 3,
+                                "corners_failed": 0,
+                                "violated_corner_count": 0,
+                            },
+                            "numeric_summary": {
+                                "baseline_corner_count": 1,
+                                "corner_count": 3,
+                                "corners_added": 2,
+                                "corners_passed": 3,
+                                "corners_failed": 0,
+                                "worst_setup_slack_ns": 1.25,
+                                "worst_hold_slack_ns": 0.12,
+                                "worst_wns_ns": 0.0,
+                                "worst_tns_ns": 0.0,
+                                "violated_corner_count": 0,
+                                "timing_analysis_count": 6,
+                                "timing_metric_count": 12,
+                                "negative_timing_metric_count": 0,
+                                "worst_setup_slack_corner": "slow",
+                                "worst_hold_slack_corner": "fast",
+                                "worst_setup_slack_margin_percent_of_period": 12.5,
+                                "worst_hold_slack_margin_percent_of_period": 1.2,
+                            },
+                        },
+                        "gate_reset_xprop": {
+                            "status": "development_pass",
+                            "numeric_summary": {
+                                "baseline_known_output_check_count": 2,
+                                "known_output_check_count": 4,
+                                "known_output_checks_added": 2,
+                                "baseline_scenario_count": 1,
+                                "scenario_count": 2,
+                                "scenarios_added": 1,
+                                "known_output_bit_check_count": 136,
+                                "failures": 0,
+                            },
+                            "observations": {
+                                "known_output_check_count": 4,
+                                "known_output_bit_check_count": 136,
+                                "scenarios": ["reset", "readback"],
+                            },
+                        },
+                        "protocol_compliance": {
+                            "status": "pass",
+                            "protocol": "APB4",
+                            "interface": "if_apb4_slave",
+                            "method": "scoreboard_rows_v1_protocol_observation",
+                            "numeric_summary": {
+                                "baseline_protocol_row_count": 3,
+                                "protocol_row_count": 5,
+                                "protocol_rows_added": 2,
+                                "baseline_response_row_count": 3,
+                                "response_row_count": 5,
+                                "response_rows_added": 2,
+                                "read_response_row_count": 3,
+                                "write_response_row_count": 2,
+                                "invalid_response_row_count": 2,
+                                "invalid_read_response_row_count": 1,
+                                "invalid_write_response_row_count": 1,
+                                "baseline_phase_row_count": 3,
+                                "phase_row_count": 5,
+                                "phase_rows_added": 2,
+                                "baseline_protocol_coverage_ref_count": 4,
+                                "required_protocol_coverage_ref_count": 6,
+                                "protocol_coverage_refs_added": 2,
+                                "observed_protocol_coverage_ref_count": 6,
+                                "baseline_coverage_ref_count": 2,
+                                "coverage_ref_count": 4,
+                                "coverage_refs_added": 2,
+                                "scoreboard_row_count": 6,
+                                "protocol_check_count": 20,
+                                "protocol_checks_passed": 20,
+                                "protocol_checks_failed": 0,
+                            },
+                        },
+                        "scoreboard": {"total": 2, "passed": 2, "failed": 0},
+                        "coverage": {"status": "pass", "covered": ["reset", "count"]},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        handoff = call(
+            {
+                "tool": "oag.handoff",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "handoff",
+                    "intent": "smoke numeric readiness handoff",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert handoff["result"]["recorded"] is True, handoff
+        assert Path(handoff["result"]["path"]).is_file(), handoff
+        assert Path(handoff["result"]["history"]).is_file(), handoff
+        assert Path(handoff["result"]["metrics_path"]).is_file(), handoff
+        handoff_body = handoff["result"]["handoff"]
+        assert handoff_body["schema_version"] == "oag_readiness_handoff.v1", handoff_body
+        assert handoff_body["progress_denominator"] == "derived_from_active_ip_obligations", handoff_body
+        assert handoff_body["numeric_summary"]["obligations_closed"] == 1, handoff_body
+        assert handoff_body["numeric_summary"]["obligations_total"] == 1, handoff_body
+        assert handoff_body["numeric_summary"]["closure_percent"] == 100.0, handoff_body
+        strength = handoff_body["evidence_strength_summary"]
+        assert strength["formal"]["property_count"] == 3, strength
+        assert strength["formal"]["properties_added"] == 2, strength
+        assert strength["formal"]["bound_cycles"] == 8, strength
+        assert strength["formal"]["bound_cycles_added"] == 4, strength
+        assert strength["formal"]["bounded_property_step_checks"] == 24, strength
+        assert strength["formal"]["source_assertion_site_count"] == 5, strength
+        assert strength["formal"]["assertion_sites_added"] == 3, strength
+        assert strength["mutation"]["mutation_score_percent"] == 100.0, strength
+        assert strength["implementation_sta"]["corner_count"] == 3, strength
+        assert strength["implementation_sta"]["corners_passed"] == 3, strength
+        assert strength["implementation_sta"]["violated_corner_count"] == 0, strength
+        assert strength["implementation_sta"]["worst_setup_slack_ns"] == 1.25, strength
+        assert strength["implementation_sta"]["timing_metric_count"] == 12, strength
+        assert strength["implementation_sta"]["negative_timing_metric_count"] == 0, strength
+        assert strength["implementation_sta"]["worst_setup_slack_corner"] == "slow", strength
+        assert strength["implementation_sta"]["worst_setup_slack_margin_percent_of_period"] == 12.5, strength
+        assert strength["gate_reset_xprop"]["known_output_check_count"] == 4, strength
+        assert strength["gate_reset_xprop"]["known_output_checks_added"] == 2, strength
+        assert strength["gate_reset_xprop"]["scenario_count"] == 2, strength
+        assert strength["gate_reset_xprop"]["known_output_bit_check_count"] == 136, strength
+        assert strength["protocol"]["protocol_row_count"] == 5, strength
+        assert strength["protocol"]["protocol_rows_added"] == 2, strength
+        assert strength["protocol"]["invalid_write_response_row_count"] == 1, strength
+        assert strength["protocol"]["protocol_checks_passed"] == 20, strength
+        assert strength["scoreboard"]["status"] == "pass", strength
+        assert handoff_body["checks"]["evidence_strength_summary_has_formal_count"] is True, handoff_body
+        assert handoff_body["checks"]["evidence_strength_summary_has_formal_step_count"] is True, handoff_body
+        assert handoff_body["checks"]["evidence_strength_summary_has_protocol_count"] is True, handoff_body
+        assert handoff_body["readiness"]["development_ready"] is True, handoff_body
+        assert handoff_body["readiness"]["signoff_ready"] is False, handoff_body
+        assert "closure_profile is development, not signoff" in handoff_body["readiness"]["not_ready_reasons"], handoff_body
+        handoff_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip), "stage": "handoff"}})
+        assert handoff_check["result"]["ok"] is True, handoff_check
+        zero_strength_ip = make_ip(Path(tmp) / "zero_strength")
+        zero_handoff = call(
+            {
+                "tool": "oag.handoff",
+                "arguments": {
+                    "ip_dir": str(zero_strength_ip),
+                    "stage": "handoff",
+                    "intent": "smoke zero-count development handoff",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert zero_handoff["result"]["recorded"] is True, zero_handoff
+        zero_body = zero_handoff["result"]["handoff"]
+        assert zero_body["evidence_strength_summary"]["formal"]["property_count"] == 0, zero_body
+        assert zero_body["evidence_strength_summary"]["formal"]["bounded_property_step_checks"] == 0, zero_body
+        assert zero_body["evidence_strength_summary"]["protocol"]["protocol_row_count"] == 0, zero_body
+        assert zero_body["evidence_strength_summary"]["protocol"]["protocol_check_count"] == 0, zero_body
+        assert zero_body["checks"]["evidence_strength_summary_has_formal_count"] is True, zero_body
+        assert zero_body["checks"]["evidence_strength_summary_has_formal_step_count"] is True, zero_body
+        assert zero_body["checks"]["evidence_strength_summary_has_protocol_count"] is True, zero_body
+        zero_handoff_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(zero_strength_ip), "stage": "handoff"}})
+        assert not any("handoff report check failed" in issue for issue in zero_handoff_check["result"]["issues"]), zero_handoff_check
+        draft = call(
+            {
+                "tool": "oag.draft",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "req",
+                    "title": "counter requirement interview round 1",
+                    "summary": "Captured draft requirement facts before locked-truth promotion.",
+                    "facts": ["AXI data width is 256 bits"],
+                    "open_questions": ["Which reset value is architecturally locked?"],
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert draft["result"]["status"] == "draft", draft
+        assert Path(draft["result"]["draft_path"]).is_file(), draft
+        assert Path(draft["result"]["markdown_path"]).is_file(), draft
+        context = call({"tool": "oag.context", "arguments": {"ip_dir": str(ip), "stage": "sim", "intent": "scoreboard"}})
+        assert "IP KNOWLEDGE LEDGER" in context["result"]["prompt_block"], context
+        cache_path = ROOT / ".cache" / "context_inject.json"
+        cache_path.unlink(missing_ok=True)
+        context_payload = {"ip_dir": str(ip), "stage": "sim", "prompt": f"Continue sim work for {ip.name}"}
+        context_first = context_hook(context_payload)
+        assert context_first.returncode == 0, context_first.stderr or context_first.stdout
+        assert "OAG CONTEXT INJECTION" in hook_context(context_first), context_first.stdout
+        context_duplicate = context_hook(context_payload)
+        assert context_duplicate.returncode == 0, context_duplicate.stderr or context_duplicate.stdout
+        assert context_duplicate.stdout == "", context_duplicate.stdout
+        context_high_pressure = context_hook({**context_payload, "context_pressure": "high"})
+        assert context_high_pressure.returncode == 0, context_high_pressure.stderr or context_high_pressure.stdout
+        assert context_high_pressure.stdout == "", context_high_pressure.stdout
+        context_post_compact = context_hook({**context_payload, "hook_event_name": "PostCompact"})
+        assert context_post_compact.returncode == 0, context_post_compact.stderr or context_post_compact.stdout
+        assert context_post_compact.stdout == "", context_post_compact.stdout
+        context_recovery = context_hook(context_payload)
+        assert context_recovery.returncode == 0, context_recovery.stderr or context_recovery.stdout
+        recovery_payload = json.loads(context_recovery.stdout)
+        assert recovery_payload["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit", recovery_payload
+        assert "OAG CONTEXT INJECTION" in hook_context(context_recovery), context_recovery.stdout
+        route_root = Path(tmp) / "hook_route_project"
+        for name, run_id in (("route_alpha", "RUN_ALPHA"), ("route_beta", "RUN_BETA")):
+            route_ip = route_root / name
+            (route_ip / "ontology" / "runs").mkdir(parents=True)
+            (route_ip / "ontology" / "ip.yaml").write_text(f"ip: {name}\n", encoding="utf-8")
+            (route_ip / "ontology" / "runs" / "active_run.json").write_text(
+                json.dumps({"run_id": run_id, "status": "in_progress"}) + "\n",
+                encoding="utf-8",
+            )
+        assert hook_target_names(route_root, {"prompt": "승인", "context_pressure": "critical"}, require_signal=False) == []
+        assert hook_target_names(route_root, {"prompt": "oag context"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "route OAG"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "continue route_alpha OAG"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": "compare route_alpha and route_beta OAG"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"ip_dir": str(route_root / "route_beta"), "prompt": "승인"}, require_signal=False) == ["route_beta"]
+        undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
+        assert undecided["result"]["allowed"] is False, undecided
+        assert undecided["result"]["reason"] == "decision_receipt_required", undecided
+        decide = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert decide["result"]["allowed"] is True, decide
+        assert Path(decide["result"]["decision_receipt"]["path"]).is_file(), decide
+        signoff_blocked = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "signoff", "stage": "signoff"}})
+        assert signoff_blocked["result"]["allowed"] is False, signoff_blocked
+        assert signoff_blocked["result"]["reason"] == "closure_profile_not_signoff", signoff_blocked
+        policies = ip / "ontology" / "policies.yaml"
+        policies.write_text(policies.read_text(encoding="utf-8").replace("closure_profile: development", "closure_profile: signoff"), encoding="utf-8")
+        approval = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "signoff",
+                    "type": "decision",
+                    "claim": "human approval to enter signoff closure profile",
+                    "summary": "Human owner approved the protected policy transition to signoff.",
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                    "approval": {"kind": "human", "approved": True, "reason": "smoke signoff path"},
+                    "status": "open",
+                },
+            }
+        )
+        assert approval["result"]["ledger_event"], approval
+        compiled = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+        assert compiled["result"]["status"] == "pass", compiled
+        write_stage_receipt(ip, "sim")
+        signoff_without_review = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "signoff", "stage": "signoff"}})
+        assert signoff_without_review["result"]["allowed"] is False, signoff_without_review
+        assert signoff_without_review["result"]["reason"] == "reviewer_receipt_required", signoff_without_review
+        fake_review_path = ip / "ontology" / "validations" / "REV_SELF_ALLOWED.json"
+        fake_review_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_reviewer_receipt.v1",
+                    "id": "REV_SELF_ALLOWED",
+                    "ip": ip.name,
+                    "action": "signoff",
+                    "allowed": True,
+                    "reason": "allowed",
+                    "verdict": "pass",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "producer_actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "independent": False,
+                    "findings": [],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        signoff_with_non_independent_review = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "signoff", "stage": "signoff"}})
+        assert signoff_with_non_independent_review["result"]["allowed"] is False, signoff_with_non_independent_review
+        assert signoff_with_non_independent_review["result"]["reason"] == "reviewer_receipt_required", signoff_with_non_independent_review
+        review = call(
+            {
+                "tool": "oag.review",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "signoff",
+                    "stage": "signoff",
+                    "verdict": "pass",
+                    "actor": {"kind": "ai", "id": "smoke-reviewer", "surface": "smoke"},
+                    "producer_actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "findings": [],
+                },
+            }
+        )
+        assert review["result"]["allowed"] is True, review
+        assert Path(review["result"]["reviewer_receipt"]["path"]).is_file(), review
+        signoff = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "signoff",
+                    "stage": "signoff",
+                    "record_decision": True,
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                },
+            }
+        )
+        assert signoff["result"]["allowed"] is True, signoff
+        assert Path(signoff["result"]["decision_receipt"]["path"]).is_file(), signoff
+        ticket = call(
+            {
+                "tool": "oag.ticket",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "sim",
+                    "reason": "scoreboard mismatch example",
+                    "failing_contract": {"id": "CONTRACT_SIM_SCOREBOARD"},
+                    "expected": {"count": 3},
+                    "observed": {"count": 2},
+                    "evidence": {"files": ["sim/scoreboard_events.jsonl"]},
+                    "editable_files": ["rtl/demo_counter_cx1.sv"],
+                    "required_evidence_after_patch": ["sim/results.xml", "sim/scoreboard_events.jsonl"],
+                },
+            }
+        )
+        assert ticket["result"]["owner_workflow"] == "tb", ticket
+        assert Path(ticket["result"]["path"]).is_file(), ticket
+        graph_json = Path(tmp) / "ontology_graph.json"
+        graph_html = Path(tmp) / "ontology_graph.html"
+        graph_proc = subprocess.run(
+            [
+                sys.executable,
+                str(GRAPH),
+                "build",
+                "--ip-dir",
+                str(ip),
+                "--stage",
+                "sim",
+                "--intent",
+                "scoreboard",
+                "--json-out",
+                str(graph_json),
+                "--html-out",
+                str(graph_html),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert graph_proc.returncode == 0, graph_proc.stderr or graph_proc.stdout
+        graph_data = json.loads(graph_json.read_text(encoding="utf-8"))
+        assert graph_data["schema_version"] == "oag_ontology_graph.v1", graph_data
+        assert graph_data["stats"]["record_count"] >= 1, graph_data
+        assert any(node["type"] == "obligation" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "structure" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "module" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "authoring_packet" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "rule" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "rule_instance" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "draft" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "protection" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "ledger" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "stage" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "decision" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "run" for node in graph_data["graph"]["nodes"]), graph_data
+        assert any(node["type"] == "ticket" for node in graph_data["graph"]["nodes"]), graph_data
+        assert "OAG Ontology Graph" in graph_html.read_text(encoding="utf-8")
+        tools = mcp_tools_list()
+        assert len(tools["result"]["tools"]) >= 10, tools
+        portable_archive = Path(tmp) / "oag_portable_smoke.tar.gz"
+        portable_export = subprocess.run(
+            [
+                sys.executable,
+                str(PORTABLE_DB),
+                "export",
+                "--root",
+                tmp,
+                "--ip",
+                ip.name,
+                "--out",
+                str(portable_archive),
+                "--no-artifacts",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert portable_export.returncode == 0, portable_export.stderr or portable_export.stdout
+        portable_summary = json.loads(portable_export.stdout)
+        assert portable_summary["status"] == "pass", portable_summary
+        assert portable_summary["file_count"] > 0, portable_summary
+        portable_inspect = subprocess.run(
+            [sys.executable, str(PORTABLE_DB), "inspect", str(portable_archive)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert portable_inspect.returncode == 0, portable_inspect.stderr or portable_inspect.stdout
+        portable_manifest = json.loads(portable_inspect.stdout)
+        assert portable_manifest["schema_version"] == "oag_portable_db.v1", portable_manifest
+        import_dest = Path(tmp) / "portable_import"
+        portable_import = subprocess.run(
+            [
+                sys.executable,
+                str(PORTABLE_DB),
+                "import",
+                str(portable_archive),
+                "--dest",
+                str(import_dest),
+                "--dry-run",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert portable_import.returncode == 0, portable_import.stderr or portable_import.stdout
+        assert json.loads(portable_import.stdout)["changed"] == portable_summary["file_count"], portable_import.stdout
+        okf_dir = Path(tmp) / "okf_bundle"
+        okf_export = subprocess.run(
+            [
+                sys.executable,
+                str(OKF),
+                "export",
+                "--ip-dir",
+                str(ip),
+                "--out",
+                str(okf_dir),
+                "--force",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert okf_export.returncode == 0, okf_export.stderr or okf_export.stdout
+        okf_summary = json.loads(okf_export.stdout)
+        assert okf_summary["status"] == "pass", okf_summary
+        assert okf_summary["counts"]["requirements"] >= 1, okf_summary
+        assert (okf_dir / "index.md").is_file(), okf_summary
+        assert (okf_dir / "requirements").is_dir(), okf_summary
+        okf_validate = subprocess.run(
+            [sys.executable, str(OKF), "validate", str(okf_dir)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert okf_validate.returncode == 0, okf_validate.stderr or okf_validate.stdout
+        okf_validation = json.loads(okf_validate.stdout)
+        assert okf_validation["ok"] is True, okf_validation
+        assert okf_validation["concept_count"] >= okf_summary["counts"]["requirements"], okf_validation
+        okf_obsidian_dir = Path(tmp) / "okf_obsidian_bundle"
+        okf_obsidian_export = subprocess.run(
+            [
+                sys.executable,
+                str(OKF),
+                "export",
+                "--profile",
+                "obsidian",
+                "--ip-dir",
+                str(ip),
+                "--out",
+                str(okf_obsidian_dir),
+                "--force",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert okf_obsidian_export.returncode == 0, okf_obsidian_export.stderr or okf_obsidian_export.stdout
+        okf_obsidian_summary = json.loads(okf_obsidian_export.stdout)
+        assert okf_obsidian_summary["profile"] == "obsidian", okf_obsidian_summary
+        assert (okf_obsidian_dir / "OAG Knowledge.base").is_file(), okf_obsidian_summary
+        obsidian_index = (okf_obsidian_dir / "index.md").read_text(encoding="utf-8")
+        assert "[[OAG Knowledge.base|OAG Knowledge Base views]]" in obsidian_index, obsidian_index
+        obsidian_requirement = next(
+            path for path in (okf_obsidian_dir / "requirements").glob("*.md") if path.name != "index.md"
+        )
+        obsidian_requirement_text = obsidian_requirement.read_text(encoding="utf-8")
+        assert "aliases:" in obsidian_requirement_text, obsidian_requirement_text
+        assert "oag_kind: \"requirement\"" in obsidian_requirement_text, obsidian_requirement_text
+        obsidian_obligation = next(
+            path for path in (okf_obsidian_dir / "obligations").glob("*.md") if path.name != "index.md"
+        )
+        assert "[[contracts/" in obsidian_obligation.read_text(encoding="utf-8"), obsidian_obligation
+        okf_obsidian_validate = subprocess.run(
+            [sys.executable, str(OKF), "validate", str(okf_obsidian_dir)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert okf_obsidian_validate.returncode == 0, okf_obsidian_validate.stderr or okf_obsidian_validate.stdout
+        okf_obsidian_validation = json.loads(okf_obsidian_validate.stdout)
+        assert okf_obsidian_validation["ok"] is True, okf_obsidian_validation
+        okf_import_ip = make_ip(Path(tmp) / "okf_import")
+        okf_locked_truth_before = sha256(okf_import_ip / "req" / "locked_truth.md")
+        okf_ontology_before = sha256(okf_import_ip / "ontology" / "requirements.yaml")
+        okf_import = subprocess.run(
+            [
+                sys.executable,
+                str(OKF),
+                "import-draft",
+                str(okf_dir),
+                "--ip-dir",
+                str(okf_import_ip),
+                "--title",
+                "smoke OKF import draft",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert okf_import.returncode == 0, okf_import.stderr or okf_import.stdout
+        okf_import_summary = json.loads(okf_import.stdout)
+        assert okf_import_summary["status"] == "pass", okf_import_summary
+        assert okf_import_summary["canonical_sources_preserved"] is True, okf_import_summary
+        assert okf_import_summary["draft"]["status"] == "draft", okf_import_summary
+        assert Path(okf_import_summary["draft"]["draft_path"]).is_file(), okf_import_summary
+        assert sha256(okf_import_ip / "req" / "locked_truth.md") == okf_locked_truth_before, okf_import_summary
+        assert sha256(okf_import_ip / "ontology" / "requirements.yaml") == okf_ontology_before, okf_import_summary
+        okf_rtl_ip = make_ip(Path(tmp) / "okf_rtl")
+        (okf_rtl_ip / "list" / "rtl.f").write_text("rtl/demo_counter_cx1.sv\n", encoding="utf-8")
+        (okf_rtl_ip / "rtl" / "demo_counter_cx1.sv").write_text(
+            "\n".join(
+                [
+                    "module demo_counter_cx1(",
+                    "    input logic clk_i,",
+                    "    input logic rst_ni,",
+                    "    output logic [7:0] count_o",
+                    ");",
+                    "    assign count_o = rst_ni ? 8'h01 : 8'h00;",
+                    "endmodule",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        okf_rtl_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(okf_rtl_ip)}})
+        assert okf_rtl_compile["result"]["stats"]["design_facts_modules"] >= 1, okf_rtl_compile
+        okf_rtl_dir = Path(tmp) / "okf_rtl_bundle"
+        okf_rtl_export = subprocess.run(
+            [
+                sys.executable,
+                str(OKF),
+                "export",
+                "--ip-dir",
+                str(okf_rtl_ip),
+                "--out",
+                str(okf_rtl_dir),
+                "--force",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert okf_rtl_export.returncode == 0, okf_rtl_export.stderr or okf_rtl_export.stdout
+        okf_rtl_validate = subprocess.run(
+            [sys.executable, str(OKF), "validate", str(okf_rtl_dir)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+        )
+        assert okf_rtl_validate.returncode == 0, okf_rtl_validate.stderr or okf_rtl_validate.stdout
+        module_page = okf_rtl_dir / "design" / "modules" / "demo_counter_cx1.md"
+        assert module_page.is_file(), module_page
+        assert "source_file: \"rtl/demo_counter_cx1.sv\"" in module_page.read_text(encoding="utf-8"), module_page
+        assert "- Source: `rtl/demo_counter_cx1.sv`" in module_page.read_text(encoding="utf-8"), module_page
+        eval_proc = subprocess.run(
+            [sys.executable, str(EVAL), "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert eval_proc.returncode == 0, eval_proc.stderr or eval_proc.stdout
+        eval_report = json.loads(eval_proc.stdout)
+        assert eval_report["schema_version"] == "oag_evaluation_report.v1", eval_report
+        assert eval_report["ok"] is True, eval_report
+        assert eval_report["passed"] == eval_report["total"], eval_report
+        assert eval_report["total"] >= 14, eval_report
+        answer_key_proc = subprocess.run(
+            [sys.executable, str(ANSWER_KEY_EVAL), "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT.parent,
+            env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        )
+        assert answer_key_proc.returncode == 0, answer_key_proc.stderr or answer_key_proc.stdout
+        answer_key_report = json.loads(answer_key_proc.stdout)
+        assert answer_key_report["schema_version"] == "oag_answer_key_report.v1", answer_key_report
+        assert answer_key_report["ok"] is True, answer_key_report
+        assert answer_key_report["score"] == 1.0, answer_key_report
+        needs_human_ip = make_ip(Path(tmp) / "needs_human_run")
+        needs_human_run = call(
+            {
+                "tool": "oag.run.start",
+                "arguments": {
+                    "ip_dir": str(needs_human_ip),
+                    "stage": "sim",
+                    "intent": "smoke repeated blocker",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        needs_human_run_id = needs_human_run["result"]["run_id"]
+        needs_human_checkpoint = call(
+            {
+                "tool": "oag.run.checkpoint",
+                "arguments": {
+                    "ip_dir": str(needs_human_ip),
+                    "run_id": needs_human_run_id,
+                    "stage": "sim",
+                    "intent": "smoke repeated blocker",
+                    "max_blocker_repeats": 1,
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert needs_human_checkpoint["result"]["status"] == "needs_human", needs_human_checkpoint
+        stop_hook_human = stop_gate({"ip_dir": str(needs_human_ip), "run_id": needs_human_run_id})
+        assert stop_hook_human.returncode == 0, stop_hook_human.stderr or stop_hook_human.stdout
+        assert stop_hook_human.stdout == "", stop_hook_human.stdout
+        explicit_ip = make_ip(Path(tmp) / "bad_explicit_validation")
+        draftish = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(explicit_ip),
+                    "stage": "sim",
+                    "claim": "evidence without explicit validation status",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "rocev": {
+                        "obligation": {"id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN"},
+                        "contract": {"id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", "method": "scoreboard"},
+                        "evidence": {"files": ["sim/results.xml"], "tests": [], "commit": ""},
+                        "validation": {"verdict": "pass", "rationale": "missing explicit status"},
+                    },
+                },
+            }
+        )
+        assert draftish["result"]["status"] == "open", draftish
+        explicit_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(explicit_ip)}})
+        assert explicit_check["result"]["ok"] is False, explicit_check
+        assert any("no closed validation record linking obligation to contract" in issue for issue in explicit_check["result"]["issues"]), explicit_check
+        rejected_closed = call_process(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(explicit_ip),
+                    "stage": "sim",
+                    "status": "closed",
+                    "claim": "top-level closed without validation status",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "rocev": {
+                        "obligation": {"id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN"},
+                        "contract": {"id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", "method": "scoreboard"},
+                        "evidence": {"files": ["sim/results.xml"], "tests": [], "commit": ""},
+                        "validation": {"verdict": "pass", "rationale": "top-level close only"},
+                    },
+                },
+            }
+        )
+        assert rejected_closed.returncode != 0, rejected_closed.stdout
+        assert "closed records require explicit rocev.validation.status" in json.loads(rejected_closed.stdout)["errors"][0], rejected_closed.stdout
+        freshness_ip = make_ip(Path(tmp) / "bad_freshness")
+        fresh_record = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(freshness_ip),
+                    "stage": "sim",
+                    "claim": "fresh evidence baseline",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "rocev": {
+                        "obligation": {"id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN"},
+                        "contract": {"id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", "method": "scoreboard"},
+                        "evidence": {"files": ["sim/results.xml"], "tests": [], "commit": ""},
+                        "validation": {"status": "closed", "verdict": "pass", "rationale": "hash baseline"},
+                    },
+                },
+            }
+        )
+        assert fresh_record["result"]["status"] == "closed", fresh_record
+        (freshness_ip / "sim" / "results.xml").write_text('<testsuite failures="1"/>\n', encoding="utf-8")
+        freshness_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(freshness_ip)}})
+        assert freshness_check["result"]["ok"] is False, freshness_check
+        assert any("evidence file stale: sim/results.xml" in issue for issue in freshness_check["result"]["issues"]), freshness_check
+        bad_ip = make_ip(Path(tmp) / "bad")
+        bad_row = {
+            "goal_id": "GOAL_BAD",
+            "scenario_id": "SC_BAD",
+            "cycle": 1,
+            "stimulus": {},
+            "expected": {"count": 1},
+            "observed": {"count": 1},
+            "passed": True,
+            "mismatch": "",
+            "coverage_refs": [],
+        }
+        (bad_ip / "sim" / "scoreboard_events.jsonl").write_text(json.dumps(bad_row) + "\n", encoding="utf-8")
+        bad_inspect = call({"tool": "oag.inspect", "arguments": {"ip_dir": str(bad_ip), "stage": "sim"}})
+        assert bad_inspect["result"]["validation"] == "partial", bad_inspect
+        assert "scoreboard schema has invalid rows" in bad_inspect["result"]["gaps"], bad_inspect
+        dev_validator_ip = make_ip(Path(tmp) / "dev_validator")
+        write_ip_validator_report(dev_validator_ip)
+        write_stage_receipt(dev_validator_ip, "sim")
+        dev_validator_record = close_demo_counter(
+            dev_validator_ip,
+            claim="development validator positive smoke",
+            evidence_files=[
+                "rtl/rtl_compile.json",
+                "lint/dut_lint.json",
+                "sim/results.xml",
+                "sim/scoreboard_events.jsonl",
+                "cov/coverage.json",
+                "signoff/ip_validator_report.json",
+                "ontology/evidence/stage_runs/sim.json",
+            ],
+        )
+        assert dev_validator_record["result"]["status"] == "closed", dev_validator_record
+        dev_validator_proc = run_dev_validator(dev_validator_ip)
+        assert dev_validator_proc.returncode == 0, dev_validator_proc.stderr or dev_validator_proc.stdout
+        dev_validator_report = json.loads(dev_validator_proc.stdout)
+        assert dev_validator_report["status"] == "pass", dev_validator_report
+        assert dev_validator_report["failed_gates"] == [], dev_validator_report
+        dev_validator_gates = {gate["id"]: gate for gate in dev_validator_report["gates"]}
+        assert dev_validator_gates["scoreboard_rows_v1"]["status"] == "pass", dev_validator_report
+        assert dev_validator_gates["stage_run_receipts"]["status"] == "pass", dev_validator_report
+        assert dev_validator_gates["oag_check"]["status"] == "pass", dev_validator_report
+        bad_validator_ip = make_ip(Path(tmp) / "bad_dev_validator")
+        bad_validator_row = {
+            "goal_id": "GOAL_BAD_VALIDATOR",
+            "scenario_id": "SC_BAD_VALIDATOR",
+            "cycle": 1,
+            "stimulus": {},
+            "expected": {"count": 1},
+            "observed": {"count": 1},
+            "passed": True,
+            "mismatch": "",
+            "coverage_refs": [],
+        }
+        (bad_validator_ip / "sim" / "scoreboard_events.jsonl").write_text(json.dumps(bad_validator_row) + "\n", encoding="utf-8")
+        write_ip_validator_report(bad_validator_ip)
+        write_stage_receipt(bad_validator_ip, "sim")
+        bad_validator_proc = run_dev_validator(bad_validator_ip)
+        assert bad_validator_proc.returncode != 0, bad_validator_proc.stdout
+        bad_validator_report = json.loads(bad_validator_proc.stdout)
+        assert bad_validator_report["status"] == "fail", bad_validator_report
+        assert "scoreboard_rows_v1" in bad_validator_report["failed_gates"], bad_validator_report
+        bad_validator_gates = {gate["id"]: gate for gate in bad_validator_report["gates"]}
+        assert any("observed_source" in issue for issue in bad_validator_gates["scoreboard_rows_v1"]["issues"]), bad_validator_report
+        loop_spec = Path(tmp) / "loop_spec.md"
+        loop_spec.write_text(
+            "\n".join(
+                [
+                    "# Demo counter spec",
+                    "",
+                    "- Reset drives count to zero.",
+                    "- Valid cycles increment count.",
+                    "- Scoreboard evidence must be DUT-facing.",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        spec_loop_ip = make_ip(Path(tmp) / "spec_to_rtl_loop")
+        write_ip_validator_report(spec_loop_ip)
+        write_stage_receipt(spec_loop_ip, "sim")
+        spec_loop_record = close_demo_counter(
+            spec_loop_ip,
+            claim="spec-to-RTL loop positive smoke",
+            evidence_files=[
+                "rtl/rtl_compile.json",
+                "lint/dut_lint.json",
+                "sim/results.xml",
+                "sim/scoreboard_events.jsonl",
+                "cov/coverage.json",
+                "signoff/ip_validator_report.json",
+                "ontology/evidence/stage_runs/sim.json",
+            ],
+        )
+        assert spec_loop_record["result"]["status"] == "closed", spec_loop_record
+        spec_loop_proc = run_spec_to_rtl_loop(spec_loop_ip, loop_spec, metrics=True)
+        assert spec_loop_proc.returncode == 0, spec_loop_proc.stderr or spec_loop_proc.stdout
+        spec_loop_result = json.loads(spec_loop_proc.stdout)
+        assert spec_loop_result["validator"]["status"] == "pass", spec_loop_result
+        assert spec_loop_result["auto_research"]["ranked_next_actions"] >= 1, spec_loop_result
+        spec_loop_report_path = spec_loop_ip / "signoff" / "ip_research_report.json"
+        assert spec_loop_report_path.is_file(), spec_loop_result
+        spec_loop_report = json.loads(spec_loop_report_path.read_text(encoding="utf-8"))
+        assert spec_loop_report["schema_version"] == "ip_research_report.v1", spec_loop_report
+        assert spec_loop_report["checks"]["ranked_next_actions_present"] is True, spec_loop_report
+        assert spec_loop_report["ranked_next_actions"][0]["id"] == "SIGNOFF_PROMOTION_REVIEW", spec_loop_report
+        spec_loop_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(spec_loop_ip)}})
+        assert spec_loop_check["result"]["ok"] is True, spec_loop_check
+        spec_loop_metrics = spec_loop_check["result"]["improvement_metrics"]["auto_research"]
+        assert spec_loop_metrics["reports"] >= 1, spec_loop_metrics
+        assert spec_loop_metrics["actions"] >= 1, spec_loop_metrics
+        partial_loop_ip = make_ip(Path(tmp) / "partial_spec_to_rtl_loop")
+        partial_loop_proc = run_spec_to_rtl_loop(partial_loop_ip, loop_spec)
+        assert partial_loop_proc.returncode == 0, partial_loop_proc.stderr or partial_loop_proc.stdout
+        partial_loop_result = json.loads(partial_loop_proc.stdout)
+        assert partial_loop_result["validator"]["status"] == "fail", partial_loop_result
+        partial_loop_report = json.loads((partial_loop_ip / "signoff" / "ip_research_report.json").read_text(encoding="utf-8"))
+        partial_actions = {action["id"]: action for action in partial_loop_report["ranked_next_actions"]}
+        assert "IP_SPECIFIC_VALIDATOR" in partial_actions, partial_loop_report
+        assert "ROCEV_INSPECT_CLOSURE" in partial_actions or "ROCEV_CHECK" in partial_actions, partial_loop_report
+        partial_loop_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(partial_loop_ip)}})
+        assert partial_loop_check["result"]["ok"] is False, partial_loop_check
+        assert not any(issue.startswith("auto research report") for issue in partial_loop_check["result"]["issues"]), partial_loop_check
+        empty_ip = Path(tmp) / "empty_vacuous"
+        empty_ip.mkdir()
+        empty_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(empty_ip)}})
+        assert empty_compile["result"]["status"] == "fail", empty_compile
+        assert "no requirements in ontology/requirements.yaml" in empty_compile["result"]["issues"], empty_compile
+        bad_rules_ip = make_ip(Path(tmp) / "bad_rules")
+        (bad_rules_ip / "ontology" / "design_rules.yaml").write_text(
+            "\n".join(
+                [
+                    "schema: oag_design_rules.v1",
+                    f"ip: {bad_rules_ip.name}",
+                    "rules:",
+                    "  - id: RULE_ONLY_SCOREBOARD",
+                    "    kind: scoreboard_evidence_schema",
+                    "    status: active",
+                    "instances: []",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        bad_rules_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_rules_ip)}})
+        assert bad_rules_compile["result"]["status"] == "fail", bad_rules_compile
+        assert "missing required design rule kind: same_cycle_priority_declared" in bad_rules_compile["result"]["issues"], bad_rules_compile
+        bad_lang_ip = make_ip(Path(tmp) / "bad_language_policy")
+        bad_lang_rules = (bad_lang_ip / "ontology" / "design_rules.yaml").read_text(encoding="utf-8")
+        bad_lang_rules = bad_lang_rules.replace(
+            "    allowed_constructs: [logic, generate, genvar, generate_for]",
+            "    allowed_constructs: [logic]",
+            1,
+        )
+        bad_lang_rules = bad_lang_rules.replace(
+            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, package, import, interface, modport, typedef, enum, always_latch]",
+            "    forbidden_constructs: [procedural_for, procedural_while, generate_for]",
+            1,
+        )
+        (bad_lang_ip / "ontology" / "design_rules.yaml").write_text(bad_lang_rules, encoding="utf-8")
+        bad_lang_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_lang_ip)}})
+        assert bad_lang_compile["result"]["status"] == "fail", bad_lang_compile
+        assert "RULE_RTL_LANGUAGE_SUBSET: rtl language subset must allow generate" in bad_lang_compile["result"]["issues"], bad_lang_compile
+        assert "RULE_RTL_LANGUAGE_SUBSET: rtl language subset must not forbid generate constructs" in bad_lang_compile["result"]["issues"], bad_lang_compile
+        bad_subset_ip = make_ip(Path(tmp) / "bad_rtl_subset_instance")
+        (bad_subset_ip / "rtl").mkdir(exist_ok=True)
+        (bad_subset_ip / "rtl" / "demo_counter_cx1.sv").write_text(
+            "\n".join(
+                [
+                    "module demo_counter_cx1(input logic clk);",
+                    "  always_ff @(posedge clk) begin",
+                    "  end",
+                    "endmodule",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        (bad_subset_ip / "rtl" / "rtl_compile.json").write_text(
+            json.dumps(
+                {
+                    "schema": "rtl_compile_report.v1",
+                    "status": "pass",
+                    "files": ["rtl/demo_counter_cx1.sv"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        bad_subset_rules_path = bad_subset_ip / "ontology" / "design_rules.yaml"
+        bad_subset_rules = bad_subset_rules_path.read_text(encoding="utf-8")
+        if not bad_subset_rules.endswith("\n"):
+            bad_subset_rules += "\n"
+        bad_subset_rules += "\n".join(
+            [
+                "  - id: INST_BAD_RTL_LANGUAGE_SUBSET",
+                "    rule: RULE_RTL_LANGUAGE_SUBSET",
+                "    status: closed",
+                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+                "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                "    language_policy: smoke_negative_subset",
+                "    rtl_compile_report: rtl/rtl_compile.json",
+                "    rtl_sources: [rtl/demo_counter_cx1.sv]",
+                "    forbidden_constructs_absent: [always_ff]",
+                "    evidence_refs:",
+                "      - rtl/demo_counter_cx1.sv",
+                "      - rtl/rtl_compile.json",
+                "",
+            ]
+        )
+        bad_subset_rules_path.write_text(bad_subset_rules, encoding="utf-8")
+        bad_subset_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_subset_ip)}})
+        assert bad_subset_compile["result"]["status"] == "fail", bad_subset_compile
+        assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv: forbidden RTL construct present: always_ff" in bad_subset_compile["result"]["issues"], bad_subset_compile
+        bad_protocol_ip = make_ip(Path(tmp) / "bad_protocol_report")
+        (bad_protocol_ip / "signoff").mkdir(exist_ok=True)
+        (bad_protocol_ip / "signoff" / "protocol_compliance_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "protocol_compliance_report.v1",
+                    "status": "fail",
+                    "issues": ["smoke negative"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        bad_protocol_rules_path = bad_protocol_ip / "ontology" / "design_rules.yaml"
+        bad_protocol_rules = bad_protocol_rules_path.read_text(encoding="utf-8")
+        if not bad_protocol_rules.endswith("\n"):
+            bad_protocol_rules += "\n"
+        bad_protocol_rules += "\n".join(
+            [
+                "  - id: INST_BAD_PROTOCOL_REPORT",
+                "    rule: RULE_PROTOCOL_COMPLIANCE",
+                "    status: closed",
+                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+                "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                "    protocol: APB4",
+                "    compliance_report: signoff/protocol_compliance_report.json",
+                "    evidence_refs:",
+                "      - signoff/protocol_compliance_report.json",
+                "",
+            ]
+        )
+        bad_protocol_rules_path.write_text(bad_protocol_rules, encoding="utf-8")
+        bad_protocol_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_protocol_ip)}})
+        assert bad_protocol_compile["result"]["status"] == "fail", bad_protocol_compile
+        assert (
+            "INST_BAD_PROTOCOL_REPORT: protocol compliance report is not passing: signoff/protocol_compliance_report.json status=fail"
+            in bad_protocol_compile["result"]["issues"]
+        ), bad_protocol_compile
+        missing_phase_ip = make_ip(Path(tmp) / "missing_protocol_phase_trace")
+        (missing_phase_ip / "signoff").mkdir(exist_ok=True)
+        (missing_phase_ip / "signoff" / "protocol_compliance_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "protocol_compliance_report.v1",
+                    "status": "pass",
+                    "issues": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        missing_phase_rules_path = missing_phase_ip / "ontology" / "design_rules.yaml"
+        missing_phase_rules = missing_phase_rules_path.read_text(encoding="utf-8")
+        if not missing_phase_rules.endswith("\n"):
+            missing_phase_rules += "\n"
+        missing_phase_rules += "\n".join(
+            [
+                "  - id: INST_MISSING_PROTOCOL_PHASE_TRACE",
+                "    rule: RULE_PROTOCOL_COMPLIANCE",
+                "    status: closed",
+                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+                "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                "    protocol: APB4",
+                "    compliance_report: signoff/protocol_compliance_report.json",
+                "    phase_trace: sim/missing_apb_phase_trace.jsonl",
+                "    evidence_refs:",
+                "      - signoff/protocol_compliance_report.json",
+                "",
+            ]
+        )
+        missing_phase_rules_path.write_text(missing_phase_rules, encoding="utf-8")
+        missing_phase_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(missing_phase_ip)}})
+        assert missing_phase_compile["result"]["status"] == "fail", missing_phase_compile
+        assert (
+            "INST_MISSING_PROTOCOL_PHASE_TRACE: protocol phase trace missing on disk: sim/missing_apb_phase_trace.jsonl"
+            in missing_phase_compile["result"]["issues"]
+        ), missing_phase_compile
+        bad_research_ip = make_ip(Path(tmp) / "bad_auto_research_report")
+        (bad_research_ip / "signoff" / "static_signoff_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "static_signoff_summary.v1",
+                    "status": "pass",
+                    "reports": {"auto_research": "signoff/ip_research_report.json"},
+                    "checks": {"auto_research_next_actions": "pass"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (bad_research_ip / "signoff" / "ip_research_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "ip_research_report.v1",
+                    "status": "pass",
+                    "method": "smoke_negative",
+                    "automation_boundary": "test-only report",
+                    "checks": {"ranked_next_actions_present": False},
+                    "evidence_refs": ["sim/results.xml"],
+                    "evidence_strengths": [
+                        {
+                            "id": "SMOKE_STRENGTH",
+                            "status": "pass",
+                            "evidence_refs": ["sim/results.xml"],
+                        }
+                    ],
+                    "ranked_next_actions": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        bad_research_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(bad_research_ip)}})
+        assert bad_research_check["result"]["ok"] is False, bad_research_check
+        assert (
+            "auto research report has no ranked_next_actions: signoff/ip_research_report.json"
+            in bad_research_check["result"]["issues"]
+        ), bad_research_check
+        unsafe_sta_research_ip = make_ip(Path(tmp) / "unsafe_sta_auto_research_report")
+        (unsafe_sta_research_ip / "signoff" / "implementation_sta_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "implementation_sta_report.v1",
+                    "status": "development_pass",
+                    "method": "smoke_development_sta",
+                    "metrics": {"wns_ns": 0.0, "tns_ns": 0.0},
+                    "issues": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_sta_research_ip / "signoff" / "static_signoff_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "static_signoff_summary.v1",
+                    "status": "pass",
+                    "reports": {"auto_research": "signoff/ip_research_report.json"},
+                    "checks": {"auto_research_next_actions": "pass"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_sta_research_ip / "signoff" / "ip_research_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "ip_research_report.v1",
+                    "status": "pass",
+                    "method": "smoke_unsafe_development_sta_closure",
+                    "automation_boundary": "test-only report",
+                    "checks": {"ranked_next_actions_present": True},
+                    "evidence_refs": ["signoff/implementation_sta_report.json"],
+                    "evidence_strengths": [
+                        {
+                            "id": "DEVELOPMENT_IMPLEMENTATION_STA_EXECUTION",
+                            "status": "pass",
+                            "evidence_refs": ["signoff/implementation_sta_report.json"],
+                        }
+                    ],
+                    "ranked_next_actions": [
+                        {
+                            "rank": 1,
+                            "id": "IMPLEMENTATION_STA",
+                            "status": "closed",
+                            "reason": "Development STA passed, incorrectly treated as signoff closure.",
+                            "evidence_refs": ["signoff/implementation_sta_report.json"],
+                        }
+                    ],
+                    "signoff_blockers": ["Independent reviewer receipt is still required for signoff/promote."],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        unsafe_sta_research_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(unsafe_sta_research_ip)}})
+        assert unsafe_sta_research_check["result"]["ok"] is False, unsafe_sta_research_check
+        assert any(
+            issue.startswith(
+                "auto research report must rank development implementation STA as partially_closed after development_pass"
+            )
+            for issue in unsafe_sta_research_check["result"]["issues"]
+        ), unsafe_sta_research_check
+        assert (
+            "auto research report missing foundry/PVT blocker after development implementation STA pass: signoff/ip_research_report.json"
+            in unsafe_sta_research_check["result"]["issues"]
+        ), unsafe_sta_research_check
+        assert (
+            "auto research report missing gate-level reset/X-prop blocker after development implementation STA pass: signoff/ip_research_report.json"
+            in unsafe_sta_research_check["result"]["issues"]
+        ), unsafe_sta_research_check
+        unsafe_gate_research_ip = make_ip(Path(tmp) / "unsafe_gate_auto_research_report")
+        (unsafe_gate_research_ip / "signoff" / "gate_reset_xprop_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "gate_reset_xprop_report.v1",
+                    "status": "development_pass",
+                    "method": "smoke_development_gate_reset_xprop",
+                    "issues": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_gate_research_ip / "signoff" / "static_signoff_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "static_signoff_summary.v1",
+                    "status": "pass",
+                    "reports": {"auto_research": "signoff/ip_research_report.json"},
+                    "checks": {"auto_research_next_actions": "pass"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_gate_research_ip / "signoff" / "ip_research_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "ip_research_report.v1",
+                    "status": "pass",
+                    "method": "smoke_unsafe_development_gate_closure",
+                    "automation_boundary": "test-only report",
+                    "checks": {"ranked_next_actions_present": True},
+                    "evidence_refs": ["signoff/gate_reset_xprop_report.json"],
+                    "evidence_strengths": [
+                        {
+                            "id": "DEVELOPMENT_GATE_RESET_XPROP_EXECUTION",
+                            "status": "development_pass",
+                            "evidence_refs": ["signoff/gate_reset_xprop_report.json"],
+                        }
+                    ],
+                    "ranked_next_actions": [
+                        {
+                            "rank": 1,
+                            "id": "GATE_LEVEL_RESET_XPROP",
+                            "status": "closed",
+                            "reason": "Development mapped-netlist smoke passed, incorrectly treated as production closure.",
+                            "evidence_refs": ["signoff/gate_reset_xprop_report.json"],
+                        }
+                    ],
+                    "signoff_blockers": ["Independent reviewer receipt is still required for signoff/promote."],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        unsafe_gate_research_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(unsafe_gate_research_ip)}})
+        assert unsafe_gate_research_check["result"]["ok"] is False, unsafe_gate_research_check
+        assert any(
+            issue.startswith(
+                "auto research report must rank development gate reset/X-prop as partially_closed after development_pass"
+            )
+            for issue in unsafe_gate_research_check["result"]["issues"]
+        ), unsafe_gate_research_check
+        assert (
+            "auto research report missing SDF/foundry blocker after development gate reset/X-prop pass: signoff/ip_research_report.json"
+            in unsafe_gate_research_check["result"]["issues"]
+        ), unsafe_gate_research_check
+        unsafe_formal_research_ip = make_ip(Path(tmp) / "unsafe_formal_auto_research_report")
+        (unsafe_formal_research_ip / "signoff" / "formal_assertion_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "formal_assertion_report.v1",
+                    "status": "development_pass",
+                    "method": "smoke_bounded_formal",
+                    "bound_cycles": 8,
+                    "issues": [],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_formal_research_ip / "signoff" / "static_signoff_summary.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "static_signoff_summary.v1",
+                    "status": "pass",
+                    "reports": {"auto_research": "signoff/ip_research_report.json"},
+                    "checks": {"auto_research_next_actions": "pass"},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (unsafe_formal_research_ip / "signoff" / "ip_research_report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "ip_research_report.v1",
+                    "status": "pass",
+                    "method": "smoke_unsafe_development_formal_closure",
+                    "automation_boundary": "test-only report",
+                    "checks": {"ranked_next_actions_present": True},
+                    "evidence_refs": ["signoff/formal_assertion_report.json"],
+                    "evidence_strengths": [
+                        {
+                            "id": "DEVELOPMENT_FORMAL_ASSERTION_EXECUTION",
+                            "status": "development_pass",
+                            "evidence_refs": ["signoff/formal_assertion_report.json"],
+                        }
+                    ],
+                    "ranked_next_actions": [
+                        {
+                            "rank": 1,
+                            "id": "FORMAL_ASSERTION_OPTION",
+                            "status": "closed",
+                            "reason": "Formal proof passed.",
+                            "evidence_refs": ["signoff/formal_assertion_report.json"],
+                        }
+                    ],
+                    "signoff_blockers": ["Independent reviewer receipt is still required for signoff/promote."],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        unsafe_formal_research_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(unsafe_formal_research_ip)}})
+        assert unsafe_formal_research_check["result"]["ok"] is False, unsafe_formal_research_check
+        assert any(
+            issue.startswith(
+                "auto research report must rank development formal assertion as partially_closed after development_pass"
+            )
+            for issue in unsafe_formal_research_check["result"]["issues"]
+        ), unsafe_formal_research_check
+        assert any(
+            issue.startswith(
+                "auto research formal assertion action missing bounded/development limitation after development_pass"
+            )
+            for issue in unsafe_formal_research_check["result"]["issues"]
+        ), unsafe_formal_research_check
+        assert any(
+            issue.startswith(
+                "auto research formal assertion action missing contract/signoff limitation after development_pass"
+            )
+            for issue in unsafe_formal_research_check["result"]["issues"]
+        ), unsafe_formal_research_check
+        unsafe_handoff_ip = make_ip(Path(tmp) / "unsafe_handoff_report")
+        bad_metrics = {
+            "schema_version": "oag_improvement_metrics.v1",
+            "closure_profile": "development",
+            "requirements": {"total": 1},
+            "contracts": {"total": 1},
+            "closure": {"total": 1, "closed": 1, "open": 0, "closed_percent": 100.0, "issue_count": 0},
+            "check": {"issue_count": 0, "stale_issue_count": 0},
+            "evidence": {"files_present_count": 2, "files_missing_count": 0},
+            "stage_receipts": {"count": 0},
+            "ledger": {"events": 0},
+            "auto_research": {
+                "reports": 0,
+                "actions": 0,
+                "blocked_actions": 0,
+                "partially_closed_actions": 0,
+                "closed_actions": 0,
+                "signoff_blockers": 0,
+            },
+            "decisions": {"receipts": 0, "independent_passing_reviewers": 0},
+        }
+        (unsafe_handoff_ip / "handoff" / "readiness_handoff.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_readiness_handoff.v1",
+                    "id": "HANDOFF_UNSAFE_DEVELOPMENT_SIGNOFF_READY",
+                    "ip": unsafe_handoff_ip.name,
+                    "stage": "handoff",
+                    "intent": "smoke unsafe handoff",
+                    "generated_at": "2026-06-19T00:00:00Z",
+                    "closure_profile": "development",
+                    "status": "pass",
+                    "method": "smoke_negative",
+                    "automation_boundary": "Readiness handoff only; this is not a signoff decision.",
+                    "progress_denominator": "derived_from_active_ip_obligations",
+                    "numeric_summary": {
+                        "requirements_total": 1,
+                        "contracts_total": 1,
+                        "obligations_total": 1,
+                        "obligations_closed": 1,
+                        "obligations_open": 0,
+                        "closure_percent": 100.0,
+                        "closure_issue_count": 0,
+                        "check_issue_count": 0,
+                        "stale_issue_count": 0,
+                        "evidence_files_present": 2,
+                        "evidence_files_total": 2,
+                        "evidence_files_missing": 0,
+                        "stage_receipts": 0,
+                        "ledger_events": 0,
+                        "auto_research_reports": 0,
+                        "ranked_next_actions": 0,
+                        "blocked_actions": 0,
+                        "partially_closed_actions": 0,
+                        "closed_actions": 0,
+                        "signoff_blockers": 0,
+                        "decision_receipts": 0,
+                        "independent_passing_reviewers": 0,
+                    },
+                    "readiness": {
+                        "development_ready": True,
+                        "signoff_ready": True,
+                        "closure_complete": True,
+                        "check_clean": True,
+                        "evidence_complete": True,
+                    },
+                    "ranked_next_actions": [],
+                    "signoff_blockers": [],
+                    "evidence_refs": ["sim/results.xml"],
+                    "improvement_metrics": bad_metrics,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        unsafe_handoff_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(unsafe_handoff_ip)}})
+        assert unsafe_handoff_check["result"]["ok"] is False, unsafe_handoff_check
+        assert (
+            "handoff report cannot mark signoff_ready=true when closure_profile=development: handoff/readiness_handoff.json"
+            in unsafe_handoff_check["result"]["issues"]
+        ), unsafe_handoff_check
+        formal_ip = make_ip(Path(tmp) / "bad_formal")
+        contract_text = (formal_ip / "ontology" / "contracts.yaml").read_text(encoding="utf-8")
+        contract_text += "\n".join(
+            [
+                "  - id: CONTRACT_BAD_FORMAL",
+                "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+                "    method: formal",
+                "    pass_condition: register map is proven",
+                "    evidence_kinds: [formal]",
+                "",
+            ]
+        )
+        (formal_ip / "ontology" / "contracts.yaml").write_text(contract_text, encoding="utf-8")
+        formal_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(formal_ip)}})
+        assert formal_compile["result"]["status"] == "fail", formal_compile
+        assert "CONTRACT_BAD_FORMAL: formal/assertion contract missing assertion/proof reference" in formal_compile["result"]["issues"], formal_compile
+        bad_decomp_ip = make_ip(Path(tmp) / "bad_decomposition")
+        (bad_decomp_ip / "ontology" / "decomposition.yaml").write_text(
+            "\n".join(
+                [
+                    "schema: oag_decomposition.v1",
+                    f"ip: {bad_decomp_ip.name}",
+                    "profile:",
+                    "  mode: greenfield_modular",
+                    "  rationale: one module is intentionally invalid for this negative test",
+                    "modules:",
+                    f"  - id: {bad_decomp_ip.name}",
+                    "    ownership: current_ip",
+                    f"    file: rtl/{bad_decomp_ip.name}.sv",
+                    "    owned_obligations: [OBL_DEMO_COUNTER_CX1_RESET_KNOWN]",
+                    "    owned_contracts: [CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD]",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        bad_decomp_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_decomp_ip)}})
+        assert bad_decomp_compile["result"]["status"] == "fail", bad_decomp_compile
+        assert "greenfield_modular profile requires at least two current_ip modules or use small_leaf_single_file" in bad_decomp_compile["result"]["issues"], bad_decomp_compile
+        bad_file_boundary_ip = make_ip(Path(tmp) / "bad_file_boundary")
+        (bad_file_boundary_ip / "ontology" / "decomposition.yaml").write_text(
+            "\n".join(
+                [
+                    "schema: oag_decomposition.v1",
+                    f"ip: {bad_file_boundary_ip.name}",
+                    "profile:",
+                    "  mode: greenfield_modular",
+                    "  rationale: duplicate physical files are intentionally invalid for this negative test",
+                    "modules:",
+                    f"  - id: {bad_file_boundary_ip.name}_top",
+                    "    ownership: current_ip",
+                    f"    file: rtl/{bad_file_boundary_ip.name}.sv",
+                    "    role: top",
+                    "    owned_obligations: [OBL_DEMO_COUNTER_CX1_RESET_KNOWN]",
+                    "    owned_contracts: [CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD]",
+                    f"  - id: {bad_file_boundary_ip.name}_core",
+                    "    ownership: current_ip",
+                    f"    file: rtl/{bad_file_boundary_ip.name}.sv",
+                    "    role: core",
+                    "    owned_obligations: []",
+                    "    owned_contracts: []",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        bad_file_boundary_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_file_boundary_ip)}})
+        assert bad_file_boundary_compile["result"]["status"] == "fail", bad_file_boundary_compile
+        assert any(
+            "greenfield_modular module file boundary requires unique file per current_ip module" in issue
+            for issue in bad_file_boundary_compile["result"]["issues"]
+        ), bad_file_boundary_compile
+        priority_ip = make_ip(Path(tmp) / "bad_priority")
+        rules_path = priority_ip / "ontology" / "design_rules.yaml"
+        rules_text = rules_path.read_text(encoding="utf-8").replace(
+            "instances:\n",
+            "\n".join(
+                [
+                    "instances:",
+                    "  - id: BAD_PRIORITY_INSTANCE",
+                    "    rule: RULE_SAME_CYCLE_PRIORITY_DECLARED",
+                    "    status: active",
+                    "    conflict: [ctrl_disable_write, terminal_tick]",
+                    "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                    "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+                    "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+                    "",
+                ]
+            ),
+            1,
+        )
+        rules_path.write_text(rules_text, encoding="utf-8")
+        priority_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(priority_ip)}})
+        assert priority_compile["result"]["status"] == "fail", priority_compile
+        assert "BAD_PRIORITY_INSTANCE: same-cycle priority rule missing priority" in priority_compile["result"]["issues"], priority_compile
+        protection_ip = make_ip(Path(tmp) / "bad_protection")
+        baseline = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(protection_ip),
+                    "stage": "req",
+                    "type": "decision",
+                    "claim": "baseline protected truth snapshot",
+                    "summary": "Establish protected field snapshot before edits.",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "status": "open",
+                },
+            }
+        )
+        assert baseline["result"]["ledger_event"], baseline
+        locked_truth = protection_ip / "req" / "locked_truth.md"
+        locked_truth.write_text(locked_truth.read_text(encoding="utf-8") + "\n- Unauthorized semantic edit.\n", encoding="utf-8")
+        before_records = sorted((protection_ip / "knowledge" / "records").glob("*.json"))
+        rejected = call_process(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(protection_ip),
+                    "stage": "req",
+                    "claim": "unauthorized protected edit record",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "status": "open",
+                },
+            }
+        )
+        assert rejected.returncode != 0, rejected.stdout
+        rejected_response = json.loads(rejected.stdout)
+        assert "protected fields changed without human approval" in rejected_response["errors"][0], rejected_response
+        after_records = sorted((protection_ip / "knowledge" / "records").glob("*.json"))
+        assert after_records == before_records, [before_records, after_records]
+        protection_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(protection_ip)}})
+        assert protection_check["result"]["ok"] is False, protection_check
+        assert any("protected fields changed without ledger approval" in issue for issue in protection_check["result"]["issues"]), protection_check
+        ledger_ip = make_ip(Path(tmp) / "bad_ledger")
+        ledger_record = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(ledger_ip),
+                    "stage": "sim",
+                    "claim": "ledger tamper baseline",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "status": "open",
+                },
+            }
+        )
+        assert ledger_record["result"]["ledger_event"], ledger_record
+        ledger_path = ledger_ip / "knowledge" / "ledger.jsonl"
+        ledger_path.write_text(ledger_path.read_text(encoding="utf-8").replace('"action": "log"', '"action": "tampered"', 1), encoding="utf-8")
+        ledger_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(ledger_ip)}})
+        assert ledger_check["result"]["ok"] is False, ledger_check
+        assert any("event_hash mismatch" in issue for issue in ledger_check["result"]["issues"]), ledger_check
+        monotonic_ip = make_ip(Path(tmp) / "bad_monotonic")
+        closed = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(monotonic_ip),
+                    "stage": "sim",
+                    "claim": "monotonic obligation closed",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "rocev": {
+                        "obligation": {"id": "OBL_MONO_SCOREBOARD", "text": "closed once"},
+                        "contract": {"id": "CONTRACT_MONO_SCOREBOARD", "method": "scoreboard"},
+                        "evidence": {"files": ["sim/results.xml"], "tests": [], "commit": ""},
+                        "validation": {"status": "closed", "verdict": "pass", "rationale": "baseline close"},
+                    },
+                },
+            }
+        )
+        assert closed["result"]["status"] == "closed", closed
+        reopened = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(monotonic_ip),
+                    "stage": "sim",
+                    "claim": "monotonic obligation silently reopened",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "status": "open",
+                    "rocev": {
+                        "obligation": {"id": "OBL_MONO_SCOREBOARD", "text": "reopened without decision", "status": "open"},
+                        "contract": {"id": "CONTRACT_MONO_SCOREBOARD", "method": "scoreboard", "status": "open"},
+                        "validation": {"status": "open", "verdict": "pending", "rationale": "silent downgrade"},
+                    },
+                },
+            }
+        )
+        assert reopened["result"]["status"] == "open", reopened
+        monotonic_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(monotonic_ip)}})
+        assert monotonic_check["result"]["ok"] is False, monotonic_check
+        assert any("monotonic closure violation" in issue for issue in monotonic_check["result"]["issues"]), monotonic_check
+        print(json.dumps({"ok": True, "ip": str(ip), "mcp_tools": len(tools["result"]["tools"])}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "ontology-ip-agent-oag": {
+      "command": "python3",
+      "args": [
+        "/Users/brian/Desktop/Project/ontology_ip_agent/.codex/scripts/oag_mcp_server.py"
+      ],
+      "env": {
+        "OAG_ACTOR_SURFACE": "codex-mcp"
+      }
+    }
+  }
+}

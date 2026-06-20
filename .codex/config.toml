@@ -1,0 +1,9 @@
+[mcp_servers.ontology-ip-agent-oag]
+command = "python3"
+args = ["/Users/brian/Desktop/Project/ontology_ip_agent/.codex/scripts/oag_mcp_server.py"]
+
+[mcp_servers.ontology-ip-agent-oag.env]
+OAG_ACTOR_SURFACE = "codex-mcp"
+
+[projects."/Users/brian/Desktop/Project/NEW_WORKSPACE/brian_user_3/default/apb_timer_pwm_irq_v1"]
+trust_level = "trusted"
