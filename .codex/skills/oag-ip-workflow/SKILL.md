@@ -191,11 +191,16 @@ config patch. Do not narrate speculative tool-namespace probes such as
 "checking whether multi_agent_v1 is available." Missing `multi_agent_v1`
 visibility in one agent surface is not proof that native subagents are
 unavailable; Codex CLI/App can surface the same operation as an internal
-`spawn_agent` collaboration event. If an explicit native spawn cannot be
-started, report `BLOCKED: native Codex subagent unavailable in this surface`
-and stop or ask the user to restart/open a fresh trusted `ip_dev` session. Do
-not continue by manually applying the child role unless the user explicitly
-waives the native-subagent requirement.
+`spawn_agent` collaboration event. Before reporting a native-subagent blocker,
+first attempt a minimal explicit native spawn in the current surface and wait
+for the child result. Do not decide availability from the visible callable tool
+namespace alone; in Codex CLI/App traces, explicitly request the native
+`spawn_agent` collaboration event even when no `multi_agent_v1` tool namespace
+is visible. If the actual spawn attempt fails or the active runtime reports
+spawning is unavailable, report the observed native-spawn blocker and ask the
+user to restart/open a fresh trusted `ip_dev` session. Do not continue by
+manually applying the child role unless the user explicitly waives the native
+subagent requirement.
 
 Subagents are native Codex collaboration workers, not Python runners. Use
 self-contained spawn assignments like this when the v1 tool is directly

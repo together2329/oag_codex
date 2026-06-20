@@ -19,7 +19,9 @@ Before IP work:
   keep .codex/config.toml [features].multi_agent=true, [features].child_agents_md=true, [features.multi_agent_v2].enabled=false, and [agents].max_depth=1 for trusted-project subagent support
   use .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply to patch team user config when native subagents are not enabled
   trigger subagents through native Codex subagents, using multi_agent_v1.spawn_agent where exposed or the equivalent Codex CLI/App spawn_agent collaboration event
-  if an explicit native spawn cannot be started in the active surface, report BLOCKED and do not substitute Python, shell wrappers, or manual child-role impersonation unless the user waives native subagents
+  before reporting BLOCKED_NATIVE_SUBAGENT, first attempt a minimal native spawn in the active surface and wait for the child result; do not decide availability from the visible callable tool namespace alone, and explicitly request the native spawn_agent collaboration event in Codex CLI/App traces
+  only report the observed blocker if the actual spawn attempt fails or the runtime reports spawning unavailable
+  do not substitute Python, shell wrappers, or manual child-role impersonation unless the user waives native subagents
   every spawn message starts with TASK and includes DELIVERABLE, SCOPE, and VERIFY
   use fork_context=false unless the child truly needs full parent history
 

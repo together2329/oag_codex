@@ -56,13 +56,15 @@ def guard_text() -> str:
             "",
             "The user requested subagent or parallel-agent work. Use native Codex subagents only.",
             "Use `multi_agent_v1.spawn_agent` where the current surface exposes it, or the equivalent Codex CLI/App native `spawn_agent` collaboration event.",
+            "Do not treat missing direct `multi_agent_v1` namespace visibility as failure; Codex CLI/App may expose native spawning only as an internal `spawn_agent` collaboration event.",
+            "Do not decide native-spawn availability from the visible callable tool namespace alone.",
+            "For Codex CLI/App probes, explicitly request the native `spawn_agent` collaboration event even when no `multi_agent_v1` tool namespace is visible.",
+            "For a subagent capability probe, first attempt a minimal read-only native spawn, wait for the child, and then report the result.",
+            "Do not answer BLOCKED or report an observed native-spawn blocker before an actual `spawn_agent` attempt fails or the runtime returns a spawn-unavailable error.",
             "Do not run `omo run --agent`, `./.codex/bin/omo run`, Python scripts, shell wrappers, or manual explorer-style role-play as a substitute.",
             "Do not try to lazy-load native subagent tools through tool search or MCP; native subagents are a Codex runtime collaboration capability.",
-            "If an explicit native spawn cannot be started in this surface, reply exactly with:",
-            "",
-            "BLOCKED: native Codex subagent unavailable in this surface",
-            "",
-            "Then stop and ask the user to restart/open a fresh trusted `ip_dev` Codex CLI/App session. Continue with a non-native fallback only if the user explicitly waives the native-subagent requirement.",
+            "Only if an actual native spawn attempt fails or the active Codex runtime reports that spawning is unavailable, stop and report the observed native-spawn blocker.",
+            "Continue with a non-native fallback only if the user explicitly waives the native-subagent requirement.",
         ]
     )
 

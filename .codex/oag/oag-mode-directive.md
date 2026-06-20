@@ -120,11 +120,16 @@ lint, coverage, formal, SDC, signoff, or implementation filelist artifacts.
 Those writes require a native OAG subagent dispatch and receipt, or an explicit
 human `main_agent_subagent_waiver` decision receipt.
 
-If an explicit native spawn cannot be started in the active surface, report
-`BLOCKED: native Codex subagent unavailable in this surface` and ask for a fresh
-trusted `ip_dev` Codex CLI/App session. Do not continue as a manual
-requirement-contract, IP-contract, RTL, TB, or review "subagent" unless the user
-explicitly waives the native-subagent requirement.
+Before reporting a native-subagent blocker, first attempt a minimal explicit
+native spawn in the active surface and wait for the child result. Do not decide
+availability from the visible callable tool namespace alone; in Codex CLI/App
+traces, explicitly request the native `spawn_agent` collaboration event even
+when no `multi_agent_v1` tool namespace is visible. If the actual spawn attempt
+fails or the active runtime reports spawning is unavailable, report the observed
+native-spawn blocker and ask for a fresh trusted `ip_dev` Codex CLI/App session.
+Do not continue as a manual requirement-contract, IP-contract, RTL, TB, or
+review "subagent" unless the user explicitly waives the native-subagent
+requirement.
 
 Evidence-producing write-capable OAG subagents must write a non-empty receipt
 and end with:

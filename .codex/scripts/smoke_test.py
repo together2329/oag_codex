@@ -657,7 +657,9 @@ def main() -> int:
         assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
-        assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
+        assert "first attempt a minimal explicit" in subagent_workflows and "native spawn" in subagent_workflows, subagent_workflows
+        assert "observed" in subagent_workflows and "native-spawn blocker" in subagent_workflows, subagent_workflows
+        assert "BLOCKED: native Codex subagent unavailable in this surface" not in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
         mcp_text = (ROOT / "mcp.json").read_text(encoding="utf-8")
         user_home_prefix = "/" + "Users/"
@@ -725,8 +727,13 @@ def main() -> int:
         assert guard_on.returncode == 0, guard_on.stderr or guard_on.stdout
         guard_context = hook_context(guard_on)
         assert "NATIVE CODEX SUBAGENT GUARD" in guard_context, guard_on.stdout
+        assert "first attempt a minimal read-only native spawn" in guard_context, guard_on.stdout
+        assert "Do not answer BLOCKED or report an observed native-spawn blocker before an actual `spawn_agent` attempt fails" in guard_context, guard_on.stdout
+        assert "Do not decide native-spawn availability from the visible callable tool namespace alone" in guard_context, guard_on.stdout
+        assert "explicitly request the native `spawn_agent` collaboration event" in guard_context, guard_on.stdout
         assert "Do not run `omo run --agent`" in guard_context, guard_on.stdout
-        assert "BLOCKED: native Codex subagent unavailable in this surface" in guard_context, guard_on.stdout
+        assert "observed native-spawn blocker" in guard_context, guard_on.stdout
+        assert "BLOCKED: native Codex subagent unavailable in this surface" not in guard_context, guard_on.stdout
         assert "OAG MODE ENABLED!" not in guard_context, guard_on.stdout
         trigger_on = oag_mode_trigger({"prompt": "oag use subagent for timer"})
         assert trigger_on.returncode == 0, trigger_on.stderr or trigger_on.stdout

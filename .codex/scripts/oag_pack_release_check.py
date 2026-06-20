@@ -147,7 +147,10 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_main_write_gate.py",
         "git status --short -uall -- <ip>",
         "SubagentStart",
-        "BLOCKED: native Codex subagent unavailable in this surface",
+        "first attempt a minimal explicit",
+        "native spawn",
+        "observed",
+        "native-spawn blocker",
     ),
     CODEX_ROOT / "skills" / "oag-ip-workflow" / "SKILL.md": (
         "python3 .codex/scripts/oag_cli.py",

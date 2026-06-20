@@ -77,12 +77,16 @@ subagents are available. Use
 patch a team member's user config, then restart Codex or open a fresh trusted
 project session. Do not treat missing tool-namespace visibility in one agent
 surface as proof that native subagents are unavailable; Codex CLI/App may
-surface the native collaboration path as an internal `spawn_agent` event. If a
-real native spawn cannot be started after an explicit subagent request, report
-`BLOCKED: native Codex subagent unavailable in this surface` and stop or ask the
-user to restart/open a fresh trusted `ip_dev` session. Do not replace the child
-agent with Python, shell scripts, or manual role-play unless the user explicitly
-waives the native-subagent requirement.
+surface the native collaboration path as an internal `spawn_agent` event. Before
+reporting a native-subagent blocker, first attempt a minimal explicit native
+spawn in the current surface and wait for the child result. Do not decide
+availability from the visible callable tool namespace alone; in Codex CLI/App
+traces, explicitly request the native `spawn_agent` collaboration event even
+when no `multi_agent_v1` tool namespace is visible. If the actual spawn attempt
+fails or the active runtime reports spawning is unavailable, report the observed
+native-spawn blocker and ask the user to restart/open a fresh trusted `ip_dev`
+session. Do not replace the child agent with Python, shell scripts, or manual
+role-play unless the user explicitly waives the native-subagent requirement.
 
 Use the exact `oag` keyword for OAG mode in team workflows. Hooks should not
 inject OAG mode merely because a prompt mentions generic RTL, testing,

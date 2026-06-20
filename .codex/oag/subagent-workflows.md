@@ -24,11 +24,16 @@ native subagent facility after restart or a fresh trusted project session. Do
 not narrate speculative tool-namespace probes. Missing `multi_agent_v1` in one
 agent surface is not proof that native subagents are unavailable; Codex CLI/App
 may surface the same operation as an internal `spawn_agent` collaboration event.
-If an explicit native spawn cannot be started, report
-`BLOCKED: native Codex subagent unavailable in this surface` and stop or ask the
-user to restart/open a fresh trusted `ip_dev` session. Do not continue by
-pretending a child agent ran, and do not manually apply a child role as a
-substitute unless the user explicitly waives the native-subagent requirement.
+Before reporting a native-subagent blocker, first attempt a minimal explicit
+native spawn in the current surface and wait for the child result. Do not decide
+availability from the visible callable tool namespace alone; in Codex CLI/App
+traces, explicitly request the native `spawn_agent` collaboration event even
+when no `multi_agent_v1` tool namespace is visible. If the actual spawn attempt
+fails or the active runtime reports spawning is unavailable, report the observed
+native-spawn blocker and ask the user to restart/open a fresh trusted `ip_dev`
+session. Do not continue by pretending a child agent ran, and do not manually
+apply a child role as a substitute unless the user explicitly waives the native
+subagent requirement.
 
 ## Native Trigger
 
