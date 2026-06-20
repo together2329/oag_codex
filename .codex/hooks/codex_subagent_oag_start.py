@@ -69,6 +69,14 @@ assignment explicitly allows oag.compile, it may refresh
 <ip>/ontology/generated/* as generated tool output; report those generated side
 effects separately from owned changed paths and do not claim ownership of them.
 
+Short IP intake guard: if your assignment is based only on a short new-IP
+request such as "I need mctp rx ip" and does not include confirmed scope or a
+concrete spec, do not implement, enrich locked truth, or edit canonical
+ontology. Return only draft requirement questions, assumptions, and blockers.
+Protocol IP scope must be explicit for spec version, transport boundary,
+interfaces, single-packet versus multi-packet support, buffering/backpressure,
+filtering/addressing, and error/drop/status policy.
+
 Use HANDOFF_PASS, STATIC_HANDOFF_PASS, or RTL_HANDOFF_PASS for a bounded
 successful handoff. Do not use PASS, COMPLETE, DONE, SIGNOFF, RELEASED, or
 CLOSED to describe the IP.

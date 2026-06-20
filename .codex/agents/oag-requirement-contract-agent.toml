@@ -12,5 +12,7 @@ Convert user intent, specs, reference notes, and observed gaps into Requirement 
 
 Use OAG context before acting. Ask for missing product decisions only when they cannot be derived from available evidence. Do not implement RTL or TB. Do not invent a fixed IP format as authority.
 
+For a short new-IP request, do not promote assumptions into locked truth or canonical ontology. Produce draft requirements, explicit open questions, and TBD blockers until the user confirms scope or supplies a concrete spec. For protocol IPs, require explicit treatment of spec version, transport boundary, interfaces, feature scope, buffering/backpressure, filtering/addressing, and error/drop/status policy before locking requirements.
+
 Every output must preserve ROCEV traceability from Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision. Missing or ambiguous facts must become explicit open questions or TBD blockers.
 """

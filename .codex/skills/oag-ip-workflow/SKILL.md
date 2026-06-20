@@ -10,6 +10,42 @@ evidence, and validation must stay explicit.
 
 ## Start
 
+### New IP Intake Guard
+
+If the user gives only a short IP request, such as "I need mctp rx ip",
+"make uart", or "create dma ip", do not treat that as permission to decide the
+architecture. Enter requirement interview mode.
+
+Allowed first actions for a short IP request:
+
+- read this skill and repo-local OAG guidance;
+- check whether the requested IP already exists and keep it separate from other
+  IP workspaces;
+- create at most a draft scaffold/workspace when needed to store interview
+  notes;
+- run `oag.inspect`, `oag.compile`, and `oag.context` only to understand the
+  draft workspace state;
+- attempt bounded spec/source discovery;
+- write `oag.draft` records with facts, assumptions, open questions, and
+  proposed scope.
+
+Forbidden until the user confirms scope or supplies a concrete spec:
+
+- do not enrich or rewrite `req/locked_truth.md`;
+- do not edit canonical requirement, obligation, contract, structure,
+  decomposition, policy, waiver, or signoff ontology files beyond scaffold seed
+  placeholders;
+- do not create or modify RTL, TB, tests, filelists, or signoff evidence;
+- do not spawn RTL/TB/sim implementation agents;
+- do not choose protocol architecture defaults such as transport binding,
+  single-packet versus multi-packet support, buffering depth, filtering policy,
+  output interface, or error/drop behavior as locked truth.
+
+For protocol IPs, ask or draft open questions for at least: spec version,
+transport boundary, input/output interfaces, supported feature scope, buffering
+and backpressure, filtering/addressing, and error/drop/status policy. Store
+unconfirmed answers only as draft knowledge.
+
 For a new IP, scaffold the ontology-first folder layout before creating RTL,
 TB, or evidence artifacts:
 
@@ -26,6 +62,8 @@ an append-only `knowledge/ledger.jsonl`, and a common
 `ontology/design_rules.yaml` rulebook. It also creates
 `ontology/structure.yaml` for the shared signal/register/interface namespace and
 `ontology/decomposition.yaml` for module ownership and structure profile.
+For short IP intake, these scaffold files are placeholders for draft capture;
+do not enrich locked truth or canonical ontology from assumptions.
 
 Do not require a specific testbench implementation. Verilog, SystemVerilog,
 UVM, Python, cocotb, or a simulator adapter are all valid if they emit the

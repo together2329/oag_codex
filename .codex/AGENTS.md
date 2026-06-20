@@ -171,6 +171,16 @@ decisions, assumptions, and open questions after meaningful user answers and
 before context pressure/compaction risk. Drafts are durable interview memory, not
 locked truth.
 
+Short IP requests are not implementation authorization. If the user only says
+something like "I need <protocol> rx ip" or "make <ip>", create at most a draft
+scaffold/workspace and record `oag.draft` interview knowledge. Do not enrich
+`req/locked_truth.md`, canonical requirement/obligation/contract ontology,
+structure/decomposition, RTL, TB, tests, filelists, or signoff evidence until
+the user confirms scope or provides a concrete spec. For protocol IPs, first
+surface open questions for spec version, transport boundary, interfaces,
+single-packet versus multi-packet scope, buffering/backpressure,
+filtering/addressing, and error/drop/status policy.
+
 Keep protected-field policy and ledger artifacts active. `ontology/protection.yaml`
 declares locked truth and policy fields that require human-approved decisions
 for semantic edits. `knowledge/ledger.jsonl` is append-only and hash chained;
@@ -261,6 +271,10 @@ To create a new IP, scaffold the ontology-first structure before RTL/TB work:
 ```bash
 python3 .codex/scripts/oag_scaffold_ip.py create <ip> --owner <owner>
 ```
+
+For a short new-IP request, this scaffold is only a draft workspace. Do not
+promote scaffold seed files into product truth without explicit user
+confirmation and OAG decision evidence.
 
 To visualize an IP as a filterable ontology graph:
 

@@ -148,6 +148,10 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 
 ## Stop Rules
 
+- A short IP request is requirement-interview input, not product authorization.
+  For prompts like "I need mctp rx ip", create at most a draft workspace and
+  `oag.draft` notes; do not edit locked truth, canonical ontology, RTL, TB,
+  tests, filelists, or signoff evidence until scope is confirmed.
 - Custom subagent output is never sufficient for final closure.
 - Missing validator or gate-review reports block release-grade closure.
 - Evidence added or changed after gate PASS makes the gate decision stale; run

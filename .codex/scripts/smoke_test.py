@@ -593,6 +593,8 @@ def main() -> int:
         assert "STATIC_HANDOFF_PASS" in subagent_workflows, subagent_workflows
         assert "git status --short -uall -- <ip>" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
+        agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        directive_text = OAG_MODE_DIRECTIVE.read_text(encoding="utf-8")
         assert "python3 scripts/" not in skill_text, skill_text
         assert "python3 .codex/scripts/oag_cli.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_agent_catalog_check.py" in skill_text, skill_text
@@ -600,6 +602,12 @@ def main() -> int:
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
+        assert "New IP Intake Guard" in skill_text, skill_text
+        assert "short IP request" in skill_text, skill_text
+        assert "do not enrich or rewrite `req/locked_truth.md`" in skill_text, skill_text
+        assert "single-packet versus multi-packet" in skill_text, skill_text
+        assert "Short IP requests are not implementation authorization" in agents_text, agents_text
+        assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
@@ -678,6 +686,7 @@ def main() -> int:
         trigger_context = hook_context(trigger_on)
         assert "OAG MODE ENABLED!" in trigger_context, trigger_on.stdout
         assert "Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision" in trigger_context, trigger_on.stdout
+        assert "short IP request is requirement-interview input" in trigger_context, trigger_on.stdout
         assert "multi_agent_v1.spawn_agent" in trigger_context, trigger_on.stdout
         assert "record_decision=true" in trigger_context, trigger_on.stdout
 
@@ -698,6 +707,8 @@ def main() -> int:
         start_context = hook_context(start_hook)
         assert "OAG SUBAGENT START CONTRACT" in start_context, start_hook.stdout
         assert "STATIC_HANDOFF_PASS" in start_context, start_hook.stdout
+        assert "Short IP intake guard" in start_context, start_hook.stdout
+        assert "single-packet versus multi-packet" in start_context, start_hook.stdout
         assert "OAG_EVIDENCE_RECORDED" in start_context, start_hook.stdout
         assert start_cache.is_file(), start_cache
         start_event = json.loads(start_cache.read_text(encoding="utf-8").splitlines()[-1])
