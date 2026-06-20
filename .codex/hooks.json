@@ -54,6 +54,19 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "matcher": "^oag-",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_subagent_oag_start.py",
+            "timeout": 10,
+            "statusMessage": "OAG: injecting subagent start contract"
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "matcher": "^oag-(ontology-curator-agent|custom-worker|rtl-implementation-agent|tb-implementation-agent|sim-execution-agent)$",

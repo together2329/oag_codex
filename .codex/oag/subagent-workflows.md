@@ -83,6 +83,20 @@ Use subagents when the work is naturally parallel and bounded:
 Avoid subagents when a single edit surface needs tight sequential reasoning.
 Write-heavy subagents must be assigned non-overlapping files or modules.
 
+Before spawning a write-capable subagent, the main agent must state the allowed
+write paths and allowed tool side effects in the task. After child completion,
+run a bounded status/path audit such as `git status --short -uall -- <ip>` and
+compare actual changed paths against the assignment. Any path outside the child
+scope must be identified as pre-existing, rejected, or explicitly routed to a
+new task before integration.
+
+`oag.compile` is a special verification tool side effect. A subagent may run it
+only when the assignment says so. It may refresh
+`<ip>/ontology/generated/*` as generated tool output; the child must not
+manually edit generated ontology files, must not claim ownership of those
+outputs, and must report generated side effects separately from owned changed
+paths.
+
 ## Prompt Shape
 
 ```text
@@ -132,7 +146,10 @@ links. Write-capable evidence-producing subagents must write a non-empty receipt
 line: OAG_EVIDENCE_RECORDED: <relative-path>. JSON receipts must follow
 `.codex/schemas/oag_subagent_receipt.schema.json`.
 
-No subagent may claim final completion.
+Use `HANDOFF_PASS` or `STATIC_HANDOFF_PASS` for a bounded worker receipt that
+passed its assigned handoff. Do not use status language that implies IP closure,
+verification closure, release, signoff, or final completion. No subagent may
+claim final completion.
 ```
 
 ## Gate Prompt
@@ -150,11 +167,13 @@ Wait for both. The main agent reports APPROVE/REJECT with artifact paths and
 does not override a blocker.
 ```
 
-## Stop Hook
+## Start/Stop Hooks
 
-`hooks.json` registers a `SubagentStop` hook for write-capable
-evidence-producing OAG agents. It does not execute subagents. It only blocks a
-stopped write-capable child that lacks a valid `OAG_EVIDENCE_RECORDED:
-<relative-path>` receipt. This mirrors the
+`hooks.json` registers a `SubagentStart` hook for OAG child threads and a
+`SubagentStop` hook for write-capable evidence-producing OAG agents. These
+hooks do not execute or spawn subagents; Codex native orchestration does that.
+The start hook injects the child-work contract and records a start event. The
+stop hook blocks a stopped write-capable child that lacks a valid
+`OAG_EVIDENCE_RECORDED: <relative-path>` receipt. This mirrors the
 oh-my-openagent executor-verifier pattern while keeping final closure in OAG
 `check`/`decide`.

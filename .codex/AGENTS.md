@@ -22,6 +22,7 @@ Primary assets:
 - `hooks/codex_draft_pressure.py`
 - `hooks/codex_native_subagent_guard.py`
 - `hooks/codex_stop_gate.py`
+- `hooks/codex_subagent_oag_start.py`
 - `hooks/codex_subagent_oag_gate.py`
 - `hooks.json`
 - `scripts/oag_cli.py`
@@ -97,6 +98,8 @@ the message. Prompt patterns live in
 by the `SubagentStop` hook only when they are write-capable, and must end with
 `OAG_EVIDENCE_RECORDED: <relative-path>`. Subagents may never claim final
 completion; final closure requires OAG check/decide and the gate reviewer role.
+The `SubagentStart` hook injects the OAG child-work contract and records a
+start event; it must not spawn subagents or replace native Codex orchestration.
 For release-grade closure packages, `.codex/scripts/oag_closure_check.py` must pass
 with both an `oag_validation_report.v1` from `oag-evidence-validator` and an
 `oag_gate_decision.v1` PASS from `oag-gate-reviewer`.

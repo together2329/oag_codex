@@ -32,6 +32,7 @@ OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
+SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
 OAG_MODE_TRIGGER = ROOT / "hooks" / "codex_oag_mode_trigger.py"
 NATIVE_SUBAGENT_GUARD = ROOT / "hooks" / "codex_native_subagent_guard.py"
@@ -175,6 +176,21 @@ def subagent_gate(payload: dict, extra_env: dict[str, str] | None = None) -> sub
         env.update(extra_env)
     return subprocess.run(
         [sys.executable, str(SUBAGENT_GATE)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def subagent_start(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(SUBAGENT_START)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
@@ -471,12 +487,16 @@ def main() -> int:
         assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        subagent_start_hooks = hooks["hooks"]["SubagentStart"][0]
+        assert subagent_start_hooks["matcher"] == "^oag-", hooks
+        assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
         assert "oag-" in subagent_hooks["matcher"], hooks
         assert subagent_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_gate.py", hooks
         post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
         assert STOP_GATE.is_file(), STOP_GATE
+        assert SUBAGENT_START.is_file(), SUBAGENT_START
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
         assert OAG_MODE_TRIGGER.is_file(), OAG_MODE_TRIGGER
         assert NATIVE_SUBAGENT_GUARD.is_file(), NATIVE_SUBAGENT_GUARD
@@ -520,11 +540,19 @@ def main() -> int:
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
         assert "agent_type" in subagent_workflows, subagent_workflows
         assert "native Codex collaboration workers" in subagent_workflows, subagent_workflows
+        assert "SubagentStart" in subagent_workflows, subagent_workflows
+        assert "generated tool output" in subagent_workflows, subagent_workflows
+        assert "STATIC_HANDOFF_PASS" in subagent_workflows, subagent_workflows
+        assert "git status --short -uall -- <ip>" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
         assert "python3 scripts/" not in skill_text, skill_text
         assert "python3 .codex/scripts/oag_cli.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_agent_catalog_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
+        assert "SubagentStart" in skill_text, skill_text
+        assert "generated tool output" in skill_text, skill_text
+        assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
+        assert "find .. -name AGENTS.md" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
@@ -607,6 +635,26 @@ def main() -> int:
 
         hook_cwd = Path(tmp) / "subagent_hook_project"
         hook_cwd.mkdir(parents=True, exist_ok=True)
+        start_cache = Path(tmp) / "subagent_start_events.jsonl"
+        start_payload = {
+            "hook_event_name": "SubagentStart",
+            "agent_type": "oag-rtl-implementation-agent",
+            "agent_id": "rtl-worker-1",
+            "session_id": "smoke-session",
+            "cwd": str(hook_cwd),
+            "model": "gpt-5.5",
+            "permission_mode": "default",
+        }
+        start_hook = subagent_start(start_payload, {"OAG_SUBAGENT_START_CACHE": str(start_cache)})
+        assert start_hook.returncode == 0, start_hook.stderr or start_hook.stdout
+        start_context = hook_context(start_hook)
+        assert "OAG SUBAGENT START CONTRACT" in start_context, start_hook.stdout
+        assert "STATIC_HANDOFF_PASS" in start_context, start_hook.stdout
+        assert "OAG_EVIDENCE_RECORDED" in start_context, start_hook.stdout
+        assert start_cache.is_file(), start_cache
+        start_event = json.loads(start_cache.read_text(encoding="utf-8").splitlines()[-1])
+        assert start_event["schema_version"] == "oag_subagent_start_event.v1", start_event
+        assert start_event["agent_type"] == "oag-rtl-implementation-agent", start_event
         transcript_path = Path(tmp) / "subagent_transcript.txt"
         transcript_path.write_text("normal transcript\n", encoding="utf-8")
         invalid_payload = {
@@ -637,7 +685,7 @@ def main() -> int:
                     "role_name": "oag-custom-worker",
                     "shard_scope": "smoke",
                     "stage": "rtl",
-                    "status": "PASS",
+                    "status": "STATIC_HANDOFF_PASS",
                     "owned_obligations": [],
                     "contracts": [],
                     "allowed_write_paths": [".codex/oag/subagent-receipts/"],
@@ -689,7 +737,7 @@ def main() -> int:
                     "role_name": "oag-custom-worker",
                     "shard_scope": "rtl_timer",
                     "stage": "rtl",
-                    "status": "PASS",
+                    "status": "STATIC_HANDOFF_PASS",
                     "owned_obligations": [],
                     "contracts": [],
                     "allowed_write_paths": ["rtl/"],

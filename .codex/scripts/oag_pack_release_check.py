@@ -45,6 +45,7 @@ REQUIRED_FILES = (
     HOOKS_DIR / "codex_oag_mode_trigger.py",
     HOOKS_DIR / "codex_oag_session_start.py",
     HOOKS_DIR / "codex_stop_gate.py",
+    HOOKS_DIR / "codex_subagent_oag_start.py",
     HOOKS_DIR / "codex_subagent_oag_gate.py",
     SCHEMAS_DIR / "oag_subagent_receipt.schema.json",
     SCHEMAS_DIR / "oag_validation_report.schema.json",
@@ -93,6 +94,7 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_agent_catalog_check.py",
         "oag_closure_check.py",
         "oag_codex_config_doctor.py",
+        "SubagentStart",
         "SubagentStop",
         "schema",
     ),
@@ -102,6 +104,8 @@ REQUIRED_DOC_SNIPPETS = {
         "multi_agent_v1.spawn_agent",
         "native Codex subagents",
         "Do not continue as a manual",
+        "generated tool output",
+        "STATIC_HANDOFF_PASS",
         "record_decision=true",
         "CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE",
     ),
@@ -111,6 +115,10 @@ REQUIRED_DOC_SNIPPETS = {
         "enabled = false",
         "OAG_EVIDENCE_RECORDED",
         "Do not run a Python",
+        "generated tool output",
+        "STATIC_HANDOFF_PASS",
+        "git status --short -uall -- <ip>",
+        "SubagentStart",
         "BLOCKED: native Codex subagent unavailable in this surface",
     ),
     CODEX_ROOT / "skills" / "oag-ip-workflow" / "SKILL.md": (
@@ -118,6 +126,10 @@ REQUIRED_DOC_SNIPPETS = {
         "python3 .codex/scripts/oag_agent_catalog_check.py",
         "python3 .codex/scripts/oag_closure_check.py",
         "native Codex collaboration workers",
+        "generated tool output",
+        "STATIC_HANDOFF_PASS",
+        "git status --short -uall -- <ip>",
+        "SubagentStart",
     ),
 }
 
@@ -227,6 +239,14 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     user_prompt_commands = [str(item.get("command") or "") for item in user_prompt_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_commands:
         issues.append(issue("NATIVE_SUBAGENT_GUARD_MISSING", "UserPromptSubmit must enforce native-only subagent requests.", CODEX_ROOT / "hooks.json"))
+    subagent_start = (((hooks.get("hooks") or {}).get("SubagentStart") or [{}])[0])
+    start_matcher = str(subagent_start.get("matcher") or "")
+    start_hooks = subagent_start.get("hooks") if isinstance(subagent_start, dict) else []
+    start_commands = [str(item.get("command") or "") for item in start_hooks if isinstance(item, dict)]
+    if start_matcher != "^oag-":
+        issues.append(issue("SUBAGENT_START_MATCHER", "SubagentStart must match OAG child agents.", CODEX_ROOT / "hooks.json"))
+    if "python3 .codex/hooks/codex_subagent_oag_start.py" not in start_commands:
+        issues.append(issue("SUBAGENT_START_HOOK_MISSING", "SubagentStart must inject the OAG child-work contract.", CODEX_ROOT / "hooks.json"))
     subagent = (((hooks.get("hooks") or {}).get("SubagentStop") or [{}])[0])
     matcher = str(subagent.get("matcher") or "")
     if "custom-researcher" in matcher or "custom-reviewer" in matcher:

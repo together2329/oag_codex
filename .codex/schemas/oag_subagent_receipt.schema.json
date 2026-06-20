@@ -48,7 +48,7 @@
       "minLength": 1
     },
     "status": {
-      "enum": ["PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"]
+      "enum": ["HANDOFF_PASS", "STATIC_HANDOFF_PASS", "PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"]
     },
     "owned_obligations": {
       "type": "array",

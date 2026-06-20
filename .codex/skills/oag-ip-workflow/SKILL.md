@@ -152,6 +152,28 @@ preserve ROCEV traceability, and produce evidence paths. They cannot claim final
 completion, approve protected ontology edits, or replace `oag.check`,
 `oag.decide`, evidence validation, or gate review.
 
+When assigning a write-capable subagent, state allowed write paths and allowed
+tool side effects explicitly. `oag.compile` is allowed only when assigned; it
+may refresh `<ip>/ontology/generated/*` as generated tool output. The child must
+not manually edit generated ontology files, must not claim ownership of those
+outputs, and must report them separately from owned changed paths. The main
+agent must run a bounded path audit after child completion, for example
+`git status --short -uall -- <ip>`, and reject or explain any path outside the
+child scope.
+
+Subagent receipts should use `HANDOFF_PASS` or `STATIC_HANDOFF_PASS` for a
+bounded worker result. `PASS` is tolerated only as legacy compatibility and must
+not imply IP closure, verification closure, release, signoff, or final
+completion.
+
+When hooks are enabled, `SubagentStart` injects the child-work contract and
+records that an OAG child started. It must not spawn subagents or replace native
+Codex orchestration. `SubagentStop` verifies write-capable child receipts.
+
+When checking instruction files, avoid unbounded parent-directory scans such as
+`find .. -name AGENTS.md`. Use repo-local bounded search such as
+`rg --files -g 'AGENTS.md' -g '!**/.git/**'` or explicit expected paths.
+
 ## During Work
 
 When a meaningful stage boundary is reached, append one record:

@@ -113,6 +113,20 @@ OAG_EVIDENCE_RECORDED: <relative-path>
 Active child agents that own evidence block parent closure until their output is
 integrated, validated, or explicitly rejected.
 
+Write-capable subagent assignments must name allowed write paths and allowed
+tool side effects. `oag.compile` may be assigned as a verification step; when
+assigned, it may refresh `<ip>/ontology/generated/*` as generated tool output.
+Do not manually edit generated ontology files or claim ownership of generated
+outputs. Report generated side effects separately from owned changed paths.
+
+After a child reports, run a bounded path audit such as
+`git status --short -uall -- <ip>` and compare actual changed paths with the
+assignment. Reject, route, or explicitly explain any out-of-scope path before
+integration.
+
+Worker receipts should use `HANDOFF_PASS` or `STATIC_HANDOFF_PASS` for bounded
+handoffs. `PASS` is legacy-compatible only and must not imply final IP closure.
+
 ## Stop Rules
 
 - Custom subagent output is never sufficient for final closure.

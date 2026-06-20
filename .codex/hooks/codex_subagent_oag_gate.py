@@ -45,7 +45,7 @@ REQUIRED_RECEIPT_FIELDS = {
     "may_claim_complete",
     "created_at",
 }
-RECEIPT_STATUSES = {"PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
+RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
 CONTEXT_PRESSURE_MARKERS = (
     "context compacted",
     "context_length_exceeded",
@@ -205,9 +205,11 @@ def directive(payload: dict) -> str:
         "Then make the final line exactly:\n"
         "OAG_EVIDENCE_RECORDED: <relative-path>\n\n"
         "The receipt must name the shard scope, checked/changed paths, commands or artifacts, "
-        "ROCEV links, blockers, and whether the result is PASS, FAIL, or INCONCLUSIVE. "
-        "JSON receipts must use schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. "
-        "Do not claim final completion."
+        "ROCEV links, blockers, and whether the bounded handoff result is HANDOFF_PASS, "
+        "STATIC_HANDOFF_PASS, FAIL, BLOCKED, or INCONCLUSIVE. Use PASS only for legacy "
+        "compatibility, not to imply IP closure. JSON receipts must use "
+        "schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. Do not claim "
+        "final completion."
     )
 
 
