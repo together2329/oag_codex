@@ -33,6 +33,32 @@ python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments
 Run state belongs under `ontology/runs/<run_id>/`; evidence still closes through
 `oag.record`/`oag.run.record`, and decisions still close through
 `oag.decide`/`oag.run.checkpoint`.
+
+For Codex subagent-style sharding, use native Codex `multi_agent_v1`
+subagents. The prompt/directive asks Codex to call `multi_agent_v1.spawn_agent`
+with named custom agents from `.codex/agents/*.toml`. Validate the OAG role
+catalog before asking Codex to spawn named agents:
+
+```bash
+python3 .codex/scripts/oag_agent_catalog_check.py
+```
+
+Subagents are spawned by `multi_agent_v1.spawn_agent`; the main prompt should
+make each child assignment self-contained:
+
+```text
+multi_agent_v1.spawn_agent({
+  "message": "TASK: act as the OAG legacy/reference IP analyzer. DELIVERABLE: source paths, extracted behavior, gaps, and evidence needs. SCOPE: <paths>. VERIFY: cite exact files or return INCONCLUSIVE.",
+  "agent_type": "oag-legacy-ip-analyzer",
+  "fork_context": false
+})
+```
+
+Subagents may research, implement, review, or collect evidence inside the shard
+named in the prompt. They cannot claim final closure, edit protected ontology,
+or replace `oag.decide`; final approval stays with OAG decision receipts and
+the gate reviewer role. `agent_type` is a routing hint; paste role requirements
+inside `message`. Prompt patterns live in `.codex/oag/subagent-workflows.md`.
 When `.codex/hooks.json` is enabled by Codex, the Stop hook calls
 `hooks/codex_stop_gate.py` so an incomplete active run blocks stopping with the
 next OAG action instead of relying on the agent to remember it.
