@@ -83,12 +83,29 @@ Use subagents when the work is naturally parallel and bounded:
 Avoid subagents when a single edit surface needs tight sequential reasoning.
 Write-heavy subagents must be assigned non-overlapping files or modules.
 
-Before spawning a write-capable subagent, the main agent must state the allowed
-write paths and allowed tool side effects in the task. After child completion,
-run a bounded status/path audit such as `git status --short -uall -- <ip>` and
-compare actual changed paths against the assignment. Any path outside the child
-scope must be identified as pre-existing, rejected, or explicitly routed to a
-new task before integration.
+Before spawning a write-capable subagent, the main agent must create a dispatch
+record and paste its fields into the child task:
+
+```bash
+python3 .codex/scripts/oag_dispatch.py create \
+  --ip-dir <ip> \
+  --agent-type <oag-write-agent> \
+  --stage <stage> \
+  --allowed-write-path <ip>/rtl/<file>.sv \
+  --allowed-write-path <ip>/knowledge/subagents/ \
+  --allowed-tool-side-effect <ip>/ontology/generated/ \
+  --receipt-path <ip>/knowledge/subagents/<receipt>.json \
+  --json
+```
+
+The dispatch is the child work permit. The spawn message must include
+`dispatch_id`, `dispatch_path`, allowed write paths, allowed tool side effects,
+and receipt path. After child completion, run the bounded status/path audit
+through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
+--receipt <receipt> --json`. It compares the child receipt and actual
+`git status --short -uall -- <ip>` delta against the dispatch baseline. Any
+path outside the child scope must be identified as pre-existing, rejected, or
+explicitly routed to a new task before integration.
 
 `oag.compile` is a special verification tool side effect. A subagent may run it
 only when the assignment says so. It may refresh
@@ -141,15 +158,16 @@ Spawn:
   compile, lint, and static risks after the write agents report.
 
 Each subagent must report changed paths, evidence commands, blockers, and ROCEV
-links. Write-capable evidence-producing subagents must write a non-empty receipt under
-<ip>/knowledge/subagents/ or .codex/oag/subagent-receipts/ and end with final
-line: OAG_EVIDENCE_RECORDED: <relative-path>. JSON receipts must follow
-`.codex/schemas/oag_subagent_receipt.schema.json`.
+links. Write-capable evidence-producing subagents must write a non-empty receipt
+under `<ip>/knowledge/subagents/` and end with final line:
+`OAG_EVIDENCE_RECORDED: <relative-path>`. JSON receipts must follow
+`.codex/schemas/oag_subagent_receipt.schema.json` and include `dispatch_id`,
+`dispatch_path`, `changed_paths`, and `generated_side_effects`.
 
-Use `HANDOFF_PASS` or `STATIC_HANDOFF_PASS` for a bounded worker receipt that
-passed its assigned handoff. Do not use status language that implies IP closure,
-verification closure, release, signoff, or final completion. No subagent may
-claim final completion.
+Use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or `RTL_HANDOFF_PASS` for a bounded
+worker receipt that passed its assigned handoff. Do not use status language that
+implies IP closure, verification closure, release, signoff, or final completion.
+No subagent may claim final completion.
 ```
 
 ## Gate Prompt
@@ -174,6 +192,6 @@ does not override a blocker.
 hooks do not execute or spawn subagents; Codex native orchestration does that.
 The start hook injects the child-work contract and records a start event. The
 stop hook blocks a stopped write-capable child that lacks a valid
-`OAG_EVIDENCE_RECORDED: <relative-path>` receipt. This mirrors the
-oh-my-openagent executor-verifier pattern while keeping final closure in OAG
-`check`/`decide`.
+`OAG_EVIDENCE_RECORDED: <relative-path>` receipt, dispatch link, schema-valid
+JSON payload, and path-scope verification. This mirrors the oh-my-openagent
+executor-verifier pattern while keeping final closure in OAG `check`/`decide`.

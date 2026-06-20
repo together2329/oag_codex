@@ -136,7 +136,7 @@ For implementation splits:
 
 ```text
 multi_agent_v1.spawn_agent({
-  "message": "TASK: act as the OAG RTL implementation agent. DELIVERABLE: the smallest RTL change plus changed paths, evidence command, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. VERIFY: compile or return the exact blocker. Write a non-empty receipt and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
+  "message": "TASK: act as the OAG RTL implementation agent. DELIVERABLE: the smallest RTL change plus changed paths, evidence command, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. DISPATCH: include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path from oag_dispatch.py create. VERIFY: compile or return the exact blocker. Write a non-empty receipt and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
   "agent_type": "oag-rtl-implementation-agent",
   "fork_context": false
 })
@@ -152,19 +152,43 @@ preserve ROCEV traceability, and produce evidence paths. They cannot claim final
 completion, approve protected ontology edits, or replace `oag.check`,
 `oag.decide`, evidence validation, or gate review.
 
-When assigning a write-capable subagent, state allowed write paths and allowed
-tool side effects explicitly. `oag.compile` is allowed only when assigned; it
-may refresh `<ip>/ontology/generated/*` as generated tool output. The child must
-not manually edit generated ontology files, must not claim ownership of those
-outputs, and must report them separately from owned changed paths. The main
-agent must run a bounded path audit after child completion, for example
-`git status --short -uall -- <ip>`, and reject or explain any path outside the
-child scope.
+When assigning a write-capable subagent, create a dispatch record before native
+spawn:
 
-Subagent receipts should use `HANDOFF_PASS` or `STATIC_HANDOFF_PASS` for a
-bounded worker result. `PASS` is tolerated only as legacy compatibility and must
-not imply IP closure, verification closure, release, signoff, or final
-completion.
+```bash
+python3 .codex/scripts/oag_dispatch.py create \
+  --ip-dir <ip> \
+  --agent-type <oag-write-agent> \
+  --stage <stage> \
+  --allowed-write-path <ip>/<owned-path> \
+  --allowed-write-path <ip>/knowledge/subagents/ \
+  --allowed-tool-side-effect <ip>/ontology/generated/ \
+  --receipt-path <ip>/knowledge/subagents/<receipt>.json \
+  --json
+```
+
+State the resulting `dispatch_id`, `dispatch_path`, allowed write paths, allowed
+tool side effects, and receipt path in the child message. `oag.compile` is
+allowed only when assigned; it may refresh `<ip>/ontology/generated/*` as
+generated tool output. The child must not manually edit generated ontology
+files, must not claim ownership of those outputs, and must report them
+separately from owned changed paths. After child completion, verify the dispatch
+and receipt before integration:
+
+```bash
+python3 .codex/scripts/oag_dispatch.py verify \
+  --dispatch <ip>/knowledge/dispatches/<dispatch>.json \
+  --receipt <ip>/knowledge/subagents/<receipt>.json \
+  --json
+```
+
+The verifier compares the child receipt and actual
+`git status --short -uall -- <ip>` delta against the dispatch baseline. Reject or explain any path outside
+the child scope.
+
+Subagent receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
+`RTL_HANDOFF_PASS` for a bounded worker result. Do not use `PASS`, `COMPLETE`,
+`DONE`, `SIGNOFF`, `RELEASED`, or `CLOSED` to describe the IP.
 
 When hooks are enabled, `SubagentStart` injects the child-work contract and
 records that an OAG child started. It must not spawn subagents or replace native

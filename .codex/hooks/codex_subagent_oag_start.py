@@ -58,9 +58,10 @@ def additional_context(agent_type: str) -> dict[str, Any]:
 You are a native Codex OAG subagent: {agent_type}.
 
 Before acting, verify your assignment is self-contained and includes TASK,
-DELIVERABLE, SCOPE, VERIFY, allowed write paths, and required evidence output.
-If required scope or evidence instructions are missing, return BLOCKED with the
-missing field instead of guessing.
+DELIVERABLE, SCOPE, VERIFY, dispatch_id, dispatch_path, allowed write paths,
+allowed tool side effects, and required evidence output. If required scope,
+dispatch, or evidence instructions are missing, return BLOCKED with the missing
+field instead of guessing.
 
 Stay inside your assigned shard. Do not manually edit protected truth,
 generated ontology files, .codex files, scripts, or unrelated paths. If your
@@ -68,12 +69,13 @@ assignment explicitly allows oag.compile, it may refresh
 <ip>/ontology/generated/* as generated tool output; report those generated side
 effects separately from owned changed paths and do not claim ownership of them.
 
-Use HANDOFF_PASS or STATIC_HANDOFF_PASS for a bounded successful handoff. PASS
-is legacy-compatible only and does not mean IP closure, verification closure,
-release, signoff, or final completion.
+Use HANDOFF_PASS, STATIC_HANDOFF_PASS, or RTL_HANDOFF_PASS for a bounded
+successful handoff. Do not use PASS, COMPLETE, DONE, SIGNOFF, RELEASED, or
+CLOSED to describe the IP.
 
 Before stopping, write a non-empty OAG subagent receipt under
-<ip>/knowledge/subagents/ or .codex/oag/subagent-receipts/ and end with:
+<ip>/knowledge/subagents/. The receipt must include dispatch_id, dispatch_path,
+changed_paths, generated_side_effects, and may_claim_complete=false. End with:
 OAG_EVIDENCE_RECORDED: <relative-path>
 """
     return {

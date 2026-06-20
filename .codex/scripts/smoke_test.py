@@ -23,6 +23,8 @@ EVAL = ROOT / "scripts" / "oag_eval.py"
 ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
 DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
+DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
+VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
 CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
@@ -41,6 +43,7 @@ CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
 HOOKS_JSON = ROOT / "hooks.json"
 SCHEMA_FILES = [
+    ROOT / "schemas" / "oag_dispatch.schema.json",
     ROOT / "schemas" / "oag_subagent_receipt.schema.json",
     ROOT / "schemas" / "oag_validation_report.schema.json",
     ROOT / "schemas" / "oag_gate_decision.schema.json",
@@ -122,6 +125,30 @@ def run_spec_to_rtl_loop(ip: Path, spec: Path, *, metrics: bool = False) -> subp
         check=False,
         cwd=ROOT,
         env=env,
+    )
+
+
+def run_dispatch(*args: str, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(DISPATCH), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_validate_json(schema: Path, document: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(VALIDATE_JSON), "--schema", str(schema), "--document", str(document), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
     )
 
 
@@ -509,6 +536,8 @@ def main() -> int:
         assert ANSWER_KEY_EVAL.is_file(), ANSWER_KEY_EVAL
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
+        assert DISPATCH.is_file(), DISPATCH
+        assert VALIDATE_JSON.is_file(), VALIDATE_JSON
         assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
         assert CODEX_CONFIG_DOCTOR.is_file(), CODEX_CONFIG_DOCTOR
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
@@ -674,7 +703,42 @@ def main() -> int:
         invalid_gate_payload = json.loads(invalid_gate.stdout)
         assert invalid_gate_payload["decision"] == "block", invalid_gate_payload
         assert "OAG_EVIDENCE_RECORDED" in invalid_gate_payload["reason"], invalid_gate_payload
-        receipt = hook_cwd / ".codex" / "oag" / "subagent-receipts" / "smoke.json"
+        subprocess.run(["git", "init"], cwd=hook_cwd, text=True, capture_output=True, check=True)
+        hook_ip = hook_cwd / "smoke_ip"
+        (hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
+        (hook_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+        dispatch_create = run_dispatch(
+            "create",
+            "--ip-dir",
+            str(hook_ip),
+            "--agent-type",
+            "oag-custom-worker",
+            "--role-kind",
+            "custom",
+            "--stage",
+            "rtl",
+            "--owned-obligation",
+            "OBL_SMOKE",
+            "--contract",
+            "CONTRACT_SMOKE",
+            "--allowed-write-path",
+            str(hook_ip / "rtl" / "smoke.sv"),
+            "--allowed-write-path",
+            str(hook_ip / "knowledge" / "subagents"),
+            "--allowed-tool-side-effect",
+            str(hook_ip / "ontology" / "generated"),
+            "--receipt-path",
+            str(hook_ip / "knowledge" / "subagents" / "smoke.json"),
+            "--json",
+            project_root=hook_cwd,
+        )
+        assert dispatch_create.returncode == 0, dispatch_create.stderr or dispatch_create.stdout
+        dispatch_result = json.loads(dispatch_create.stdout)
+        dispatch = dispatch_result["dispatch"]
+        assert dispatch["schema_version"] == "oag_dispatch.v1", dispatch
+        assert "prompt_contract" in dispatch and "dispatch_id" in dispatch["prompt_contract"], dispatch
+        (hook_ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
+        receipt = hook_ip / "knowledge" / "subagents" / "smoke.json"
         receipt.parent.mkdir(parents=True, exist_ok=True)
         receipt.write_text(
             json.dumps(
@@ -682,14 +746,18 @@ def main() -> int:
                     "schema_version": "oag_subagent_receipt.v1",
                     "product_name": "IP Dev Agent",
                     "internal_gateway": "Ontology Agent Gateway",
+                    "dispatch_id": dispatch["dispatch_id"],
+                    "dispatch_path": dispatch["dispatch_path"],
                     "role_name": "oag-custom-worker",
                     "shard_scope": "smoke",
                     "stage": "rtl",
                     "status": "STATIC_HANDOFF_PASS",
                     "owned_obligations": [],
                     "contracts": [],
-                    "allowed_write_paths": [".codex/oag/subagent-receipts/"],
-                    "evidence_outputs": [".codex/oag/subagent-receipts/smoke.json"],
+                    "allowed_write_paths": dispatch["allowed_write_paths"],
+                    "changed_paths": ["smoke_ip/rtl/smoke.sv"],
+                    "generated_side_effects": [],
+                    "evidence_outputs": [dispatch["receipt_path"]],
                     "may_claim_complete": False,
                     "created_at": "2026-01-01T00:00:00Z",
                 },
@@ -698,10 +766,42 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
-        valid_payload = {**invalid_payload, "last_assistant_message": "OAG_EVIDENCE_RECORDED: .codex/oag/subagent-receipts/smoke.json"}
+        receipt_validation = run_validate_json(ROOT / "schemas" / "oag_subagent_receipt.schema.json", receipt)
+        assert receipt_validation.returncode == 0, receipt_validation.stderr or receipt_validation.stdout
+        dispatch_verify = run_dispatch(
+            "verify",
+            "--dispatch",
+            str(hook_cwd / dispatch["dispatch_path"]),
+            "--receipt",
+            str(receipt),
+            "--json",
+            project_root=hook_cwd,
+        )
+        assert dispatch_verify.returncode == 0, dispatch_verify.stderr or dispatch_verify.stdout
+        dispatch_verify_result = json.loads(dispatch_verify.stdout)
+        assert dispatch_verify_result["status"] == "pass", dispatch_verify_result
+        valid_payload = {**invalid_payload, "last_assistant_message": "OAG_EVIDENCE_RECORDED: smoke_ip/knowledge/subagents/smoke.json"}
         valid_gate = subagent_gate(valid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_valid.json")})
         assert valid_gate.returncode == 0, valid_gate.stderr or valid_gate.stdout
         assert valid_gate.stdout == "", valid_gate.stdout
+        bad_receipt = hook_ip / "knowledge" / "subagents" / "bad_scope.json"
+        bad_payload = json.loads(receipt.read_text(encoding="utf-8"))
+        bad_payload["changed_paths"] = ["smoke_ip/list/rtl.f"]
+        bad_payload["evidence_outputs"] = ["smoke_ip/knowledge/subagents/bad_scope.json"]
+        bad_receipt.write_text(json.dumps(bad_payload, sort_keys=True) + "\n", encoding="utf-8")
+        bad_verify = run_dispatch(
+            "verify",
+            "--dispatch",
+            str(hook_cwd / dispatch["dispatch_path"]),
+            "--receipt",
+            str(bad_receipt),
+            "--json",
+            project_root=hook_cwd,
+        )
+        assert bad_verify.returncode != 0, bad_verify.stdout
+        bad_verify_result = json.loads(bad_verify.stdout)
+        assert any(item["code"] == "RECEIPT_PATH_MISMATCH" for item in bad_verify_result["issues"]), bad_verify_result
+        assert any(item["code"] == "OWNED_PATH_OUT_OF_SCOPE" for item in bad_verify_result["issues"]), bad_verify_result
 
         closure_ip = make_ip(Path(tmp) / "closure_check")
         write_closure_reports(closure_ip)

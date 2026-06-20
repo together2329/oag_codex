@@ -10,9 +10,9 @@ subagents end with a durable receipt line:
 The path must point to a non-empty file inside either:
   - <ip>/knowledge/subagents/
   - knowledge/subagents/
-  - .codex/oag/subagent-receipts/
 
-JSON receipts must match the stable oag_subagent_receipt.v1 core fields.
+JSON receipts must match the stable oag_subagent_receipt.v1 fields and pass
+the dispatch/receipt/path-scope verifier.
 """
 
 from __future__ import annotations
@@ -21,12 +21,14 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
 CACHE_PATH = Path(os.environ.get("OAG_SUBAGENT_GATE_CACHE") or ROOT / ".cache" / "subagent_oag_gate.json")
 MAX_ATTEMPTS = 3
 RECEIPT_RE = re.compile(r"OAG_EVIDENCE_RECORDED:\s*(\S+)")
@@ -35,17 +37,21 @@ REQUIRED_RECEIPT_FIELDS = {
     "product_name",
     "internal_gateway",
     "role_name",
+    "dispatch_id",
+    "dispatch_path",
     "shard_scope",
     "stage",
     "status",
     "owned_obligations",
     "contracts",
     "allowed_write_paths",
+    "changed_paths",
+    "generated_side_effects",
     "evidence_outputs",
     "may_claim_complete",
     "created_at",
 }
-RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
+RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
 CONTEXT_PRESSURE_MARKERS = (
     "context compacted",
     "context_length_exceeded",
@@ -142,14 +148,49 @@ def is_allowed_receipt_path(base: Path, receipt: Path) -> bool:
         return True
     if len(parts) >= 3 and parts[1] == "knowledge" and parts[2] == "subagents":
         return True
-    if len(parts) >= 4 and parts[0] == ".codex" and parts[1] == "oag" and parts[2] == "subagent-receipts":
-        return True
     return False
 
 
-def valid_receipt_payload(receipt: Path) -> bool:
+def dispatch_verify(cwd: Path, receipt: Path, payload: dict) -> bool:
+    dispatch_path = payload.get("dispatch_path")
+    if not isinstance(dispatch_path, str) or not dispatch_path.strip() or Path(dispatch_path).is_absolute():
+        return False
+    dispatch = (cwd / dispatch_path).resolve()
+    try:
+        dispatch.relative_to(cwd.resolve())
+    except ValueError:
+        return False
+    if not dispatch.is_file():
+        return False
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(DISPATCH),
+            "verify",
+            "--dispatch",
+            str(dispatch),
+            "--receipt",
+            str(receipt),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd,
+        env={**os.environ, "OAG_PROJECT_ROOT": str(cwd)},
+    )
+    if proc.returncode != 0:
+        return False
+    try:
+        result = json.loads(proc.stdout)
+    except Exception:
+        return False
+    return isinstance(result, dict) and result.get("status") == "pass"
+
+
+def valid_receipt_payload(cwd: Path, receipt: Path) -> bool:
     if receipt.suffix.lower() != ".json":
-        return True
+        return False
     try:
         payload = json.loads(receipt.read_text(encoding="utf-8"))
     except Exception:
@@ -168,10 +209,17 @@ def valid_receipt_payload(receipt: Path) -> bool:
         return False
     if payload.get("status") not in RECEIPT_STATUSES:
         return False
-    for field in ("owned_obligations", "contracts", "allowed_write_paths", "evidence_outputs"):
+    for field in (
+        "owned_obligations",
+        "contracts",
+        "allowed_write_paths",
+        "changed_paths",
+        "generated_side_effects",
+        "evidence_outputs",
+    ):
         if not isinstance(payload.get(field), list):
             return False
-    return True
+    return dispatch_verify(cwd, receipt, payload)
 
 
 def valid_receipt(payload: dict) -> bool:
@@ -191,25 +239,23 @@ def valid_receipt(payload: dict) -> bool:
             return False
     except Exception:
         return False
-    return valid_receipt_payload(receipt)
+    return valid_receipt_payload(cwd, receipt)
 
 
 def directive(payload: dict) -> str:
     agent_type = payload.get("agent_type") or "oag-subagent"
     return (
         f"{agent_type} stopped without a valid OAG evidence receipt.\n\n"
-        "Before stopping, write a non-empty receipt JSON/Markdown file under one of:\n"
-        "- <ip>/knowledge/subagents/\n"
-        "- knowledge/subagents/\n"
-        "- .codex/oag/subagent-receipts/\n\n"
+        "Before stopping, write a non-empty receipt JSON file under:\n"
+        "- <ip>/knowledge/subagents/\n\n"
         "Then make the final line exactly:\n"
         "OAG_EVIDENCE_RECORDED: <relative-path>\n\n"
-        "The receipt must name the shard scope, checked/changed paths, commands or artifacts, "
-        "ROCEV links, blockers, and whether the bounded handoff result is HANDOFF_PASS, "
-        "STATIC_HANDOFF_PASS, FAIL, BLOCKED, or INCONCLUSIVE. Use PASS only for legacy "
-        "compatibility, not to imply IP closure. JSON receipts must use "
-        "schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. Do not claim "
-        "final completion."
+        "The receipt must name dispatch_id, dispatch_path, shard scope, changed_paths, "
+        "generated_side_effects, commands or artifacts, ROCEV links, blockers, and whether "
+        "the bounded handoff result is HANDOFF_PASS, STATIC_HANDOFF_PASS, RTL_HANDOFF_PASS, "
+        "FAIL, BLOCKED, or INCONCLUSIVE. JSON receipts must use "
+        "schema_version=oag_subagent_receipt.v1, may_claim_complete=false, and must pass "
+        ".codex/scripts/oag_dispatch.py verify. Do not claim final completion."
     )
 
 
