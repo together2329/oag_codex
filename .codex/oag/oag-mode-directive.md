@@ -70,8 +70,10 @@ CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE
 - CONTEXT: read current OAG records, active run state, contracts, and evidence.
 - PIN/RED: capture the gap, failing behavior, stale evidence, or missing proof
   before changing behavior where practical.
-- BUILD: make the smallest RTL, TB, ontology, hook, script, or evidence change
-  that addresses the pinned gap.
+- BUILD: before lock, the main agent may write draft/interview/scaffold
+  material. After lock, the main agent orchestrates; native OAG subagents
+  implement or verify RTL, TB, sim, lint, coverage, formal, SDC, signoff, and
+  filelist artifacts.
 - EVIDENCE: produce concrete artifacts such as scoreboard rows, sim logs, VCD
   review notes, lint/formal/coverage reports, hashes, or decision receipts.
 - VALIDATE: record findings through `oag.record` or `oag.run.record`; ensure
@@ -111,6 +113,12 @@ Use native waiting/mailbox behavior for child results. A timeout means no new
 mailbox update arrived; it is not proof of failure. Use native child steering
 for targeted follow-up and close child threads after integrating a completed or
 inconclusive lane.
+
+After user lock, main agent orchestrates; subagents implement and verify.
+The main agent must not directly create or substantially edit RTL, TB, sim,
+lint, coverage, formal, SDC, signoff, or implementation filelist artifacts.
+Those writes require a native OAG subagent dispatch and receipt, or an explicit
+human `main_agent_subagent_waiver` decision receipt.
 
 If an explicit native spawn cannot be started in the active surface, report
 `BLOCKED: native Codex subagent unavailable in this surface` and ask for a fresh
@@ -167,6 +175,9 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   tests, filelists, or signoff evidence until scope is confirmed.
 - `ontology/scope_lock.json` must be `locked` before implementation,
   validation, gate review, or closure. `draft` means interview only.
+- After lock, no main-agent RTL/TB/verification writes. Use native subagent
+  dispatch + receipt or stop with BLOCKED. Stop hook runs
+  `oag_main_write_gate.py` to enforce this.
 - Custom subagent output is never sufficient for final closure.
 - Missing validator or gate-review reports block release-grade closure.
 - Evidence added or changed after gate PASS makes the gate decision stale; run

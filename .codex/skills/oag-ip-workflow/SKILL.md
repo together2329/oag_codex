@@ -83,6 +83,13 @@ If the user changes requirements after lock, save the new answer with
 continuing implementation. Use `oag.unlock` only when the user explicitly
 withdraws approval.
 
+After user lock, main agent orchestrates; subagents implement and verify. The
+main agent must not directly create or substantially edit RTL, TB, sim, lint,
+coverage, formal, SDC, signoff, or implementation filelist artifacts. Those
+writes require native OAG subagent dispatch + receipt. If native subagents are
+unavailable, stop with BLOCKED unless the user records a human
+`main_agent_subagent_waiver` decision receipt.
+
 For a new IP, scaffold the ontology-first folder layout before creating RTL,
 TB, or evidence artifacts:
 
@@ -227,6 +234,11 @@ preserve ROCEV traceability, and produce evidence paths. They cannot claim final
 completion, approve protected ontology edits, or replace `oag.check`,
 `oag.decide`, evidence validation, or gate review.
 
+Requirement detail work before lock stays main-owned, but use read-heavy
+subagents when they help: spec extraction, reference RTL comparison, ambiguity
+lists, or candidate obligation/contract review. Their output is draft evidence
+until the user locks scope.
+
 When assigning a write-capable subagent, create a dispatch record before native
 spawn:
 
@@ -268,6 +280,8 @@ Subagent receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 When hooks are enabled, `SubagentStart` injects the child-work contract and
 records that an OAG child started. It must not spawn subagents or replace native
 Codex orchestration. `SubagentStop` verifies write-capable child receipts.
+`Stop` runs `oag_main_write_gate.py` so locked implementation or verification
+artifact changes without a covering native subagent receipt block parent stop.
 
 When checking instruction files, avoid unbounded parent-directory scans such as
 `find .. -name AGENTS.md`. Use repo-local bounded search such as

@@ -83,6 +83,14 @@ Use subagents when the work is naturally parallel and bounded:
 Avoid subagents when a single edit surface needs tight sequential reasoning.
 Write-heavy subagents must be assigned non-overlapping files or modules.
 
+After user lock, main agent orchestrates; subagents implement and verify. Locked
+RTL, TB, sim, lint, coverage, formal, SDC, signoff, and implementation filelist
+writes require native OAG subagent dispatch + receipt. If native subagents are
+unavailable, stop with BLOCKED unless the user records a human
+`main_agent_subagent_waiver` decision receipt. Requirement detail work before
+lock may stay with main, but read-heavy spec/reference/obligation research
+should use subagents when useful and remains draft evidence until lock.
+
 Before spawning a write-capable subagent, the main agent must create a dispatch
 record and paste its fields into the child task:
 
@@ -117,6 +125,10 @@ through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
 `git status --short -uall -- <ip>` delta against the dispatch baseline. Any
 path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
+
+At parent Stop, `python3 .codex/scripts/oag_main_write_gate.py` checks the
+locked IP's git delta. Locked implementation/verification artifacts without a
+covering native OAG subagent receipt block stop.
 
 `oag.compile` is a special verification tool side effect. A subagent may run it
 only when the assignment says so. It may refresh

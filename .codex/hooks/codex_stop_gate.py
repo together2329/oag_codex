@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex Stop hook: re-inject the next OAG action while an active run is incomplete.
+"""Codex Stop hook: block incomplete OAG runs and main-agent locked writes.
 
 Output contract (Codex Stop hook):
   - print {"decision": "block", "reason": "<next-action prompt>"} on stdout to block the stop
@@ -11,9 +11,12 @@ Target resolution order:
   3. fallback scan: <project>/*/ontology/runs/active_run.json
 
 For each target it calls oag.stop_check. If a run wants to continue, it blocks
-the stop with that run's prompt block. Human-decision states stay silent because
-the agent has no further local action to take. Repeated identical blocks are
-also capped so a stale run-loop prompt cannot burn the whole turn.
+the stop with that run's prompt block. It also runs the main-write gate: after
+scope lock, RTL/TB/sim/lint/coverage/formal/SDC/signoff/filelist writes require
+native OAG subagent dispatch + receipt or a human waiver. Human-decision states
+stay silent because the agent has no further local action to take. Repeated
+identical blocks are also capped so a stale run-loop prompt cannot burn the
+whole turn.
 
 This is the Codex-hook-shaped sibling of scripts-driven oag.stop_check; the older
 hooks/oag_stop_check.py stays as a manual/example runner.
@@ -35,6 +38,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 INACTIVE_RUN_STATUSES = {"complete", "parked"}
 
 import oag_cli  # noqa: E402
+import oag_main_write_gate  # noqa: E402
 
 
 def _read_cache() -> dict:
@@ -163,6 +167,28 @@ def _dedupe_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
     return unique
 
 
+def _recent_context_targets() -> list[dict[str, str]]:
+    cache_path = ROOT / ".cache" / "context_inject.json"
+    try:
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict):
+        return []
+    target = data.get("last_target")
+    if not isinstance(target, dict):
+        return []
+    ip_dir = str(target.get("ip_dir") or "").strip()
+    if not ip_dir:
+        return []
+    path = Path(ip_dir).expanduser()
+    if not path.is_absolute():
+        path = PROJECT / path
+    if not path.is_dir():
+        return []
+    return [{"ip_dir": str(path.resolve()), "run_id": ""}]
+
+
 def _stop_check(target: dict[str, str]) -> dict:
     args = {"ip_dir": target["ip_dir"]}
     if target.get("run_id"):
@@ -174,12 +200,17 @@ def _stop_check(target: dict[str, str]) -> dict:
     return result if isinstance(result, dict) else {}
 
 
+def _main_write_gate(target: dict[str, str]) -> dict:
+    return oag_main_write_gate.check_ip(Path(target["ip_dir"]))
+
+
 def main() -> int:
     payload = _read_payload()
     cache = _read_cache()
     cache_changed = False
     blocks: list[str] = []
-    for target in _dedupe_targets(_target_runs(payload)):
+    targets = _dedupe_targets(_target_runs(payload))
+    for target in targets:
         try:
             result = _stop_check(target)
         except Exception:
@@ -196,6 +227,31 @@ def main() -> int:
         block = f"{header}\n{prompt}".strip()
         key = f"{Path(target['ip_dir']).resolve()}::{target.get('run_id') or result.get('run_id') or ''}"
         if _block_allowed(cache, key=key, digest=_digest(block), max_repeats=_max_block_repeats(result)):
+            blocks.append(block)
+        cache_changed = True
+    write_gate_targets = targets or _recent_context_targets()
+    for target in _dedupe_targets(write_gate_targets):
+        try:
+            result = _main_write_gate(target)
+        except Exception:
+            continue
+        if result.get("status") != "fail":
+            continue
+        name = result.get("ip") or Path(target["ip_dir"]).name
+        lines = [f"[OAG:{name}] locked implementation write requires native subagent evidence."]
+        for item in result.get("issues", [])[:8]:
+            if isinstance(item, dict):
+                path = f" ({item.get('path')})" if item.get("path") else ""
+                lines.append(f"- {item.get('code')}: {item.get('message')}{path}")
+        lines.extend(
+            [
+                "Required next step: create an OAG dispatch and spawn the owning native subagent,",
+                "or record a human main-agent subagent waiver before stopping.",
+            ]
+        )
+        block = "\n".join(lines)
+        key = f"{Path(target['ip_dir']).resolve()}::main-write-gate"
+        if _block_allowed(cache, key=key, digest=_digest(block), max_repeats=3):
             blocks.append(block)
         cache_changed = True
 

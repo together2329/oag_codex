@@ -112,6 +112,12 @@ dispatch fields plus `changed_paths` and `generated_side_effects`. The
 blocks receipts that fail schema validation, dispatch matching, or path scope
 checks. Use `python3 .codex/scripts/oag_validate_json.py` for direct schema
 validation when debugging records.
+After user lock, main agent orchestrates; subagents implement and verify. The
+main agent must not directly create or substantially edit RTL, TB, sim, lint,
+coverage, formal, SDC, signoff, or implementation filelist artifacts. The Stop
+hook runs `python3 .codex/scripts/oag_main_write_gate.py` and blocks locked
+implementation or verification writes that do not have a covering native OAG
+subagent receipt or a human `main_agent_subagent_waiver` decision receipt.
 For release-grade closure packages, `.codex/scripts/oag_closure_check.py` must
 pass with `oag.check`, `oag.inspect`, an `oag_validation_report.v1` from
 `oag-evidence-validator`, and an `oag_gate_decision.v1` PASS from

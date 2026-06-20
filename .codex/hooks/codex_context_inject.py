@@ -158,6 +158,13 @@ def _remember_injection(cache: dict[str, Any], key: str, digest: str, *, hook_ev
         "hook_event": hook_event,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    ip_dir = key.rsplit("::", 1)[0]
+    if ip_dir and Path(ip_dir).is_dir():
+        cache["last_target"] = {
+            "ip_dir": ip_dir,
+            "hook_event": hook_event,
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
 
 
 def _active_run_block(ip: Path) -> str:

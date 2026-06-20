@@ -24,6 +24,7 @@ ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
 DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
+MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
 CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
@@ -135,6 +136,20 @@ def run_dispatch(*args: str, project_root: Path | None = None) -> subprocess.Com
         env["OAG_PROJECT_ROOT"] = str(project_root)
     return subprocess.run(
         [sys.executable, str(DISPATCH), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_main_write_gate(ip: Path, *, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(MAIN_WRITE_GATE), "--ip-dir", str(ip), "--json"],
         text=True,
         capture_output=True,
         check=False,
@@ -572,6 +587,7 @@ def main() -> int:
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         assert DISPATCH.is_file(), DISPATCH
+        assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
         assert VALIDATE_JSON.is_file(), VALIDATE_JSON
         assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
         assert CODEX_CONFIG_DOCTOR.is_file(), CODEX_CONFIG_DOCTOR
@@ -608,6 +624,8 @@ def main() -> int:
         assert "generated tool output" in subagent_workflows, subagent_workflows
         assert "STATIC_HANDOFF_PASS" in subagent_workflows, subagent_workflows
         assert "git status --short -uall -- <ip>" in subagent_workflows, subagent_workflows
+        assert "After user lock, main agent orchestrates" in subagent_workflows, subagent_workflows
+        assert "oag_main_write_gate.py" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
         agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         directive_text = OAG_MODE_DIRECTIVE.read_text(encoding="utf-8")
@@ -622,15 +640,21 @@ def main() -> int:
         assert "Scope Lock" in skill_text, skill_text
         assert "oag.lock_status" in skill_text, skill_text
         assert "No lock, no RTL" in skill_text, skill_text
+        assert "After user lock, main agent orchestrates" in skill_text, skill_text
+        assert "oag_main_write_gate.py" in skill_text, skill_text
         assert "short IP request" in skill_text, skill_text
         assert "do not enrich or rewrite `req/locked_truth.md`" in skill_text, skill_text
         assert "single-packet versus multi-packet" in skill_text, skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
         assert "scope_lock.json" in agents_text, agents_text
         assert "No lock, no RTL" in agents_text, agents_text
+        assert "After user lock, main agent orchestrates" in agents_text, agents_text
+        assert "oag_main_write_gate.py" in agents_text, agents_text
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
+        assert "After user lock, main agent orchestrates" in directive_text, directive_text
+        assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" in subagent_workflows, subagent_workflows
@@ -783,6 +807,33 @@ def main() -> int:
         )
         assert unlocked_dispatch.returncode != 0, unlocked_dispatch.stdout
         assert "scope lock required" in (unlocked_dispatch.stderr + unlocked_dispatch.stdout), unlocked_dispatch.stderr or unlocked_dispatch.stdout
+        main_gate_ip = hook_cwd / "main_gate_ip"
+        (main_gate_ip / "ontology").mkdir(parents=True, exist_ok=True)
+        (main_gate_ip / "rtl").mkdir(parents=True, exist_ok=True)
+        (main_gate_ip / "ontology" / "scope_lock.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_scope_lock.v1",
+                    "ip": "main_gate_ip",
+                    "state": "locked",
+                    "summary": "Smoke scope is locked before implementation.",
+                    "confirmed_scope": ["main write gate smoke"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (main_gate_ip / "rtl" / "direct_main.sv").write_text("module direct_main; endmodule\n", encoding="utf-8")
+        main_gate_blocked = run_main_write_gate(main_gate_ip, project_root=hook_cwd)
+        assert main_gate_blocked.returncode != 0, main_gate_blocked.stdout
+        main_gate_payload = json.loads(main_gate_blocked.stdout)
+        assert main_gate_payload["status"] == "fail", main_gate_payload
+        assert main_gate_payload["issues"][0]["code"] == "MAIN_AGENT_WRITE_WITHOUT_SUBAGENT", main_gate_payload
+        stop_gate_blocked = stop_gate({"ip_dir": str(main_gate_ip)}, {"OAG_PROJECT_ROOT": str(hook_cwd)})
+        assert stop_gate_blocked.returncode == 0, stop_gate_blocked.stderr or stop_gate_blocked.stdout
+        stop_gate_payload = json.loads(stop_gate_blocked.stdout)
+        assert stop_gate_payload["decision"] == "block", stop_gate_payload
+        assert "locked implementation write requires native subagent evidence" in stop_gate_payload["reason"], stop_gate_payload
         hook_ip = hook_cwd / "smoke_ip"
         (hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
         (hook_ip / "ontology").mkdir(parents=True, exist_ok=True)
@@ -871,6 +922,10 @@ def main() -> int:
             project_root=hook_cwd,
         )
         assert dispatch_verify.returncode == 0, dispatch_verify.stderr or dispatch_verify.stdout
+        main_gate_allowed = run_main_write_gate(hook_ip, project_root=hook_cwd)
+        assert main_gate_allowed.returncode == 0, main_gate_allowed.stderr or main_gate_allowed.stdout
+        main_gate_allowed_payload = json.loads(main_gate_allowed.stdout)
+        assert main_gate_allowed_payload["status"] == "pass", main_gate_allowed_payload
         dispatch_verify_result = json.loads(dispatch_verify.stdout)
         assert dispatch_verify_result["status"] == "pass", dispatch_verify_result
         valid_payload = {**invalid_payload, "last_assistant_message": "OAG_EVIDENCE_RECORDED: smoke_ip/knowledge/subagents/smoke.json"}
