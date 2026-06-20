@@ -33,6 +33,7 @@ SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
 OAG_MODE_TRIGGER = ROOT / "hooks" / "codex_oag_mode_trigger.py"
+NATIVE_SUBAGENT_GUARD = ROOT / "hooks" / "codex_native_subagent_guard.py"
 OAG_SESSION_START = ROOT / "hooks" / "codex_oag_session_start.py"
 CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
@@ -199,6 +200,19 @@ def oag_mode_trigger(payload: dict) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(OAG_MODE_TRIGGER)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def native_subagent_guard(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(NATIVE_SUBAGENT_GUARD)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
@@ -451,8 +465,9 @@ def main() -> int:
         assert session_start_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_session_start.py", hooks
         user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
         assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_mode_trigger.py", hooks
-        assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
-        assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
+        assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_native_subagent_guard.py", hooks
+        assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
@@ -463,6 +478,7 @@ def main() -> int:
         assert STOP_GATE.is_file(), STOP_GATE
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
         assert OAG_MODE_TRIGGER.is_file(), OAG_MODE_TRIGGER
+        assert NATIVE_SUBAGENT_GUARD.is_file(), NATIVE_SUBAGENT_GUARD
         assert OAG_SESSION_START.is_file(), OAG_SESSION_START
         assert CONTEXT_HOOK.is_file(), CONTEXT_HOOK
         assert DRAFT_HOOK.is_file(), DRAFT_HOOK
@@ -564,6 +580,16 @@ def main() -> int:
             non_oag_trigger = oag_mode_trigger({"prompt": prompt})
             assert non_oag_trigger.returncode == 0, non_oag_trigger.stderr or non_oag_trigger.stdout
             assert non_oag_trigger.stdout == "", non_oag_trigger.stdout
+        guard_silent = native_subagent_guard({"prompt": "auto research timer"})
+        assert guard_silent.returncode == 0, guard_silent.stderr or guard_silent.stdout
+        assert guard_silent.stdout == "", guard_silent.stdout
+        guard_on = native_subagent_guard({"prompt": "Use sub agent to make req in detail"})
+        assert guard_on.returncode == 0, guard_on.stderr or guard_on.stdout
+        guard_context = hook_context(guard_on)
+        assert "NATIVE CODEX SUBAGENT GUARD" in guard_context, guard_on.stdout
+        assert "Do not run `omo run --agent`" in guard_context, guard_on.stdout
+        assert "BLOCKED: native Codex subagent unavailable in this surface" in guard_context, guard_on.stdout
+        assert "OAG MODE ENABLED!" not in guard_context, guard_on.stdout
         trigger_on = oag_mode_trigger({"prompt": "oag use subagent for timer"})
         assert trigger_on.returncode == 0, trigger_on.stderr or trigger_on.stdout
         trigger_context = hook_context(trigger_on)

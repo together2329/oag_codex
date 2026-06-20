@@ -20,6 +20,7 @@ Primary assets:
 - `hooks/oag_hook_utils.py`
 - `hooks/codex_context_inject.py`
 - `hooks/codex_draft_pressure.py`
+- `hooks/codex_native_subagent_guard.py`
 - `hooks/codex_stop_gate.py`
 - `hooks/codex_subagent_oag_gate.py`
 - `hooks.json`

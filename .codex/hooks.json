@@ -23,6 +23,12 @@
           },
           {
             "type": "command",
+            "command": "python3 .codex/hooks/codex_native_subagent_guard.py",
+            "timeout": 10,
+            "statusMessage": "OAG: enforcing native subagent guard"
+          },
+          {
+            "type": "command",
             "command": "python3 .codex/hooks/codex_context_inject.py",
             "timeout": 10,
             "statusMessage": "OAG: injecting IP context"

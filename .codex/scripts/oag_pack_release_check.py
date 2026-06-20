@@ -41,6 +41,7 @@ REQUIRED_FILES = (
     SCRIPTS_DIR / "smoke_test.py",
     HOOKS_DIR / "codex_context_inject.py",
     HOOKS_DIR / "codex_draft_pressure.py",
+    HOOKS_DIR / "codex_native_subagent_guard.py",
     HOOKS_DIR / "codex_oag_mode_trigger.py",
     HOOKS_DIR / "codex_oag_session_start.py",
     HOOKS_DIR / "codex_stop_gate.py",
@@ -215,6 +216,11 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     session_start_commands = [str(item.get("command") or "") for item in session_start_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_oag_session_start.py" not in session_start_commands:
         issues.append(issue("SESSION_START_CONFIG_GUARD_MISSING", "SessionStart must run the OAG Codex config guard.", CODEX_ROOT / "hooks.json"))
+    user_prompt = (((hooks.get("hooks") or {}).get("UserPromptSubmit") or [{}])[0])
+    user_prompt_hooks = user_prompt.get("hooks") if isinstance(user_prompt, dict) else []
+    user_prompt_commands = [str(item.get("command") or "") for item in user_prompt_hooks if isinstance(item, dict)]
+    if "python3 .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_commands:
+        issues.append(issue("NATIVE_SUBAGENT_GUARD_MISSING", "UserPromptSubmit must enforce native-only subagent requests.", CODEX_ROOT / "hooks.json"))
     subagent = (((hooks.get("hooks") or {}).get("SubagentStop") or [{}])[0])
     matcher = str(subagent.get("matcher") or "")
     if "custom-researcher" in matcher or "custom-reviewer" in matcher:
