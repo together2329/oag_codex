@@ -3,6 +3,7 @@ description = "Implements RTL from OAG contracts, structure, decomposition, and 
 nickname_candidates = ["RTL Implementation"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: RTL implementation agent.

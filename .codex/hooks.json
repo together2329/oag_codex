@@ -1,8 +1,26 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_oag_session_start.py",
+            "timeout": 10,
+            "statusMessage": "OAG: enforcing Codex subagent config"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_oag_mode_trigger.py",
+            "timeout": 10,
+            "statusMessage": "OAG: checking explicit mode trigger"
+          },
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_context_inject.py",
@@ -32,7 +50,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^oag-(custom-worker|custom-reviewer|rtl-implementation-agent|rtl-lint-static-agent|tb-implementation-agent|sim-execution-agent|sim-debug-agent|coverage-agent|mutation-guard-agent|evidence-validator|gate-reviewer)$",
+        "matcher": "^oag-(ontology-curator-agent|custom-worker|rtl-implementation-agent|tb-implementation-agent|sim-execution-agent)$",
         "hooks": [
           {
             "type": "command",

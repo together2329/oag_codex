@@ -9,6 +9,22 @@ evidence through the normal ROCEV flow.
 Project-scoped custom agent definitions live in `.codex/agents/*.toml`. OAG
 metadata for those roles lives in `.codex/oag/agent-catalog.toml`.
 
+For team use, ask for OAG mode explicitly with the exact `oag` keyword. Terms
+like `auto research`, `subagent`, and `signoff` describe work, but do not
+activate OAG mode by themselves. Project config requests native subagent
+support through `[features].multi_agent = true` and
+`[features].child_agents_md = true`, and forces
+`[features.multi_agent_v2].enabled = false`. This mirrors the OMO Codex runtime
+pattern: v1 is not directly enabled; v2 is re-disabled so Codex can resolve to
+the v1 multi-agent path when native subagents are available. Use
+`scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
+patch user-level Codex config for team members, or rely on the SessionStart hook
+to do the same at startup. The active Codex runtime still has to expose the
+native subagent tool after restart or a fresh trusted project session. Do not
+narrate a speculative probe; if a native spawn attempt is unavailable, record
+the intended subagent assignment and fallback analysis as OAG draft knowledge or
+evidence instead of claiming a child agent ran.
+
 ## Native Trigger
 
 The actual spawn is a Codex native tool call:
@@ -100,9 +116,10 @@ Spawn:
   compile, lint, and static risks after the write agents report.
 
 Each subagent must report changed paths, evidence commands, blockers, and ROCEV
-links. Evidence-producing subagents must write a non-empty receipt under
+links. Write-capable evidence-producing subagents must write a non-empty receipt under
 <ip>/knowledge/subagents/ or .codex/oag/subagent-receipts/ and end with final
-line: OAG_EVIDENCE_RECORDED: <relative-path>
+line: OAG_EVIDENCE_RECORDED: <relative-path>. JSON receipts must follow
+`.codex/schemas/oag_subagent_receipt.schema.json`.
 
 No subagent may claim final completion.
 ```
@@ -124,8 +141,9 @@ does not override a blocker.
 
 ## Stop Hook
 
-`hooks.json` registers a `SubagentStop` hook for evidence-producing OAG agents.
-It does not execute subagents. It only blocks a stopped child that lacks a valid
-`OAG_EVIDENCE_RECORDED: <relative-path>` receipt. This mirrors the
+`hooks.json` registers a `SubagentStop` hook for write-capable
+evidence-producing OAG agents. It does not execute subagents. It only blocks a
+stopped write-capable child that lacks a valid `OAG_EVIDENCE_RECORDED:
+<relative-path>` receipt. This mirrors the
 oh-my-openagent executor-verifier pattern while keeping final closure in OAG
 `check`/`decide`.

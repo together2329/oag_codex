@@ -57,7 +57,6 @@ SOURCE_DIRS = [
 ]
 
 COMMON_PATHS = [
-    "AGENTS.md",
     ".codex/AGENTS.md",
     ".codex/agents",
     ".codex/rules",
@@ -331,7 +330,7 @@ def cmd_import(args: argparse.Namespace) -> int:
         for entry in manifest["files"]:
             rel = str(entry["path"])
             first = PurePosixPath(rel).parts[0] if PurePosixPath(rel).parts else ""
-            if first and first not in selected_ips and not rel.startswith(".codex/") and not rel.startswith(".cursor/") and rel != "AGENTS.md":
+            if first and first not in selected_ips and not rel.startswith(".codex/") and not rel.startswith(".cursor/"):
                 continue
             out = _safe_out_path(dest, rel)
             member_name = f"files/{rel}"

@@ -3,6 +3,7 @@ description = "Builds TB, scenarios, monitors, scoreboards, and coverage evidenc
 nickname_candidates = ["TB Implementation"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: testbench implementation agent.

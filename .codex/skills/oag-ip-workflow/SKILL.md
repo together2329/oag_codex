@@ -93,6 +93,23 @@ Before using these roles, validate the catalog:
 python3 scripts/oag_agent_catalog_check.py
 ```
 
+Team prompts should use the exact `oag` keyword when they want OAG context and
+subagent workflow guidance. Terms such as `auto research`, `subagent`, and
+`signoff` describe work, but do not activate OAG mode by themselves. The
+project config requests native subagents with
+`[features].multi_agent = true` and `[features].child_agents_md = true`, while
+forcing `[features.multi_agent_v2].enabled = false`. This matches the OMO Codex
+runtime pattern: v1 is not directly enabled; v2 is re-disabled so Codex can
+resolve to the v1 multi-agent path when native subagents are available. Team
+members can run
+`python3 scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply`
+to patch their user Codex config, or let the SessionStart hook apply the same
+guard at startup. Restart Codex or open a fresh trusted project session after a
+config patch. Do not narrate a speculative probe such as "checking whether
+multi_agent_v1 is available." If a native spawn attempt is unavailable in the
+active runtime, state that single runtime limitation and record the fallback
+analysis as OAG draft knowledge or evidence.
+
 Subagents are native Codex `multi_agent_v1` workers, not Python runners. Use
 self-contained spawn assignments like:
 
@@ -304,6 +321,7 @@ Before claiming completion:
 ```bash
 python3 scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
 python3 scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
+python3 scripts/oag_closure_check.py --ip-dir <ip>
 python3 scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
@@ -322,6 +340,11 @@ If `oag.decide` returns `allowed: false`, report the blocker instead of saying
 the IP is complete. If it returns `allowed: true`, the decision receipt under
 `ontology/validations/` is the durable completion decision. Completion actions
 are blocked unless `record_decision` is true.
+
+`oag_closure_check.py` is the release-grade package gate: it requires a passing
+`oag_validation_report.v1` from `oag-evidence-validator`, a PASS
+`oag_gate_decision.v1` from `oag-gate-reviewer`, and no custom subagent final
+closure claim.
 
 For `action=signoff`, OAG requires `ontology/policies.yaml` to use
 `closure_profile: signoff`, a compiled truth graph, a closed closure matrix,

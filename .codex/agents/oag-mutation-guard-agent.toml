@@ -3,6 +3,7 @@ description = "Checks whether tests and scoreboards catch requirement-relevant R
 nickname_candidates = ["Mutation Guard"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "read-only"
 
 developer_instructions = """
 Role: mutation guard agent.

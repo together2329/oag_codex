@@ -3,6 +3,7 @@ description = "Reviews functional, scoreboard, protocol, fault-model, and covera
 nickname_candidates = ["Coverage"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "read-only"
 
 developer_instructions = """
 Role: coverage agent.

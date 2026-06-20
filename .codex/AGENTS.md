@@ -1,12 +1,18 @@
 # .codex OAG Pack
 
+This file governs maintenance of the OAG pack under `.codex/`. The repository
+root intentionally does not carry `AGENTS.md`; runtime OAG behavior is activated
+by the exact `oag` keyword through `.codex/oag/oag-mode-directive.md` and the
+UserPromptSubmit hook.
+
 Primary assets:
 
+- `oag/oag-mode-directive.md`
 - `skills/oag-ip-workflow/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
 - `oag/agent-catalog.toml`
-- `oag/ontology-ip-agent.md`
+- `oag/ip-dev-agent.md`
 - `oag/subagent-workflows.md`
 - `hooks/oag_pre_work.py`
 - `hooks/oag_interview_draft.py`
@@ -25,6 +31,10 @@ Primary assets:
 - `scripts/oag_okf.py`
 - `scripts/oag_eval.py`
 - `scripts/oag_agent_catalog_check.py`
+- `scripts/oag_codex_config_doctor.py`
+- `scripts/oag_closure_check.py`
+- `scripts/oag_pack_release_check.py`
+- `schemas/*.schema.json`
 - `mcp.json`
 - `config.toml`
 
@@ -46,6 +56,23 @@ Before using a subagent role, run:
 python3 .codex/scripts/oag_agent_catalog_check.py
 ```
 
+Project config must keep `[features].multi_agent = true`,
+`[features].child_agents_md = true`, `[features].hooks = true`, and
+`[agents].max_depth = 1`. It must also keep
+`[features.multi_agent_v2].enabled = false` with the v2 tuning table. This
+follows the OMO Codex runtime pattern: v1 is not directly forced; v2 is
+force-disabled so Codex falls back to the v1 multi-agent path when native
+subagents are available. Use
+`scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply` to
+patch a team member's user config, then restart Codex or open a fresh trusted
+project session. If the native subagent tool is still not exposed, state that
+single runtime limitation and record the fallback work as OAG evidence or draft
+knowledge.
+
+Use the exact `oag` keyword for OAG mode in team workflows. Hooks should not
+inject OAG mode merely because a prompt mentions generic RTL, testing,
+subagent, auto-research, or signoff terms unless an IP directory is explicit.
+
 Codex subagents are native `multi_agent_v1` workers, not Python-triggered
 workers. Ask Codex to spawn named custom agents from `.codex/agents/*.toml`
 using `multi_agent_v1.spawn_agent`, give each one a bounded self-contained
@@ -54,9 +81,21 @@ using `multi_agent_v1.spawn_agent`, give each one a bounded self-contained
 ROCEV evidence. `agent_type` is a routing hint, so role requirements must also
 be pasted into the message. Prompt patterns live in
 `.codex/oag/subagent-workflows.md`. Evidence-producing OAG subagents are checked
-by the `SubagentStop` hook and must end with `OAG_EVIDENCE_RECORDED:
-<relative-path>`. Subagents may never claim final completion; final closure
-requires OAG check/decide and the gate reviewer role.
+by the `SubagentStop` hook only when they are write-capable, and must end with
+`OAG_EVIDENCE_RECORDED: <relative-path>`. Subagents may never claim final
+completion; final closure requires OAG check/decide and the gate reviewer role.
+For release-grade closure packages, `scripts/oag_closure_check.py` must pass
+with both an `oag_validation_report.v1` from `oag-evidence-validator` and an
+`oag_gate_decision.v1` PASS from `oag-gate-reviewer`.
+
+Before releasing this pack to a team, run:
+
+```bash
+python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features
+python3 .codex/scripts/oag_pack_release_check.py
+python3 .codex/scripts/smoke_test.py
+python3 .codex/scripts/oag_eval.py --json
+```
 
 Use the OAG run loop when a task should continue across edits, tests, stops, or
 agent surfaces. `oag.run.start` writes `ontology/runs/<run_id>/run_state.json`,

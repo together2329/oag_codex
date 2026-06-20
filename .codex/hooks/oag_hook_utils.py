@@ -24,6 +24,10 @@ STAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "signoff": ("signoff", "closure", "complete", "claim_complete"),
 }
 
+OAG_TRIGGER_KEYWORDS = (
+    "oag",
+)
+
 APPROVAL_ONLY_RE = re.compile(
     r"^\s*(승인|승인합니다|approve|approved|approval|ok|okay|yes|y|확인|동의|허가)\s*[.!?。]*\s*$",
     re.IGNORECASE,
@@ -154,23 +158,7 @@ def infer_stage(text: str, fallback: str = "") -> str:
 
 def has_oag_work_signal(text: str) -> bool:
     lower = text.lower()
-    needles = {
-        "oag",
-        "ontology",
-        "ip",
-        "requirement",
-        "obligation",
-        "contract",
-        "evidence",
-        "validation",
-        "rtl",
-        "tb",
-        "sim",
-        "signoff",
-        "coverage",
-        "interview",
-    }
-    return any(needle in lower for needle in needles)
+    return any(re.search(rf"(?<![A-Za-z0-9_-]){re.escape(needle)}(?![A-Za-z0-9_-])", lower) for needle in OAG_TRIGGER_KEYWORDS)
 
 
 def _is_approval_only(text: str) -> bool:

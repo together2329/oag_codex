@@ -11,6 +11,8 @@ The path must point to a non-empty file inside either:
   - <ip>/knowledge/subagents/
   - knowledge/subagents/
   - .codex/oag/subagent-receipts/
+
+JSON receipts must match the stable oag_subagent_receipt.v1 core fields.
 """
 
 from __future__ import annotations
@@ -28,6 +30,22 @@ ROOT = Path(__file__).resolve().parents[1]
 CACHE_PATH = Path(os.environ.get("OAG_SUBAGENT_GATE_CACHE") or ROOT / ".cache" / "subagent_oag_gate.json")
 MAX_ATTEMPTS = 3
 RECEIPT_RE = re.compile(r"OAG_EVIDENCE_RECORDED:\s*(\S+)")
+REQUIRED_RECEIPT_FIELDS = {
+    "schema_version",
+    "product_name",
+    "internal_gateway",
+    "role_name",
+    "shard_scope",
+    "stage",
+    "status",
+    "owned_obligations",
+    "contracts",
+    "allowed_write_paths",
+    "evidence_outputs",
+    "may_claim_complete",
+    "created_at",
+}
+RECEIPT_STATUSES = {"PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
 CONTEXT_PRESSURE_MARKERS = (
     "context compacted",
     "context_length_exceeded",
@@ -129,6 +147,33 @@ def is_allowed_receipt_path(base: Path, receipt: Path) -> bool:
     return False
 
 
+def valid_receipt_payload(receipt: Path) -> bool:
+    if receipt.suffix.lower() != ".json":
+        return True
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    if REQUIRED_RECEIPT_FIELDS - set(payload):
+        return False
+    if payload.get("schema_version") != "oag_subagent_receipt.v1":
+        return False
+    if payload.get("product_name") != "IP Dev Agent":
+        return False
+    if payload.get("internal_gateway") != "Ontology Agent Gateway":
+        return False
+    if payload.get("may_claim_complete") is not False:
+        return False
+    if payload.get("status") not in RECEIPT_STATUSES:
+        return False
+    for field in ("owned_obligations", "contracts", "allowed_write_paths", "evidence_outputs"):
+        if not isinstance(payload.get(field), list):
+            return False
+    return True
+
+
 def valid_receipt(payload: dict) -> bool:
     message = str(payload.get("last_assistant_message") or "")
     match = RECEIPT_RE.search(message)
@@ -146,7 +191,7 @@ def valid_receipt(payload: dict) -> bool:
             return False
     except Exception:
         return False
-    return True
+    return valid_receipt_payload(receipt)
 
 
 def directive(payload: dict) -> str:
@@ -161,6 +206,7 @@ def directive(payload: dict) -> str:
         "OAG_EVIDENCE_RECORDED: <relative-path>\n\n"
         "The receipt must name the shard scope, checked/changed paths, commands or artifacts, "
         "ROCEV links, blockers, and whether the result is PASS, FAIL, or INCONCLUSIVE. "
+        "JSON receipts must use schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. "
         "Do not claim final completion."
     )
 

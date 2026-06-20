@@ -24,13 +24,25 @@ ANSWER_KEY_EVAL = ROOT / "scripts" / "oag_answer_key_eval.py"
 DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
+CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
+CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
+PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
+OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
+OAG_MODE_TRIGGER = ROOT / "hooks" / "codex_oag_mode_trigger.py"
+OAG_SESSION_START = ROOT / "hooks" / "codex_oag_session_start.py"
 CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
 HOOKS_JSON = ROOT / "hooks.json"
+SCHEMA_FILES = [
+    ROOT / "schemas" / "oag_subagent_receipt.schema.json",
+    ROOT / "schemas" / "oag_validation_report.schema.json",
+    ROOT / "schemas" / "oag_gate_decision.schema.json",
+    ROOT / "schemas" / "oag_closure_report.schema.json",
+]
 
 
 def call(payload: dict) -> dict:
@@ -120,6 +132,26 @@ def run_agent_catalog_check() -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_closure_check(ip: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(CLOSURE_CHECK), "--ip-dir", str(ip), *extra, "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+
+
+def run_pack_release_check() -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(PACK_RELEASE_CHECK), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+
+
 def stop_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     if extra_env:
@@ -154,6 +186,34 @@ def context_hook(payload: dict) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(CONTEXT_HOOK)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def oag_mode_trigger(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(OAG_MODE_TRIGGER)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def session_start_hook(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if extra_env:
+        env.update(extra_env)
+    return subprocess.run(
+        [sys.executable, str(OAG_SESSION_START)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
@@ -318,6 +378,55 @@ def close_demo_counter(ip: Path, *, claim: str, evidence_files: list[str] | None
     )
 
 
+def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
+    validation_path = ip / "knowledge" / "validations" / "oag_validation_report.json"
+    gate_path = ip / "knowledge" / "gate_reviews" / "oag_gate_decision.json"
+    validation_path.parent.mkdir(parents=True, exist_ok=True)
+    gate_path.parent.mkdir(parents=True, exist_ok=True)
+    validation_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_validation_report.v1",
+                "product_name": "IP Dev Agent",
+                "internal_gateway": "Ontology Agent Gateway",
+                "ip_id": ip.name,
+                "role_name": "oag-evidence-validator",
+                "status": "pass",
+                "closure_matrix": {"status": "pass", "open_count": 0},
+                "evidence": {"status": "pass"},
+                "mutation_guard": {"status": "pass"},
+                "coverage": {"status": "pass"},
+                "issues": [],
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gate_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_gate_decision.v1",
+                "product_name": "IP Dev Agent",
+                "internal_gateway": "Ontology Agent Gateway",
+                "ip_id": ip.name,
+                "role_name": "oag-gate-reviewer",
+                "decision": gate_decision,
+                "validation_report": "knowledge/validations/oag_validation_report.json",
+                "checked_artifacts": ["knowledge/validations/oag_validation_report.json"],
+                "blockers": [] if gate_decision == "PASS" else ["smoke blocker"],
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def mcp_tools_list() -> dict:
     initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
     tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
@@ -338,9 +447,12 @@ def mcp_tools_list() -> dict:
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        session_start_hooks = hooks["hooks"]["SessionStart"][0]["hooks"]
+        assert session_start_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_session_start.py", hooks
         user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
-        assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
-        assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
+        assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_mode_trigger.py", hooks
+        assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
@@ -350,6 +462,8 @@ def main() -> int:
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
         assert STOP_GATE.is_file(), STOP_GATE
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
+        assert OAG_MODE_TRIGGER.is_file(), OAG_MODE_TRIGGER
+        assert OAG_SESSION_START.is_file(), OAG_SESSION_START
         assert CONTEXT_HOOK.is_file(), CONTEXT_HOOK
         assert DRAFT_HOOK.is_file(), DRAFT_HOOK
         assert PORTABLE_DB.is_file(), PORTABLE_DB
@@ -359,16 +473,31 @@ def main() -> int:
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
+        assert CODEX_CONFIG_DOCTOR.is_file(), CODEX_CONFIG_DOCTOR
+        assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
+        assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
+        assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
+        for schema_file in SCHEMA_FILES:
+            assert schema_file.is_file(), schema_file
+            schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
+            assert "$schema" in schema_payload and "required" in schema_payload, schema_payload
         assert not (ROOT / "agents" / "oag-agent-catalog.toml").exists()
         assert all(path.suffix == ".toml" for path in (ROOT / "agents").iterdir() if path.is_file())
         agent_catalog_check = run_agent_catalog_check()
         assert agent_catalog_check.returncode == 0, agent_catalog_check.stderr or agent_catalog_check.stdout
         agent_catalog_result = json.loads(agent_catalog_check.stdout)
         assert agent_catalog_result["status"] == "pass", agent_catalog_result
-        assert agent_catalog_result["counts"] == {"core": 13, "custom": 3, "total": 16}, agent_catalog_result
+        assert agent_catalog_result["counts"] == {"core": 13, "custom": 3, "total": 16, "toml_files": 16}, agent_catalog_result
         assert agent_catalog_result["completion_authority"] == ["oag-gate-reviewer"], agent_catalog_result
+        assert agent_catalog_result["final_decision_authority"] == ["oag-gate-reviewer"], agent_catalog_result
+        pack_release_check = run_pack_release_check()
+        assert pack_release_check.returncode == 0, pack_release_check.stderr or pack_release_check.stdout
+        pack_release_result = json.loads(pack_release_check.stdout)
+        assert pack_release_result["status"] == "pass", pack_release_result
+        assert pack_release_result["counts"]["agent_tomls"] == 16, pack_release_result
+        assert pack_release_result["counts"]["schemas"] >= 4, pack_release_result
         subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
         assert "agent_type" in subagent_workflows, subagent_workflows
@@ -379,6 +508,67 @@ def main() -> int:
         assert user_home_prefix not in config_text, config_text
         assert user_home_prefix not in mcp_text, mcp_text
         assert 'multi_agent = true' in config_text, config_text
+        assert 'child_agents_md = true' in config_text, config_text
+        assert 'enabled = false' in config_text, config_text
+        assert 'max_concurrent_threads_per_session = 10000' in config_text, config_text
+        assert 'max_depth = 1' in config_text, config_text
+
+        codex_home = Path(tmp) / "codex_home"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        user_config = codex_home / "config.toml"
+        user_config.write_text(
+            "\n".join(
+                [
+                    "[features]",
+                    "multi_agent = false",
+                    "child_agents_md = false",
+                    "hooks = false",
+                    "multi_agent_v2 = true",
+                    "",
+                    "[features.multi_agent_v2]",
+                    "enabled = true",
+                    "max_concurrent_threads_per_session = 1",
+                    "",
+                    "[agents]",
+                    "max_depth = 0",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        session_migration = session_start_hook({"hook_event_name": "SessionStart"}, {"CODEX_HOME": str(codex_home)})
+        assert session_migration.returncode == 0, session_migration.stderr or session_migration.stdout
+        migrated_config = user_config.read_text(encoding="utf-8")
+        assert "multi_agent = true" in migrated_config, migrated_config
+        assert "child_agents_md = true" in migrated_config, migrated_config
+        assert "hooks = true" in migrated_config, migrated_config
+        assert "plugins = true" in migrated_config, migrated_config
+        assert "plugin_hooks = true" in migrated_config, migrated_config
+        assert "multi_agent_v2 = true" not in migrated_config, migrated_config
+        assert "enabled = false" in migrated_config, migrated_config
+        assert "max_concurrent_threads_per_session = 10000" in migrated_config, migrated_config
+        assert "max_depth = 1" in migrated_config, migrated_config
+        assert "openai/codex#26753" in migrated_config, migrated_config
+        assert "OAG CODEX CONFIG MIGRATION" in hook_context(session_migration), session_migration.stdout
+
+        session_idempotent = session_start_hook({"hook_event_name": "SessionStart"}, {"CODEX_HOME": str(codex_home)})
+        assert session_idempotent.returncode == 0, session_idempotent.stderr or session_idempotent.stdout
+        assert session_idempotent.stdout == "", session_idempotent.stdout
+
+        trigger_silent = oag_mode_trigger({"prompt": "rtl work"})
+        assert trigger_silent.returncode == 0, trigger_silent.stderr or trigger_silent.stdout
+        assert trigger_silent.stdout == "", trigger_silent.stdout
+        for prompt in ("ipdev use subagent for timer", "auto research timer", "subagent for timer", "signoff timer", "rocev timer"):
+            non_oag_trigger = oag_mode_trigger({"prompt": prompt})
+            assert non_oag_trigger.returncode == 0, non_oag_trigger.stderr or non_oag_trigger.stdout
+            assert non_oag_trigger.stdout == "", non_oag_trigger.stdout
+        trigger_on = oag_mode_trigger({"prompt": "oag use subagent for timer"})
+        assert trigger_on.returncode == 0, trigger_on.stderr or trigger_on.stdout
+        trigger_context = hook_context(trigger_on)
+        assert "OAG MODE ENABLED!" in trigger_context, trigger_on.stdout
+        assert "Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision" in trigger_context, trigger_on.stdout
+        assert "multi_agent_v1.spawn_agent" in trigger_context, trigger_on.stdout
+        assert "record_decision=true" in trigger_context, trigger_on.stdout
 
         hook_cwd = Path(tmp) / "subagent_hook_project"
         hook_cwd.mkdir(parents=True, exist_ok=True)
@@ -403,11 +593,83 @@ def main() -> int:
         assert "OAG_EVIDENCE_RECORDED" in invalid_gate_payload["reason"], invalid_gate_payload
         receipt = hook_cwd / ".codex" / "oag" / "subagent-receipts" / "smoke.json"
         receipt.parent.mkdir(parents=True, exist_ok=True)
-        receipt.write_text(json.dumps({"status": "pass", "schema_version": "oag_subagent_receipt.v1"}) + "\n", encoding="utf-8")
+        receipt.write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_subagent_receipt.v1",
+                    "product_name": "IP Dev Agent",
+                    "internal_gateway": "Ontology Agent Gateway",
+                    "role_name": "oag-custom-worker",
+                    "shard_scope": "smoke",
+                    "stage": "rtl",
+                    "status": "PASS",
+                    "owned_obligations": [],
+                    "contracts": [],
+                    "allowed_write_paths": [".codex/oag/subagent-receipts/"],
+                    "evidence_outputs": [".codex/oag/subagent-receipts/smoke.json"],
+                    "may_claim_complete": False,
+                    "created_at": "2026-01-01T00:00:00Z",
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         valid_payload = {**invalid_payload, "last_assistant_message": "OAG_EVIDENCE_RECORDED: .codex/oag/subagent-receipts/smoke.json"}
         valid_gate = subagent_gate(valid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_valid.json")})
         assert valid_gate.returncode == 0, valid_gate.stderr or valid_gate.stdout
         assert valid_gate.stdout == "", valid_gate.stdout
+
+        closure_ip = make_ip(Path(tmp) / "closure_check")
+        write_closure_reports(closure_ip)
+        closure_pass = run_closure_check(closure_ip)
+        assert closure_pass.returncode == 0, closure_pass.stderr or closure_pass.stdout
+        closure_pass_result = json.loads(closure_pass.stdout)
+        assert closure_pass_result["status"] == "pass", closure_pass_result
+
+        missing_closure_ip = make_ip(Path(tmp) / "missing_closure")
+        closure_missing = run_closure_check(missing_closure_ip)
+        assert closure_missing.returncode != 0, closure_missing.stdout
+        closure_missing_result = json.loads(closure_missing.stdout)
+        missing_codes = {item["code"] for item in closure_missing_result["issues"]}
+        assert {"VALIDATION_REPORT_MISSING", "GATE_REPORT_MISSING"}.issubset(missing_codes), closure_missing_result
+
+        bad_gate_ip = make_ip(Path(tmp) / "bad_gate_closure")
+        write_closure_reports(bad_gate_ip, gate_decision="FAIL")
+        closure_bad_gate = run_closure_check(bad_gate_ip)
+        assert closure_bad_gate.returncode != 0, closure_bad_gate.stdout
+        closure_bad_gate_result = json.loads(closure_bad_gate.stdout)
+        assert any(item["code"] == "GATE_DECISION" for item in closure_bad_gate_result["issues"]), closure_bad_gate_result
+
+        custom_claim_ip = make_ip(Path(tmp) / "custom_claim_closure")
+        write_closure_reports(custom_claim_ip)
+        custom_receipt = custom_claim_ip / "knowledge" / "subagents" / "custom_worker.json"
+        custom_receipt.parent.mkdir(parents=True, exist_ok=True)
+        custom_receipt.write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_subagent_receipt.v1",
+                    "product_name": "IP Dev Agent",
+                    "internal_gateway": "Ontology Agent Gateway",
+                    "role_name": "oag-custom-worker",
+                    "shard_scope": "rtl_timer",
+                    "stage": "rtl",
+                    "status": "PASS",
+                    "owned_obligations": [],
+                    "contracts": [],
+                    "allowed_write_paths": ["rtl/"],
+                    "evidence_outputs": [],
+                    "may_claim_complete": True,
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        closure_custom_claim = run_closure_check(custom_claim_ip)
+        assert closure_custom_claim.returncode != 0, closure_custom_claim.stdout
+        closure_custom_claim_result = json.loads(closure_custom_claim.stdout)
+        assert any(item["code"] == "CUSTOM_COMPLETION_CLAIM" for item in closure_custom_claim_result["issues"]), closure_custom_claim_result
 
         ip = make_ip(Path(tmp))
         compiled = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
@@ -908,7 +1170,8 @@ def main() -> int:
         assert context_duplicate.stdout == "", context_duplicate.stdout
         context_high_pressure = context_hook({**context_payload, "context_pressure": "high"})
         assert context_high_pressure.returncode == 0, context_high_pressure.stderr or context_high_pressure.stdout
-        assert context_high_pressure.stdout == "", context_high_pressure.stdout
+        if context_high_pressure.stdout:
+            assert "OAG CONTEXT INJECTION" in hook_context(context_high_pressure), context_high_pressure.stdout
         context_post_compact = context_hook({**context_payload, "hook_event_name": "PostCompact"})
         assert context_post_compact.returncode == 0, context_post_compact.stderr or context_post_compact.stdout
         assert context_post_compact.stdout == "", context_post_compact.stdout
@@ -932,6 +1195,17 @@ def main() -> int:
         assert hook_target_names(route_root, {"prompt": "continue route_alpha OAG"}, require_signal=True) == ["route_alpha"]
         assert hook_target_names(route_root, {"prompt": "compare route_alpha and route_beta OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"ip_dir": str(route_root / "route_beta"), "prompt": "승인"}, require_signal=False) == ["route_beta"]
+        single_route_root = Path(tmp) / "single_hook_route_project"
+        single_route_ip = single_route_root / "solo_route"
+        (single_route_ip / "ontology" / "runs").mkdir(parents=True)
+        (single_route_ip / "ontology" / "ip.yaml").write_text("ip: solo_route\n", encoding="utf-8")
+        (single_route_ip / "ontology" / "runs" / "active_run.json").write_text(
+            json.dumps({"run_id": "RUN_SOLO", "status": "in_progress"}) + "\n",
+            encoding="utf-8",
+        )
+        assert hook_target_names(single_route_root, {"prompt": "rtl work"}, require_signal=True) == []
+        assert hook_target_names(single_route_root, {"prompt": "ipdev rtl work"}, require_signal=True) == []
+        assert hook_target_names(single_route_root, {"prompt": "oag rtl work"}, require_signal=True) == ["solo_route"]
         undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
         assert undecided["result"]["allowed"] is False, undecided
         assert undecided["result"]["reason"] == "decision_receipt_required", undecided

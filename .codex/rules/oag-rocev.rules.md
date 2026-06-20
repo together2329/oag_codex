@@ -1,7 +1,7 @@
 # OAG ROCEV Rule Pack
 
-Use these rules in Codex project instructions, AGENTS.md, or a future hook
-configuration.
+Use these rules through the OAG directive, `.codex/AGENTS.md`, skills, hooks,
+or future managed config.
 
 ```text
 Before IP work:
@@ -15,7 +15,11 @@ Before IP work:
   keep ontology/structure.yaml and ontology/decomposition.yaml present
   keep ontology/protection.yaml and knowledge/ledger.jsonl present
   validate Codex agent roles with .codex/scripts/oag_agent_catalog_check.py before subagent-style sharding
+  use the exact oag keyword when team prompts should activate OAG mode; auto research, subagent, and signoff are work terms, not trigger words
+  keep .codex/config.toml [features].multi_agent=true, [features].child_agents_md=true, [features.multi_agent_v2].enabled=false, and [agents].max_depth=1 for trusted-project subagent support
+  use .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --apply to patch team user config when native subagents are not enabled
   trigger subagents through Codex multi_agent_v1.spawn_agent, naming .codex/agents/*.toml agents and bounded shard scopes
+  if the current Codex runtime does not expose native subagents, state that and record fallback work as OAG evidence or draft knowledge
   every spawn message starts with TASK and includes DELIVERABLE, SCOPE, and VERIFY
   use fork_context=false unless the child truly needs full parent history
 
@@ -64,6 +68,7 @@ During IP work:
 Before closure:
   call oag.compile
   call oag.check
+  call .codex/scripts/oag_closure_check.py when validating a release-grade closure package
   call oag.decide action=claim_complete with record_decision=true
   if an OAG run is active, call oag.run.checkpoint before claiming completion
   if oag.stop_check returns should_continue=true, continue with its OAG NEXT ACTION
@@ -73,6 +78,7 @@ Before closure:
   require closed evidence file hashes to match current disk content
   require protected fields clean, append-only ledger valid, and monotonic closure intact
   require a decision receipt under ontology/validations for completion claims
+  require validator and gate-review reports for release-grade closure packages
   include improvement_metrics in check/context/decision evidence so progress can be compared between snapshots
   keep readiness handoff reports consistent with embedded improvement_metrics so next actions and blockers can be checked numerically
   for signoff, require closure_profile=signoff, human-approved policy transition, fresh stage receipts, and an independent reviewer receipt

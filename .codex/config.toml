@@ -1,14 +1,18 @@
 [features]
 multi_agent = true
+child_agents_md = true
 hooks = true
 
+[features.multi_agent_v2]
+enabled = false
+max_concurrent_threads_per_session = 10000
+
 [agents]
-max_threads = 6
 max_depth = 1
 
-[mcp_servers.ontology-ip-agent-oag]
+[mcp_servers.ip-dev-agent-oag]
 command = "python3"
 args = [".codex/scripts/oag_mcp_server.py"]
 
-[mcp_servers.ontology-ip-agent-oag.env]
+[mcp_servers.ip-dev-agent-oag.env]
 OAG_ACTOR_SURFACE = "codex-mcp"

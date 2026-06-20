@@ -3,6 +3,7 @@ description = "Dynamic OAG worker shard for one bounded RTL, TB, script, testcas
 nickname_candidates = ["Custom Worker"]
 model = "gpt-5.5"
 model_reasoning_effort = "medium"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: dynamic custom worker.

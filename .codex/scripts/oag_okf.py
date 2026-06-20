@@ -190,7 +190,7 @@ def _common_meta(*, concept_type: str, title: str, description: str, resource: s
         "resource": resource,
         "tags": tags,
         "timestamp": _now(),
-        "producer": "ontology-ip-agent",
+        "producer": "ip-dev-agent",
         "okf_version": OKF_VERSION,
     }
 

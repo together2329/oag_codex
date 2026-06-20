@@ -345,7 +345,7 @@ def handle(request: dict[str, Any]) -> dict[str, Any] | None:
             {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "ontology-ip-agent-oag", "version": "0.1.0"},
+                "serverInfo": {"name": "ip-dev-agent-oag", "version": "0.1.0"},
             },
         )
     if method == "tools/list":

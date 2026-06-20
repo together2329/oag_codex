@@ -1,4 +1,4 @@
-# Ontology IP Agent
+# IP Dev Agent
 
 Purpose: help a human or AI worker understand and close hardware IP work through
 OAG, not through chat memory.

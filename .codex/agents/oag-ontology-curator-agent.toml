@@ -3,6 +3,7 @@ description = "Maintains IP Dev Agent ontology vocabulary, schemas, protected co
 nickname_candidates = ["Ontology Curator"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: ontology curator for IP Dev Agent.

@@ -3,6 +3,7 @@ description = "Runs bounded simulation and collects fresh executable evidence fo
 nickname_candidates = ["Simulation Execution"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: simulation execution agent.
