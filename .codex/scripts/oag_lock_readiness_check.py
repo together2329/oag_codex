@@ -16,6 +16,8 @@ if str(SCRIPT_DIR) not in sys.path:
 import oag_requirement_atom_check  # noqa: E402
 import oag_req_quality_check  # noqa: E402
 import oag_verification_plan_check  # noqa: E402
+import oag_contract_strength_check  # noqa: E402
+import oag_trace_graph_check  # noqa: E402
 
 
 LOCK_READY_STATUSES = {"decided", "waived"}
@@ -149,9 +151,13 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     req_quality_issues = req_quality_result.get("issues", []) if isinstance(req_quality_result, dict) else []
     atom_result = oag_requirement_atom_check.check(ip_dir, require_locked=hard_gate)
     atom_issues = atom_result.get("issues", []) if isinstance(atom_result, dict) else []
+    contract_strength_result = oag_contract_strength_check.check(ip_dir, require_locked=hard_gate)
+    contract_strength_issues = contract_strength_result.get("issues", []) if isinstance(contract_strength_result, dict) else []
     vplan_result = oag_verification_plan_check.check(ip_dir, require_locked=hard_gate)
     vplan_issues = vplan_result.get("issues", []) if isinstance(vplan_result, dict) else []
-    issues = decision_issues + req_quality_issues + atom_issues + vplan_issues
+    trace_result = oag_trace_graph_check.check(ip_dir, require_locked=hard_gate)
+    trace_issues = trace_result.get("issues", []) if isinstance(trace_result, dict) else []
+    issues = decision_issues + req_quality_issues + atom_issues + contract_strength_issues + vplan_issues + trace_issues
 
     next_actions: list[str] = []
     if decision_counts["unresolved_lock_blockers"]:
@@ -160,8 +166,12 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         next_actions.append("Resolve source claims, ambiguity register, or requirement quality issues.")
     if atom_issues:
         next_actions.append("Resolve requirement atom, shallow obligation, or assume/guarantee contract issues.")
+    if contract_strength_issues:
+        next_actions.append("Resolve closure-grade contract strength issues before implementation or validation.")
     if vplan_issues:
         next_actions.append("Resolve verification strategy plan issues before TB implementation or closure.")
+    if trace_issues:
+        next_actions.append("Resolve source-to-contract-to-evidence trace graph issues.")
     if not issues and not hard_gate:
         next_actions.append("Draft is lock-ready only after user lock and hard gate re-check.")
 
@@ -177,7 +187,9 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
             "decision_issues": len(decision_issues),
             "requirement_quality_issues": len(req_quality_issues),
             "atom_issues": len(atom_issues),
+            "contract_strength_issues": len(contract_strength_issues),
             "verification_plan_issues": len(vplan_issues),
+            "trace_issues": len(trace_issues),
             "issues": len(issues),
         },
         "unresolved_lock_blockers": blockers,

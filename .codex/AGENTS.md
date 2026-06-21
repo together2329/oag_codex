@@ -16,8 +16,11 @@ Primary assets:
 - `oag/requirements-quality-policy.md`
 - `oag/requirement-decomposition-principles.md`
 - `oag/assume-guarantee-contracts.md`
+- `oag/contract-strength-policy.md`
 - `oag/phenomena-boundary-model.md`
 - `oag/decision-matrix-policy.md`
+- `oag/authoring-packet-policy.md`
+- `oag/traceability-policy.md`
 - `oag/contract-projection.md`
 - `oag/rtl-implementation.md`
 - `oag/rtl-dialect-policy.md`
@@ -37,6 +40,9 @@ Primary assets:
 - `rules/oag-requirements-quality.rules.md`
 - `rules/oag-requirement-decomposition.rules.md`
 - `rules/oag-lock-readiness.rules.md`
+- `rules/oag-contract-strength.rules.md`
+- `rules/oag-authoring-packet.rules.md`
+- `rules/oag-traceability.rules.md`
 - `rules/oag-verification-strategy.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
@@ -73,6 +79,11 @@ Primary assets:
 - `scripts/oag_req_quality_check.py`
 - `scripts/oag_requirement_atom_check.py`
 - `scripts/oag_lock_readiness_check.py`
+- `scripts/oag_contract_strength_check.py`
+- `scripts/oag_authoring_packet_check.py`
+- `scripts/oag_trace_graph_check.py`
+- `scripts/oag_deep_semantic_intake.py`
+- `scripts/oag_decision_matrix_generate.py`
 - `scripts/oag_verification_plan_check.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_protected_receipt_audit.py`
@@ -93,10 +104,15 @@ defines lock-ready requirement shape and source traceability,
 `oag/requirement-decomposition-principles.md` defines the OAG V2 semantic atom
 layer before obligations, `oag/assume-guarantee-contracts.md` defines
 environment assumptions versus DUT guarantees,
+`oag/contract-strength-policy.md` defines implementation-ready contract
+strength, oracle projection, and weak-contract blockers,
 `oag/phenomena-boundary-model.md` defines monitored/controlled phenomena and
 DUT boundary ownership, `oag/decision-matrix-policy.md` defines unresolved,
 proposed, decided, waived, and blocked product decisions before lock-ready
-implementation, `oag/contract-projection.md` defines ROCEV projection,
+implementation, `oag/authoring-packet-policy.md` defines role-specific
+`rtl__*.json` and `tb__*.json` packets, `oag/traceability-policy.md` defines
+source-to-contract-to-evidence ID governance, `oag/contract-projection.md`
+defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines
 the portable RTL subset, `oag/rtl-ppa-principles.md` defines correctness-first
@@ -143,14 +159,30 @@ Use `.codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` as the
 lightweight OAG V2 semantic screen for requirement atoms, shallow obligations,
 and assume/guarantee contract strength. In draft it supports interview hygiene;
 after scope lock it becomes a hard gate for implementation and closure claims.
+Use `.codex/scripts/oag_contract_strength_check.py --ip-dir <ip> --json` as the
+dedicated contract-strength screen for variables, assume/guarantee, oracle refs,
+and proof projection. After lock, weak simulation-pass contracts are blockers,
+not closure evidence.
 Use `.codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json` as the
 post-lock readiness screen for `ontology/decision_matrix.yaml` plus the
-requirement atom gate. It blocks implementation when any lock-required decision
-is still unresolved, proposed, or blocked.
+requirement atom, contract-strength, VPlan, and trace graph gates. It blocks
+implementation when any lock-required decision is still unresolved, proposed,
+or blocked.
 Use `.codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json` as the
 verification strategy screen for `ontology/verification_plan.yaml`. After lock,
 TB implementation should consume the verification plan rather than define the
 proof strategy it is trying to satisfy.
+Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json`
+before RTL/TB native subagent dispatch to ensure `oag.compile` produced
+role-specific `rtl__*.json` and `tb__*.json` packets with independent truth
+sources.
+Use `.codex/scripts/oag_trace_graph_check.py --ip-dir <ip> --json` to audit the
+source claim -> requirement -> atom -> obligation -> contract -> scenario ->
+evidence trace graph.
+Use `.codex/scripts/oag_deep_semantic_intake.py` and
+`.codex/scripts/oag_decision_matrix_generate.py` to seed draft intake reports
+and unresolved profile-driven decision rows such as the `mctp-rx` profile. Seed
+recommendations are not locked truth.
 Use `.codex/scripts/oag_workflow_whole_db.py` to generate a single Markdown
 review bundle of the `.codex` workflow pack as `oag_workflow_whole_db.md`.
 The bundle is generated review evidence, not canonical OAG truth.

@@ -8,7 +8,11 @@ implementation.
 1. `ontology/scope_lock.json` controls implementation permission, but `locked`
    is not sufficient by itself.
 2. Post-lock implementation requires both:
+   - `oag_req_quality_check.py --ip-dir <ip> --json`
    - `oag_requirement_atom_check.py --ip-dir <ip> --json`
+   - `oag_contract_strength_check.py --ip-dir <ip> --json`
+   - `oag_verification_plan_check.py --ip-dir <ip> --json`
+   - `oag_trace_graph_check.py --ip-dir <ip> --json`
    - `oag_lock_readiness_check.py --ip-dir <ip> --json`
 3. Any `lock_required: true` decision with `status` other than `decided` or
    `waived` blocks implementation.
@@ -19,6 +23,9 @@ implementation.
    gate work must not proceed from unresolved lock-blocking decisions.
 8. Lock readiness is not closure. It authorizes bounded implementation
    dispatch; it does not prove behavior.
+9. Before RTL/TB dispatch, `oag.compile` must generate role-specific
+   `rtl__*.json` and `tb__*.json` packets and
+   `oag_authoring_packet_check.py --require-packets` must pass.
 
 ## Complex IP Guidance
 

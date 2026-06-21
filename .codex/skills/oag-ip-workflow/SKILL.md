@@ -39,6 +39,9 @@ Allowed first actions for a short IP request:
   product choices, keeping unknown transport, feature scope, buffering,
   filtering, output, storage, interrupt/status, and error/drop policy as
   unresolved or blocked instead of architecture decisions.
+- use `oag_deep_semantic_intake.py` for compressed natural-language intent and
+  `oag_decision_matrix_generate.py` for profile-seeded decision rows when a
+  protocol profile such as `mctp-rx` applies.
 
 Forbidden until the user confirms scope or supplies a concrete spec:
 
@@ -99,6 +102,8 @@ After lock and before implementation or closure, run the OAG V2 semantic gate:
 ```bash
 python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_contract_strength_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_trace_graph_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json
 ```
@@ -112,6 +117,17 @@ TB implementation agent satisfies them.
 The lock-readiness check also blocks lock-required decision rows that are still
 unresolved, proposed, or blocked. Passing it is implementation readiness, not
 IP closure.
+
+Before dispatching RTL or TB agents after lock, run:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json
+```
+
+The generated `ontology/generated/authoring_packets/rtl__*.json` and
+`tb__*.json` files are the role-specific implementation and proof inputs.
+RTL/TB agents should not reinterpret original prose once these packets exist.
 
 After user lock, main agent orchestrates; subagents implement and verify. The
 main agent must not directly create or substantially edit RTL, TB, sim, lint,
@@ -142,7 +158,8 @@ also creates `ontology/modeling.yaml` for micro behavior/cycle oracle truth and
 intent, `req/source_claims.yaml` and `req/ambiguity_register.yaml` for deep
 semantic intake, `ontology/requirement_atoms.yaml` for semantic decomposition
 before obligations, and `ontology/decision_matrix.yaml` for decisions that must
-be resolved before lock-ready implementation.
+be resolved before lock-ready implementation. `oag.compile` also generates
+role-specific authoring packets under `ontology/generated/authoring_packets/`.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 

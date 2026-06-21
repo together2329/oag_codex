@@ -34,6 +34,11 @@ PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
 REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
+CONTRACT_STRENGTH_CHECK = ROOT / "scripts" / "oag_contract_strength_check.py"
+AUTHORING_PACKET_CHECK = ROOT / "scripts" / "oag_authoring_packet_check.py"
+TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
+DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
+DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -59,6 +64,9 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_requirement_atom.schema.json",
     ROOT / "schemas" / "oag_decision_matrix.schema.json",
     ROOT / "schemas" / "oag_verification_plan.schema.json",
+    ROOT / "schemas" / "oag_contract_v2.schema.json",
+    ROOT / "schemas" / "oag_rtl_authoring_packet.schema.json",
+    ROOT / "schemas" / "oag_tb_authoring_packet.schema.json",
 ]
 
 
@@ -360,6 +368,9 @@ def make_ip(root: Path) -> Path:
     assert "modeling_policy:" in policy_text, policy_text
     assert "requirement_decomposition_policy:" in policy_text, policy_text
     assert "decision_matrix_policy:" in policy_text, policy_text
+    assert "contract_strength_policy:" in policy_text, policy_text
+    assert "authoring_packet_policy:" in policy_text, policy_text
+    assert "traceability_policy:" in policy_text, policy_text
     assert "verification_strategy_policy:" in policy_text, policy_text
     assert "domain_crossing_policy:" in policy_text, policy_text
     assert "tb_methodology_policy:" in policy_text, policy_text
@@ -402,6 +413,7 @@ def make_ip(root: Path) -> Path:
             "goal_id": "GOAL_COUNTER_INC",
             "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
             "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+            "contract_refs": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
             "scenario_id": "SC_INC_001",
             "cycle": 1,
             "stimulus": {"valid": 1},
@@ -421,6 +433,7 @@ def make_ip(root: Path) -> Path:
             "goal_id": "GOAL_COUNTER_INC",
             "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
             "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+            "contract_refs": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
             "scenario_id": "SC_INC_002",
             "cycle": 2,
             "stimulus": {"valid": 1},
@@ -641,6 +654,11 @@ def main() -> int:
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
+        assert CONTRACT_STRENGTH_CHECK.is_file(), CONTRACT_STRENGTH_CHECK
+        assert AUTHORING_PACKET_CHECK.is_file(), AUTHORING_PACKET_CHECK
+        assert TRACE_GRAPH_CHECK.is_file(), TRACE_GRAPH_CHECK
+        assert DEEP_SEMANTIC_INTAKE.is_file(), DEEP_SEMANTIC_INTAKE
+        assert DECISION_MATRIX_GENERATE.is_file(), DECISION_MATRIX_GENERATE
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
@@ -688,6 +706,11 @@ def main() -> int:
         assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_req_quality_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_lock_readiness_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_contract_strength_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_authoring_packet_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_trace_graph_check.py" in skill_text, skill_text
+        assert "oag_deep_semantic_intake.py" in skill_text, skill_text
+        assert "oag_decision_matrix_generate.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_verification_plan_check.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
@@ -708,6 +731,11 @@ def main() -> int:
         assert "req/source_claims.yaml" in agents_text, agents_text
         assert "req/ambiguity_register.yaml" in agents_text, agents_text
         assert "oag_lock_readiness_check.py" in agents_text, agents_text
+        assert "oag_contract_strength_check.py" in agents_text, agents_text
+        assert "oag_authoring_packet_check.py" in agents_text, agents_text
+        assert "oag_trace_graph_check.py" in agents_text, agents_text
+        assert "oag_deep_semantic_intake.py" in agents_text, agents_text
+        assert "oag_decision_matrix_generate.py" in agents_text, agents_text
         assert "oag_verification_plan_check.py" in agents_text, agents_text
         assert "ontology/verification_plan.yaml" in agents_text, agents_text
         assert "After user lock, main agent orchestrates" in agents_text, agents_text
@@ -720,8 +748,16 @@ def main() -> int:
         assert "req/source_claims.yaml" in directive_text, directive_text
         assert "req/ambiguity_register.yaml" in directive_text, directive_text
         assert "oag_lock_readiness_check.py" in directive_text, directive_text
+        assert "oag_contract_strength_check.py" in directive_text, directive_text
+        assert "oag_authoring_packet_check.py" in directive_text, directive_text
+        assert "oag_trace_graph_check.py" in directive_text, directive_text
+        assert "oag_deep_semantic_intake.py" in directive_text, directive_text
+        assert "oag_decision_matrix_generate.py" in directive_text, directive_text
         assert "oag_verification_plan_check.py" in directive_text, directive_text
         assert "ontology/verification_plan.yaml" in directive_text, directive_text
+        assert "ontology/generated/authoring_packets" in directive_text, directive_text
+        assert "rtl__*.json" in directive_text, directive_text
+        assert "tb__*.json" in directive_text, directive_text
         assert "After user lock, main agent orchestrates" in directive_text, directive_text
         assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text

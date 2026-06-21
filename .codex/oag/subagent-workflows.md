@@ -139,6 +139,20 @@ If `ontology/scope_lock.json` is missing or `state=draft`, do not spawn the
 child. Ask the user to confirm scope and run `oag.lock` first. No lock, no
 RTL/TB/closure.
 
+Before RTL or TB dispatch, compile the authored ontology and verify
+role-specific packet projection:
+
+```bash
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json
+```
+
+RTL agents should consume `ontology/generated/authoring_packets/rtl__*.json`.
+TB agents should consume `ontology/generated/authoring_packets/tb__*.json`.
+If the packets are weak or missing refs, repair authored requirements,
+contracts, modeling, or verification plan and compile again. Do not hand-edit
+generated packets.
+
 ```bash
 python3 .codex/scripts/oag_dispatch.py create \
   --ip-dir <ip> \

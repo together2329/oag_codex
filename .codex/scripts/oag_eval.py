@@ -248,6 +248,8 @@ def case_compile_skips_fresh_graph(root: Path) -> dict[str, Any]:
     assert second["result"]["skipped"] is True, second
     manifest = ip / "ontology" / "generated" / "compile_manifest.json"
     assert manifest.is_file(), manifest
+    assert (ip / "ontology" / "generated" / "authoring_packets" / f"rtl__{ip.name}.json").is_file()
+    assert (ip / "ontology" / "generated" / "authoring_packets" / f"tb__{ip.name}.json").is_file()
     return {
         "ip": str(ip),
         "first_skipped": first["result"]["skipped"],
@@ -360,6 +362,7 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "REQ_STATUS_DRAFT" in hard_codes, hard
     assert "REQ_AMBIGUITY_STATUS" in hard_codes, hard
     assert "ATOM_AMBIGUITY" in hard_codes, hard
+    assert "CONTRACT_VARIABLES_MISSING" in hard_codes, hard
     assert "VPLAN_OPEN_BLOCKERS" in hard_codes, hard
     assert "VOBJ_NOT_READY" in hard_codes, hard
     assert "VOBJ_OPEN_RISK" in hard_codes, hard
@@ -378,6 +381,7 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "DECISION_LOCK_BLOCKER" in locked_codes, locked
     assert "AMBIGUITY_LOCK_BLOCKER" in locked_codes, locked
     assert "REQ_STATUS_DRAFT" in locked_codes, locked
+    assert "CONTRACT_VARIABLES_MISSING" in locked_codes, locked
     assert "REQ_AMBIGUITY_STATUS" in locked_codes, locked
     assert "CONTRACT_ASSUME_MISSING" in locked_codes, locked
     assert "CONTRACT_GUARANTEE_MISSING" in locked_codes, locked
@@ -488,6 +492,149 @@ def case_verification_plan_scaffold_seed(root: Path) -> dict[str, Any]:
         "hard_status": hard["status"],
         "hard_issue_codes": sorted(hard_codes),
     }
+
+
+def case_contract_strength_scaffold_seed(root: Path) -> dict[str, Any]:
+    draft_ip = root / "contract_strength_draft" / "demo_counter_cx1"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(draft_ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_contract_strength_check.py"), "--ip-dir", str(draft_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+
+    hard_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_contract_strength_check.py"), "--ip-dir", str(draft_ip), "--require-locked", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert hard_proc.returncode != 0, hard_proc.stdout + hard_proc.stderr
+    hard = json.loads(hard_proc.stdout)
+    codes = {item["code"] for item in hard["issues"]}
+    assert "CONTRACT_VARIABLES_MISSING" in codes, hard
+    assert "CONTRACT_ASSUME_MISSING" in codes, hard
+    assert "CONTRACT_GUARANTEE_MISSING" in codes, hard
+    return {"draft_status": draft["status"], "hard_status": hard["status"], "hard_issue_codes": sorted(codes)}
+
+
+def case_authoring_packet_scaffold_seed(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "authoring_packet_seed")
+    compile_result = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+    assert compile_result["result"]["status"] == "pass", compile_result
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_authoring_packet_check.py"), "--ip-dir", str(ip), "--require-packets", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["status"] == "pass", result
+    assert result["counts"]["rtl_packets"] >= 1, result
+    assert result["counts"]["tb_packets"] >= 1, result
+    return {"ip": str(ip), "counts": result["counts"]}
+
+
+def case_trace_graph_scaffold_seed(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "trace_graph_seed")
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_trace_graph_check.py"), "--ip-dir", str(ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+    hard_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_trace_graph_check.py"), "--ip-dir", str(ip), "--require-locked", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert hard_proc.returncode == 0, hard_proc.stdout + hard_proc.stderr
+    hard = json.loads(hard_proc.stdout)
+    assert hard["status"] == "pass", hard
+    return {"ip": str(ip), "draft_counts": draft["counts"], "hard_counts": hard["counts"]}
+
+
+def case_decision_matrix_generator_mctp_profile(root: Path) -> dict[str, Any]:
+    ip = root / "mctp_profile_seed" / "mctp_rx"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "oag_decision_matrix_generate.py"),
+            "--ip-dir",
+            str(ip),
+            "--profile",
+            "mctp-rx",
+            "--owner",
+            "eval",
+            "--write",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["counts"]["added"] >= 13, result
+    matrix = _read_yaml(ip / "ontology" / "decision_matrix.yaml")
+    rows = {item["id"]: item for item in matrix["decisions"]}
+    assert rows["D003_TLP_BOUNDARY"]["status"] == "unresolved", rows["D003_TLP_BOUNDARY"]
+    assert rows["D003_TLP_BOUNDARY"]["decision"] is None, rows["D003_TLP_BOUNDARY"]
+    assert "WLAST" in rows["D003_TLP_BOUNDARY"]["recommended"], rows["D003_TLP_BOUNDARY"]
+    return {"ip": str(ip), "added": result["counts"]["added"], "decision_count": len(rows)}
+
+
+def case_deep_semantic_intake_mctp_profile(root: Path) -> dict[str, Any]:
+    ip = root / "mctp_intake_seed" / "mctp_rx"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "oag_deep_semantic_intake.py"),
+            "--ip-dir",
+            str(ip),
+            "--topic",
+            "mctp rx request",
+            "--prompt",
+            "I need mctp rx ip. AXI WDATA carries full PCIe TLP and completed messages are stored in SRAM.",
+            "--profile",
+            "mctp-rx",
+            "--owner",
+            "eval",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    result = json.loads(proc.stdout)
+    report = Path(result["path"])
+    assert report.is_file(), report
+    assert any("TLP boundary" in item for item in result["hidden_implications"]), result
+    decision_ids = {row["id"] for row in result["decision_seed"]["rows"]}
+    assert "D007_CONTEXT_KEY" in decision_ids, result
+    return {"ip": str(ip), "report": str(report), "decision_count": len(decision_ids)}
 
 
 def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_sample", pattern: str = "per_bit_two_stage_sync") -> dict[str, Any]:
@@ -1848,6 +1995,11 @@ CASES: list[tuple[str, CaseFn]] = [
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
     ("requirement_quality_scaffold_seed", case_requirement_quality_scaffold_seed),
     ("verification_plan_scaffold_seed", case_verification_plan_scaffold_seed),
+    ("contract_strength_scaffold_seed", case_contract_strength_scaffold_seed),
+    ("authoring_packet_scaffold_seed", case_authoring_packet_scaffold_seed),
+    ("trace_graph_scaffold_seed", case_trace_graph_scaffold_seed),
+    ("decision_matrix_generator_mctp_profile", case_decision_matrix_generator_mctp_profile),
+    ("deep_semantic_intake_mctp_profile", case_deep_semantic_intake_mctp_profile),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),

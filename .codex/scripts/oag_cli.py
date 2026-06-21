@@ -82,6 +82,7 @@ DECOMPOSITION_REL = Path("ontology/decomposition.yaml")
 MODELING_REL = Path("ontology/modeling.yaml")
 DOMAIN_INTENT_REL = Path("ontology/domain_intent.yaml")
 TB_METHODOLOGY_REL = Path("ontology/tb_methodology.yaml")
+VERIFICATION_PLAN_REL = Path("ontology/verification_plan.yaml")
 POLICIES_REL = Path("ontology/policies.yaml")
 EVIDENCE_PLAN_REL = Path("req/evidence_plan.yaml")
 SCENARIO_MAPPING_REL = Path("sim/scenario_mapping.json")
@@ -291,6 +292,11 @@ def _domain_intent_doc(ip: Path) -> dict[str, Any]:
 
 def _tb_methodology_doc(ip: Path) -> dict[str, Any]:
     data = _read_yaml_file(ip / TB_METHODOLOGY_REL)
+    return data if isinstance(data, dict) else {}
+
+
+def _verification_plan_doc(ip: Path) -> dict[str, Any]:
+    data = _read_yaml_file(ip / VERIFICATION_PLAN_REL)
     return data if isinstance(data, dict) else {}
 
 
@@ -1094,6 +1100,34 @@ def _write_generated_design_views(
     req_by_id = {str(item.get("id") or ""): item for item in reqs if item.get("id")}
     obl_by_id = {str(item.get("id") or ""): item for item in obligations if item.get("id")}
     contract_by_id = {str(item.get("id") or ""): item for item in contracts if item.get("id")}
+    modeling = _modeling_doc(ip)
+    domain_intent = _domain_intent_doc(ip)
+    tb_methodology = _tb_methodology_doc(ip)
+    verification_plan = _verification_plan_doc(ip)
+
+    def contract_ref_list(contract: dict[str, Any], *keys: str) -> list[str]:
+        refs: list[str] = []
+        oracle = contract.get("oracle") if isinstance(contract.get("oracle"), dict) else {}
+        projection = contract.get("verification_projection") if isinstance(contract.get("verification_projection"), dict) else {}
+        for key in keys:
+            refs.extend(_str_items(contract.get(key)))
+            refs.extend(_str_items(oracle.get(key)))
+            refs.extend(_str_items(projection.get(key)))
+        return sorted(set(refs))
+
+    all_contract_ids = sorted(str(item.get("id") or item.get("contract_id") or "").strip() for item in contracts if str(item.get("id") or item.get("contract_id") or "").strip())
+    all_behavior_refs = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "behavior_refs", "fl_model_refs", "cl_model_refs")))
+    all_cycle_refs = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "cycle_rule_refs", "protocol_refs", "property_refs")))
+    all_scenarios = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "scenario_refs", "scenarios")))
+    all_scoreboard_rows = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "scoreboard_row_refs", "scoreboard_rows")))
+    all_assertion_candidates = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "assertion_refs", "assertion_props", "property_refs")))
+    all_formal_goals = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "formal_goals")))
+    for objective in _as_list(verification_plan.get("verification_objectives")):
+        if not isinstance(objective, dict):
+            continue
+        all_scenarios = sorted(set([*all_scenarios, *_str_items(objective.get("scenarios")), *_str_items(objective.get("negative_scenarios"))]))
+        all_assertion_candidates = sorted(set([*all_assertion_candidates, *_str_items(objective.get("assertion_candidates"))]))
+        all_formal_goals = sorted(set([*all_formal_goals, *_str_items(objective.get("formal_candidates"))]))
     design_spec = {
         "schema_version": "oag_generated_design_spec.v1",
         "generated_by": "oag.compile",
@@ -1109,6 +1143,7 @@ def _write_generated_design_views(
             str(MODELING_REL),
             str(DOMAIN_INTENT_REL),
             str(TB_METHODOLOGY_REL),
+            str(VERIFICATION_PLAN_REL),
         ],
         "structure_profile": profile,
         "status": "pass" if not issues else "fail",
@@ -1174,6 +1209,78 @@ def _write_generated_design_views(
         _write_json_semantic_stable(packet_path, packet, volatile_keys={"generated_at"})
         live_packet_paths.add(packet_path)
         packets.append({"module": mid, "path": str(packet_path.relative_to(ip)), "editable": editable})
+    rtl_packet = {
+        "schema_version": "oag_rtl_authoring_packet.v1",
+        "packet_type": "rtl_authoring_packet",
+        "generated_by": "oag.compile",
+        "generated_at": _now(),
+        "ip": ip.name,
+        "allowed_truth_sources": [
+            "ontology/contracts.yaml",
+            str(MODELING_REL),
+            str(DOMAIN_INTENT_REL),
+            str(STRUCTURE_REL),
+            str(DECOMPOSITION_REL),
+        ],
+        "forbidden_sources": ["tb/", "sim/scoreboard_events.jsonl", "observed DUT behavior"],
+        "structure_profile": profile,
+        "top_interface_refs": _str_items(structure.get("interfaces")),
+        "contract_refs_to_implement": all_contract_ids,
+        "behavior_refs_implemented_target": all_behavior_refs,
+        "cycle_rule_refs_implemented_target": all_cycle_refs,
+        "domain_intent_source": str(DOMAIN_INTENT_REL),
+        "ppa_notes_required": True,
+        "cdc_rdc_notes_required": True,
+        "notes": "RTL implements locked contracts; it must not derive expected behavior from TB or simulation artifacts.",
+    }
+    tb_packet = {
+        "schema_version": "oag_tb_authoring_packet.v1",
+        "packet_type": "tb_authoring_packet",
+        "generated_by": "oag.compile",
+        "generated_at": _now(),
+        "ip": ip.name,
+        "allowed_truth_sources": [
+            "ontology/contracts.yaml",
+            str(MODELING_REL),
+            str(TB_METHODOLOGY_REL),
+            str(VERIFICATION_PLAN_REL),
+            "req/evidence_plan.yaml",
+        ],
+        "expected_source_policy": "contract_oracle_only",
+        "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation", "observed DUT behavior"],
+        "scenario_refs": all_scenarios,
+        "scoreboard_row_refs": all_scoreboard_rows,
+        "coverage_goal_refs": [
+            str(item.get("id") or item.get("coverage_ref") or "")
+            for item in _as_list(tb_methodology.get("coverage_goals"))
+            if isinstance(item, dict) and str(item.get("id") or item.get("coverage_ref") or "").strip()
+        ],
+        "assertion_candidates": all_assertion_candidates,
+        "formal_candidates": all_formal_goals,
+        "contract_refs": all_contract_ids,
+        "notes": "TB predicts from contracts and modeling truth; DUT output and RTL expressions are forbidden expected sources.",
+    }
+    evidence_packet = {
+        "schema_version": "oag_evidence_authoring_packet.v1",
+        "packet_type": "evidence_authoring_packet",
+        "generated_by": "oag.compile",
+        "generated_at": _now(),
+        "ip": ip.name,
+        "contract_refs": all_contract_ids,
+        "scenario_refs": all_scenarios,
+        "scoreboard_row_refs": all_scoreboard_rows,
+        "required_artifacts": ["sim/results.xml", "sim/scenario_mapping.json", "sim/scoreboard_events.jsonl", "cov/coverage.json"],
+        "validation_policy": "source_to_contract_to_evidence_trace_required",
+    }
+    for filename, packet in (
+        (f"rtl__{_safe_filename(ip.name)}.json", rtl_packet),
+        (f"tb__{_safe_filename(ip.name)}.json", tb_packet),
+        (f"evidence__{_safe_filename(ip.name)}.json", evidence_packet),
+    ):
+        packet_path = packets_dir / filename
+        _write_json_semantic_stable(packet_path, packet, volatile_keys={"generated_at"})
+        live_packet_paths.add(packet_path)
+        packets.append({"module": "", "path": str(packet_path.relative_to(ip)), "editable": False, "packet_type": packet.get("packet_type")})
     for stale in packets_dir.glob("*.json"):
         if stale not in live_packet_paths:
             stale.unlink()
@@ -3067,6 +3174,7 @@ def _compile_input_fingerprints(ip: Path) -> list[dict[str, str]]:
         ip / MODELING_REL,
         ip / DOMAIN_INTENT_REL,
         ip / TB_METHODOLOGY_REL,
+        ip / VERIFICATION_PLAN_REL,
         ip / "ontology" / "policies.yaml",
         ip / PROTECTION_REL,
         ip / "list" / "rtl.f",
@@ -3111,7 +3219,8 @@ def _compile_outputs_present(ip: Path) -> bool:
         ip / DOMAIN_CROSSING_MATRIX_REL,
         ip / TB_METHODOLOGY_MATRIX_REL,
     ]
-    return all(path.is_file() for path in required)
+    packets = ip / AUTHORING_PACKETS_REL
+    return all(path.is_file() for path in required) and any(packets.glob("rtl__*.json")) and any(packets.glob("tb__*.json"))
 
 
 def _compile_manifest_path(ip: Path) -> Path:
@@ -3175,6 +3284,10 @@ def _write_compile_manifest(ip: Path, *, inputs: list[dict[str, str]], graph: di
     for rel in (TRUTH_GRAPH_REL, DESIGN_SPEC_REL, DESIGN_FACTS_REL, DOMAIN_CROSSING_MATRIX_REL, TB_METHODOLOGY_MATRIX_REL):
         path = ip / rel
         outputs.append({"path": str(rel), "sha256": _sha256(path) if path.is_file() else "missing"})
+    packets = ip / AUTHORING_PACKETS_REL
+    if packets.is_dir():
+        for path in sorted(packets.glob("*.json")):
+            outputs.append({"path": _rel_to_ip(ip, path), "sha256": _sha256(path) if path.is_file() else "missing"})
     manifest = {
         "schema_version": "oag_compile_manifest.v1",
         "ip": ip.name,
