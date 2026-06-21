@@ -321,6 +321,68 @@ def case_requirement_atom_scaffold_seed(root: Path) -> dict[str, Any]:
     }
 
 
+def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
+    draft_ip = root / "lock_readiness_draft" / "demo_counter_cx1"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(draft_ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    decisions = _read_yaml(draft_ip / "ontology" / "decision_matrix.yaml")
+    policies = _read_yaml(draft_ip / "ontology" / "policies.yaml")
+    decision_policy = policies.get("decision_matrix_policy") if isinstance(policies.get("decision_matrix_policy"), dict) else {}
+    assert decisions.get("schema_version") == "oag_decision_matrix.v1", decisions
+    assert isinstance(decisions.get("decisions"), list) and decisions["decisions"], decisions
+    assert decision_policy.get("canonical_decision_matrix_file") == "ontology/decision_matrix.yaml", policies
+
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_lock_readiness_check.py"), "--ip-dir", str(draft_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+    assert draft["hard_gate"] is False, draft
+    assert draft["counts"]["unresolved_lock_blockers"] >= 1, draft
+
+    hard_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_lock_readiness_check.py"), "--ip-dir", str(draft_ip), "--require-locked", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert hard_proc.returncode != 0, hard_proc.stdout + hard_proc.stderr
+    hard = json.loads(hard_proc.stdout)
+    hard_codes = {item["code"] for item in hard["issues"]}
+    assert "DECISION_LOCK_BLOCKER" in hard_codes, hard
+    assert "ATOM_AMBIGUITY" in hard_codes, hard
+
+    locked_ip = smoke_test.make_ip(root / "lock_readiness_locked")
+    locked_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_lock_readiness_check.py"), "--ip-dir", str(locked_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert locked_proc.returncode != 0, locked_proc.stdout + locked_proc.stderr
+    locked = json.loads(locked_proc.stdout)
+    locked_codes = {item["code"] for item in locked["issues"]}
+    assert "DECISION_LOCK_BLOCKER" in locked_codes, locked
+    assert "CONTRACT_ASSUME_MISSING" in locked_codes, locked
+    assert "CONTRACT_GUARANTEE_MISSING" in locked_codes, locked
+    return {
+        "draft_ip": str(draft_ip),
+        "locked_ip": str(locked_ip),
+        "draft_status": draft["status"],
+        "hard_status": hard["status"],
+        "locked_status": locked["status"],
+        "hard_issue_codes": sorted(hard_codes),
+        "locked_issue_codes": sorted(locked_codes),
+    }
+
+
 def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_sample", pattern: str = "per_bit_two_stage_sync") -> dict[str, Any]:
     return {
         "schema_version": "oag_domain_intent.v1",
@@ -1677,6 +1739,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
+    ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),
     ("random_without_coverage_goals_fails", case_random_without_coverage_goals_fails),

@@ -32,6 +32,10 @@ Allowed first actions for a short IP request:
   requirements, keeping unknown trigger, condition, response, boundary,
   phenomena, assumption, timing, and proof-shape fields as draft ambiguity
   instead of architecture decisions.
+- create or update `ontology/decision_matrix.yaml` rows for lock-blocking
+  product choices, keeping unknown transport, feature scope, buffering,
+  filtering, output, storage, interrupt/status, and error/drop policy as
+  unresolved or blocked instead of architecture decisions.
 
 Forbidden until the user confirms scope or supplies a concrete spec:
 
@@ -91,11 +95,15 @@ After lock and before implementation or closure, run the OAG V2 semantic gate:
 
 ```bash
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
 ```
 
 Resolve failures before relying on obligations or contracts. This check blocks
 locked scopes that still have unresolved requirement-atom ambiguity, prose-only
 obligations, or closure-grade contracts without explicit assume/guarantee.
+The lock-readiness check also blocks lock-required decision rows that are still
+unresolved, proposed, or blocked. Passing it is implementation readiness, not
+IP closure.
 
 After user lock, main agent orchestrates; subagents implement and verify. The
 main agent must not directly create or substantially edit RTL, TB, sim, lint,
@@ -123,8 +131,9 @@ an append-only `knowledge/ledger.jsonl`, and a common
 also creates `ontology/modeling.yaml` for micro behavior/cycle oracle truth and
 `ontology/domain_intent.yaml` for clock/reset-domain intent. It also creates
 `ontology/tb_methodology.yaml` for framework-neutral verification methodology
-intent and `ontology/requirement_atoms.yaml` for semantic decomposition before
-obligations.
+intent, `ontology/requirement_atoms.yaml` for semantic decomposition before
+obligations, and `ontology/decision_matrix.yaml` for decisions that must be
+resolved before lock-ready implementation.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 

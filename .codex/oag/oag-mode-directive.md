@@ -40,6 +40,8 @@ Use the OAG principle layer before choosing artifacts:
   versus DUT guarantees.
 - `.codex/oag/phenomena-boundary-model.md` for monitored/controlled phenomena
   and DUT boundary ownership.
+- `.codex/oag/decision-matrix-policy.md` for product/design decisions that
+  must be decided or waived before lock-ready implementation.
 - `.codex/oag/contract-projection.md` for Requirement -> Obligation ->
   Contract -> Evidence projection.
 - `.codex/oag/rtl-implementation.md` for generated RTL implementation
@@ -68,6 +70,8 @@ Use the OAG principle layer before choosing artifacts:
 - `.codex/rules/oag-invariants.rules.md` for hard invariants.
 - `.codex/rules/oag-requirement-decomposition.rules.md` for post-lock
   semantic atom and assume/guarantee hard gates.
+- `.codex/rules/oag-lock-readiness.rules.md` for decision matrix and lock
+  readiness hard gates.
 - `.codex/rules/oag-rtl-ppa.rules.md` for RTL PPA workflow rules.
 - `.codex/rules/oag-cdc-rdc.rules.md` for CDC/RDC hard rules.
 - `.codex/rules/oag-tb-methodology.rules.md` for TB methodology hard rules.
@@ -140,13 +144,23 @@ Before lock, derive candidate `ontology/requirement_atoms.yaml` entries for
 nontrivial requirements instead of jumping from prose to obligations. If atom
 trigger, condition, response, boundary, phenomena, assumption, timing, or
 observable proof shape is unknown, keep it draft/blocked and ask.
+Also create or update `ontology/decision_matrix.yaml` for product decisions
+that affect implementation semantics. For protocol IPs, keep transport binding,
+supported profile, ordering/reassembly, buffering/backpressure, storage/commit,
+firmware ownership, interrupt/status, and error/drop policy as unresolved
+lock-required decisions until confirmed. Proposed defaults are draft guidance,
+not locked truth.
 After lock, run:
 
 ```bash
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
 ```
 
 Resolve failures before implementation, validation, gate review, or closure.
+Lock readiness is not closure; it only authorizes bounded implementation and
+verification dispatch when requirement semantics and lock-required decisions are
+specific enough.
 
 For work that should continue across turns, use the OAG run loop:
 
@@ -275,12 +289,16 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   `oag.draft` notes; do not edit locked truth, canonical ontology, RTL, TB,
   tests, filelists, or signoff evidence until scope is confirmed.
 - Short-request drafts should produce candidate requirement atoms and open
-  questions. They must not silently decide transport binding, reassembly depth,
-  buffering, backpressure, filtering, output interface, or error/drop policy.
+  questions plus `ontology/decision_matrix.yaml` rows. They must not silently
+  decide transport binding, reassembly depth, buffering, backpressure,
+  filtering, output interface, storage/commit, firmware ownership, or
+  error/drop policy.
 - `ontology/scope_lock.json` must be `locked` before implementation,
   validation, gate review, or closure. `draft` means interview only.
 - Locked scopes must pass `oag_requirement_atom_check.py`; prose-only
   obligations and closure-grade contracts without assume/guarantee are blockers.
+- Locked scopes must pass `oag_lock_readiness_check.py`; unresolved or proposed
+  lock-required decisions are blockers.
 - After lock, no main-agent RTL/TB/verification writes. Use native subagent
   dispatch + receipt or stop with BLOCKED. Stop hook runs
   `oag_main_write_gate.py` to enforce this.

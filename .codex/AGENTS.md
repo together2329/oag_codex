@@ -15,6 +15,7 @@ Primary assets:
 - `oag/requirement-decomposition-principles.md`
 - `oag/assume-guarantee-contracts.md`
 - `oag/phenomena-boundary-model.md`
+- `oag/decision-matrix-policy.md`
 - `oag/contract-projection.md`
 - `oag/rtl-implementation.md`
 - `oag/rtl-dialect-policy.md`
@@ -31,6 +32,7 @@ Primary assets:
 - `oag/recovery-playbook.md`
 - `rules/oag-invariants.rules.md`
 - `rules/oag-requirement-decomposition.rules.md`
+- `rules/oag-lock-readiness.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
 - `rules/oag-tb-methodology.rules.md`
@@ -64,6 +66,7 @@ Primary assets:
 - `scripts/oag_ppa_check.py`
 - `scripts/oag_domain_crossing_check.py`
 - `scripts/oag_requirement_atom_check.py`
+- `scripts/oag_lock_readiness_check.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
@@ -81,7 +84,9 @@ fill. `oag/principles.md` defines design-truth preservation,
 layer before obligations, `oag/assume-guarantee-contracts.md` defines
 environment assumptions versus DUT guarantees,
 `oag/phenomena-boundary-model.md` defines monitored/controlled phenomena and
-DUT boundary ownership, `oag/contract-projection.md` defines ROCEV projection,
+DUT boundary ownership, `oag/decision-matrix-policy.md` defines unresolved,
+proposed, decided, waived, and blocked product decisions before lock-ready
+implementation, `oag/contract-projection.md` defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines
 the portable RTL subset, `oag/rtl-ppa-principles.md` defines correctness-first
@@ -123,6 +128,10 @@ Use `.codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` as the
 lightweight OAG V2 semantic screen for requirement atoms, shallow obligations,
 and assume/guarantee contract strength. In draft it supports interview hygiene;
 after scope lock it becomes a hard gate for implementation and closure claims.
+Use `.codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json` as the
+post-lock readiness screen for `ontology/decision_matrix.yaml` plus the
+requirement atom gate. It blocks implementation when any lock-required decision
+is still unresolved, proposed, or blocked.
 Use `.codex/scripts/oag_workflow_whole_db.py` to generate a single Markdown
 review bundle of the `.codex` workflow pack as `oag_workflow_whole_db.md`.
 The bundle is generated review evidence, not canonical OAG truth.
@@ -217,9 +226,11 @@ current closure artifacts; evidence added or changed after gate PASS makes the
 gate decision stale and requires re-validation and re-gate.
 For post-lock implementation or closure, run
 `python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` and
+`python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json`, then
 resolve failures before relying on obligations or contracts. This prevents
-prose-only obligations such as "APB works" and closure-grade contracts without
-explicit assume/guarantee sections.
+prose-only obligations such as "APB works", closure-grade contracts without
+explicit assume/guarantee sections, and implementation from unresolved
+lock-required product decisions.
 
 Before releasing this pack to a team, run:
 
@@ -293,6 +304,11 @@ Before promoting a short request into locked requirements, derive
 response, boundary, phenomena, assumptions, timing, exception, or observable
 proof shape is unknown, keep the atom in draft or blocked state and ask the
 user instead of inventing architecture.
+Also create or update `ontology/decision_matrix.yaml` from
+`.codex/oag/decision-matrix-policy.md`. For protocol IPs, leave transport,
+feature scope, queueing, storage, firmware readout, interrupt/status, and
+error/drop policy as unresolved lock blockers until the user or a concrete spec
+decides them. A recommendation is not a decision.
 
 Use `ontology/scope_lock.json` as the implementation permission switch.
 `state=draft` allows only questions, summaries, options, and `oag.draft`
@@ -302,6 +318,9 @@ closure. When the user says `lock`, `lock this`, `lock scope`, or
 `lock requirements`, call `oag.lock` with `actor.kind=human`. If a new
 requirement draft is recorded after lock, OAG returns the IP to draft and a
 fresh lock is required.
+After lock, `oag_lock_readiness_check.py` must pass before implementation
+dispatch. Lock readiness is not closure; it only says requirements are specific
+enough for bounded RTL/TB/verification subagents to start.
 
 Keep protected-field policy and ledger artifacts active. `ontology/protection.yaml`
 declares locked truth and policy fields that require human-approved decisions

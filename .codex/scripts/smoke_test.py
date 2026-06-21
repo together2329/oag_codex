@@ -32,6 +32,7 @@ CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
+LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -52,6 +53,7 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_gate_decision.schema.json",
     ROOT / "schemas" / "oag_closure_report.schema.json",
     ROOT / "schemas" / "oag_scope_lock.schema.json",
+    ROOT / "schemas" / "oag_decision_matrix.schema.json",
 ]
 
 
@@ -328,6 +330,7 @@ def make_ip(root: Path) -> Path:
     assert (ip / "ontology" / "ip.yaml").is_file()
     assert (ip / "ontology" / "requirements.yaml").is_file()
     assert (ip / "ontology" / "requirement_atoms.yaml").is_file()
+    assert (ip / "ontology" / "decision_matrix.yaml").is_file()
     assert (ip / "ontology" / "obligations.yaml").is_file()
     assert (ip / "ontology" / "contracts.yaml").is_file()
     assert (ip / "ontology" / "modeling.yaml").is_file()
@@ -346,6 +349,7 @@ def make_ip(root: Path) -> Path:
     assert "compile_skip_when_fresh: true" in policy_text, policy_text
     assert "modeling_policy:" in policy_text, policy_text
     assert "requirement_decomposition_policy:" in policy_text, policy_text
+    assert "decision_matrix_policy:" in policy_text, policy_text
     assert "domain_crossing_policy:" in policy_text, policy_text
     assert "tb_methodology_policy:" in policy_text, policy_text
     assert (ip / "ontology" / "protection.yaml").is_file()
@@ -623,6 +627,7 @@ def main() -> int:
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
+        assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
@@ -666,6 +671,7 @@ def main() -> int:
         assert "python3 .codex/scripts/oag_cli.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_agent_catalog_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_lock_readiness_check.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
@@ -681,12 +687,14 @@ def main() -> int:
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
         assert "scope_lock.json" in agents_text, agents_text
         assert "No lock, no RTL" in agents_text, agents_text
+        assert "oag_lock_readiness_check.py" in agents_text, agents_text
         assert "After user lock, main agent orchestrates" in agents_text, agents_text
         assert "oag_main_write_gate.py" in agents_text, agents_text
         assert "oag_exec_auto_research.py" in agents_text, agents_text
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
+        assert "oag_lock_readiness_check.py" in directive_text, directive_text
         assert "After user lock, main agent orchestrates" in directive_text, directive_text
         assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text

@@ -120,6 +120,44 @@ implementation.
 This prevents the agent from inventing scope such as transport binding,
 buffering, backpressure, packet reassembly, filtering, or error policy.
 
+## Why Decision Matrix Matters
+
+Requirement atoms explain the meaning of a requirement. The decision matrix
+records choices that are not yet safe to treat as truth.
+
+For a complex IP, the agent should not turn an unanswered question into RTL.
+Instead it should create rows such as:
+
+```yaml
+decisions:
+  - id: DEC_MCTP_RX_CONTEXT_KEY
+    question: What fields form the MCTP assembly context key?
+    status: unresolved
+    lock_required: true
+    recommended: Source EID + TO + Msg Tag
+    decision: null
+    rationale: Context key changes ordering, buffering, scoreboard, and RTL.
+    affects: [requirements, obligations, contracts, modeling, verification]
+```
+
+`status=proposed` is still draft. Only `decided` or `waived` rows can clear a
+lock-required decision. This makes the workflow explicit:
+
+```text
+draft request
+  -> requirement atoms
+  -> decision matrix
+  -> user/spec decides lock blockers
+  -> lock readiness check
+  -> native subagent implementation
+```
+
+The important rule is:
+
+```text
+No unresolved lock-required decision, no RTL/TB dispatch.
+```
+
 ## Requirement Atom Shape
 
 A requirement atom is a normalized, verifiable slice of a requirement.

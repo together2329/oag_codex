@@ -51,6 +51,7 @@ REQUIRED_FILES = (
     CODEX_ROOT / "oag" / "requirement-decomposition-principles.md",
     CODEX_ROOT / "oag" / "assume-guarantee-contracts.md",
     CODEX_ROOT / "oag" / "phenomena-boundary-model.md",
+    CODEX_ROOT / "oag" / "decision-matrix-policy.md",
     CODEX_ROOT / "oag" / "oag-mode-directive.md",
     CODEX_ROOT / "oag" / "principles.md",
     CODEX_ROOT / "oag" / "recovery-playbook.md",
@@ -66,6 +67,7 @@ REQUIRED_FILES = (
     CODEX_ROOT / "oag" / "subagent-workflows.md",
     CODEX_ROOT / "rules" / "oag-invariants.rules.md",
     CODEX_ROOT / "rules" / "oag-requirement-decomposition.rules.md",
+    CODEX_ROOT / "rules" / "oag-lock-readiness.rules.md",
     CODEX_ROOT / "rules" / "oag-cdc-rdc.rules.md",
     CODEX_ROOT / "rules" / "oag-rtl-ppa.rules.md",
     CODEX_ROOT / "rules" / "oag-tb-methodology.rules.md",
@@ -78,6 +80,7 @@ REQUIRED_FILES = (
     SCRIPTS_DIR / "oag_dispatch.py",
     SCRIPTS_DIR / "oag_domain_crossing_check.py",
     SCRIPTS_DIR / "oag_exec_auto_research.py",
+    SCRIPTS_DIR / "oag_lock_readiness_check.py",
     SCRIPTS_DIR / "oag_main_write_gate.py",
     SCRIPTS_DIR / "oag_ppa_check.py",
     SCRIPTS_DIR / "oag_protected_receipt_audit.py",
@@ -100,6 +103,7 @@ REQUIRED_FILES = (
     SCHEMAS_DIR / "oag_closure_report.schema.json",
     SCHEMAS_DIR / "oag_scope_lock.schema.json",
     SCHEMAS_DIR / "oag_requirement_atom.schema.json",
+    SCHEMAS_DIR / "oag_decision_matrix.schema.json",
 )
 
 FORBIDDEN_FILES = (
@@ -117,6 +121,7 @@ JSON_FILES = (
     SCHEMAS_DIR / "oag_closure_report.schema.json",
     SCHEMAS_DIR / "oag_scope_lock.schema.json",
     SCHEMAS_DIR / "oag_requirement_atom.schema.json",
+    SCHEMAS_DIR / "oag_decision_matrix.schema.json",
 )
 
 TOML_FILES = (
@@ -152,7 +157,10 @@ REQUIRED_DOC_SNIPPETS = {
         "requirement-decomposition-principles.md",
         "assume-guarantee-contracts.md",
         "phenomena-boundary-model.md",
+        "decision-matrix-policy.md",
         "oag_requirement_atom_check.py",
+        "oag_lock_readiness_check.py",
+        "ontology/decision_matrix.yaml",
         "requirement atoms",
         "verification-methodology-principles.md",
         "tb-methodology-policy.md",
@@ -179,10 +187,13 @@ REQUIRED_DOC_SNIPPETS = {
         "requirement-decomposition-principles.md",
         "assume-guarantee-contracts.md",
         "phenomena-boundary-model.md",
+        "decision-matrix-policy.md",
         "verification-methodology-principles.md",
         "tb-methodology-policy.md",
         "oag_domain_crossing_check.py",
         "oag_requirement_atom_check.py",
+        "oag_lock_readiness_check.py",
+        "ontology/decision_matrix.yaml",
         "oag-tb-methodology.rules.md",
         "requirement atoms",
         "dispatch_id",
@@ -229,6 +240,8 @@ REQUIRED_DOC_SNIPPETS = {
         "python3 .codex/scripts/oag_dispatch.py",
         "oag_domain_crossing_check.py",
         "oag_requirement_atom_check.py",
+        "oag_lock_readiness_check.py",
+        "ontology/decision_matrix.yaml",
         "ontology/tb_methodology.yaml",
         "ontology/requirement_atoms.yaml",
         "native Codex collaboration workers",
