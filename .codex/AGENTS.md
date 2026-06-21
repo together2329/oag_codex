@@ -8,6 +8,28 @@ UserPromptSubmit hook.
 Primary assets:
 
 - `oag/oag-mode-directive.md`
+- `oag/modeling-contract-principles.md`
+- `oag/agent-common-preamble.md`
+- `oag/principles.md`
+- `oag/modeling-policy.md`
+- `oag/contract-projection.md`
+- `oag/rtl-implementation.md`
+- `oag/rtl-dialect-policy.md`
+- `oag/rtl-ppa-principles.md`
+- `oag/domain-crossing-principles.md`
+- `oag/clock-reset-architecture.md`
+- `oag/cdc-rdc-evidence.md`
+- `oag/verification-methodology-principles.md`
+- `oag/tb-methodology-policy.md`
+- `oag/tb-architecture-patterns.md`
+- `oag/coverage-closure-policy.md`
+- `oag/assertion-formal-policy.md`
+- `oag/scoreboard-evidence.md`
+- `oag/recovery-playbook.md`
+- `rules/oag-invariants.rules.md`
+- `rules/oag-rtl-ppa.rules.md`
+- `rules/oag-cdc-rdc.rules.md`
+- `rules/oag-tb-methodology.rules.md`
 - `skills/oag-ip-workflow/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
@@ -35,6 +57,8 @@ Primary assets:
 - `scripts/oag_codex_config_doctor.py`
 - `scripts/oag_closure_check.py`
 - `scripts/oag_dispatch.py`
+- `scripts/oag_ppa_check.py`
+- `scripts/oag_domain_crossing_check.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
@@ -44,6 +68,29 @@ Primary assets:
 
 Use OAG as the common interface for Requirement -> Obligation -> Contract ->
 Evidence -> Validation IP work.
+Use the OAG principle documents as the reasoning layer, not as templates to
+fill. `oag/principles.md` defines design-truth preservation,
+`oag/modeling-policy.md` defines profile-based FL/CL and oracle depth,
+`oag/contract-projection.md` defines ROCEV projection,
+`oag/rtl-implementation.md` defines how generated RTL implements locked
+contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines
+the portable RTL subset, `oag/rtl-ppa-principles.md` defines correctness-first
+PPA-aware RTL structure, `oag/domain-crossing-principles.md` and
+`oag/clock-reset-architecture.md` define CDC/RDC domain-safety intent, domain
+inventory, and allowed crossing patterns, `oag/cdc-rdc-evidence.md` defines
+development vs release CDC/RDC evidence strength,
+`oag/verification-methodology-principles.md` defines framework-neutral TB
+methodology, `oag/tb-methodology-policy.md` defines profile-scaled TB depth,
+`oag/tb-architecture-patterns.md` defines driver/monitor/predictor/scoreboard
+roles, `oag/coverage-closure-policy.md` defines coverage that can and cannot
+support closure, `oag/assertion-formal-policy.md` defines assertion/formal
+escalation, `oag/scoreboard-evidence.md` defines expected/observed
+independence, and `oag/agent-common-preamble.md` defines the common OAG agent
+posture. The principle is that full FL/CL artifacts are profile-dependent, but
+the responsibilities carried by FL/CL are not optional when an obligation is
+claimed closed. Likewise, UVM, cocotb, SV, Verilog, OSVVM, UVVM, and simulator
+adapters are implementation choices; verification methodology responsibilities
+are not optional for TB closure.
 
 The default OAG workflow is script/skill based, not MCP based. Keep MCP server
 registration out of `.codex/config.toml`, and do not ship `.codex/mcp.json` in
@@ -54,6 +101,16 @@ execution.
 Use `.codex/scripts/oag_protected_receipt_audit.py` to audit protected
 post-lock IP artifacts in ignored/untracked product directories against
 dispatch-backed native subagent receipts.
+Use `.codex/scripts/oag_ppa_check.py <rtl-file> --json` as the lightweight
+PPA/dialect screen for generated RTL changes when RTL files are available.
+Use `.codex/scripts/oag_domain_crossing_check.py --ip-dir <ip> --json` as the
+lightweight CDC/RDC intent screen when domain intent or RTL crossings are in
+scope. It does not replace release CDC/RDC tools.
+Use `ontology/tb_methodology.yaml` and `.codex/oag/tb-methodology-policy.md` to
+scale TB depth by IP profile. The TB agent should prefer the smallest
+self-checking architecture that preserves independent expected behavior,
+scenario mapping, scoreboard rows, contract-linked coverage, and assertion or
+formal hooks when those hooks improve proof strength.
 
 Use `.codex/agents/*.toml` as Codex custom agent definitions. Each TOML file
 must be a standalone Codex agent file with `name`, `description`, and

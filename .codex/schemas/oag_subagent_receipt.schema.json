@@ -98,6 +98,144 @@
         "type": "string"
       }
     },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rtl_dialect": {
+      "type": "string"
+    },
+    "implemented_contracts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "behavior_refs_implemented": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "cycle_rule_refs_implemented": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ppa_notes": {
+      "type": "object",
+      "properties": {
+        "performance": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "power": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "area": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tradeoffs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "domain_crossing_notes": {
+      "type": "object",
+      "properties": {
+        "clock_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reset_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cdc_structures_implemented": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "rdc_structures_implemented": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "open_domain_crossing_blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "tb_methodology_notes": {
+      "type": "object",
+      "properties": {
+        "methodology_profile": {
+          "type": "string"
+        },
+        "framework": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stimulus_strategy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "coverage_strategy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assertion_hooks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "formal_candidates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "open_methodology_blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "may_claim_complete": {
       "const": false
     },

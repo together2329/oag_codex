@@ -28,6 +28,83 @@ Tests green is not final completion. Final closure requires:
 If evidence is missing, stale, unverifiable, or outside allowed paths, report
 the blocker instead of claiming completion.
 
+## Modeling Contract Principle
+
+Use the OAG principle layer before choosing artifacts:
+
+- `.codex/oag/principles.md` for design-truth preservation.
+- `.codex/oag/modeling-policy.md` for profile-based FL/CL and oracle depth.
+- `.codex/oag/contract-projection.md` for Requirement -> Obligation ->
+  Contract -> Evidence projection.
+- `.codex/oag/rtl-implementation.md` for generated RTL implementation
+  freedom, forbidden spec drift, RTL trace, and RTL handoff receipts.
+- `.codex/oag/rtl-dialect-policy.md` for OAG SV-lite RTL syntax limits.
+- `.codex/oag/rtl-ppa-principles.md` for correctness-first PPA-aware RTL
+  structure.
+- `.codex/oag/domain-crossing-principles.md` for CDC/RDC domain-safety
+  principles.
+- `.codex/oag/clock-reset-architecture.md` for clock/reset domain inventory,
+  reset policy, and allowed crossing patterns.
+- `.codex/oag/cdc-rdc-evidence.md` for CDC/RDC development vs release evidence
+  strength.
+- `.codex/oag/verification-methodology-principles.md` for framework-neutral TB
+  methodology.
+- `.codex/oag/tb-methodology-policy.md` for profile-scaled TB depth.
+- `.codex/oag/tb-architecture-patterns.md` for driver, monitor, predictor,
+  scoreboard, coverage, assertion hook, and result writer roles.
+- `.codex/oag/coverage-closure-policy.md` for coverage that can support
+  closure.
+- `.codex/oag/assertion-formal-policy.md` for assertion and formal escalation.
+- `.codex/oag/scoreboard-evidence.md` for expected/observed independence.
+- `.codex/oag/recovery-playbook.md` for weak evidence or missing-oracle
+  repair.
+- `.codex/oag/agent-common-preamble.md` for the common OAG agent posture.
+- `.codex/rules/oag-invariants.rules.md` for hard invariants.
+- `.codex/rules/oag-rtl-ppa.rules.md` for RTL PPA workflow rules.
+- `.codex/rules/oag-cdc-rdc.rules.md` for CDC/RDC hard rules.
+- `.codex/rules/oag-tb-methodology.rules.md` for TB methodology hard rules.
+
+Full FL/CL artifacts are profile-dependent and must not be required for simple
+leaf peripherals by default. However, any closure claim for behavioral or
+temporal obligations must be backed by a machine-readable oracle source:
+`behavior_model`, `cycle_rules`, an approved FL/CL artifact, or an explicitly
+approved equivalent.
+
+Enforcement is stage-aware:
+
+- during authoring and exploration, guide and warn;
+- during lock and promotion, require a profile decision and rationale;
+- during closure and signoff, block unsupported closing claims.
+
+Enforce the complete chain per closing obligation, not per whole IP. Provisional
+`manual_spec` expected sources are acceptable for smoke/debug evidence, but
+closure-grade expected sources must resolve to behavior/cycle/model refs unless
+an explicit decision receipt approves otherwise.
+
+Generated RTL is implementation, not truth. RTL agents may choose internal
+structure, names, and code organization, but must not invent or change
+behavior, timing, reset values, address maps, priorities, or protocol semantics.
+Default RTL targets OAG SV-lite: Verilog-2001 plus `logic` and static
+`generate` constructs; `always_ff`, `always_comb`, and procedural loops outside
+generate are forbidden by default.
+PPA-aware RTL is expected: optimize only after preserving correctness, identify
+likely timing paths, reduce unnecessary switching, avoid accidental mux/register
+growth, and record PPA notes for nontrivial RTL handoffs.
+CDC/RDC-aware RTL is required when clocks, resets, async inputs, or generated
+domain crossings are in scope: record domain intent, classify every crossing,
+use approved mitigation patterns only, and never claim CDC/RDC closure from
+simulation alone. Use `.codex/scripts/oag_domain_crossing_check.py` as a
+lightweight development screen when applicable.
+Verification methodology is framework-neutral and profile-scaled. Do not force
+UVM, cocotb, SV, Verilog, OSVVM, or UVVM by default. Do require the role
+responsibilities that make evidence meaningful: planned scenario intent,
+driver/BFM, monitor, independent predictor, scoreboard, coverage collector,
+assertion/formal hooks when useful, and OAG evidence writer. Failed tests do
+not count toward closure coverage, and random stimulus cannot support closure
+without constraints and coverage goals.
+
+Use the common OAG agent posture from `.codex/oag/agent-common-preamble.md`.
+
 ## Bootstrap
 
 Before meaningful IP work, identify `ip_dir`, `stage`, and `intent`, then load

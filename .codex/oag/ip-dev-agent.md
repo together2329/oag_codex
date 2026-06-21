@@ -3,6 +3,34 @@
 Purpose: help a human or AI worker understand and close hardware IP work through
 OAG, not through chat memory.
 
+## Common Posture
+
+Use `.codex/oag/agent-common-preamble.md` as the operating posture. The short
+version is: preserve design truth, use the smallest sufficient proof, keep
+expected behavior independent of RTL, and leave weak claims open with precise
+blockers.
+
+Use `.codex/oag/rtl-implementation.md` for generated RTL work. RTL agents may
+choose implementation structure, but they implement locked contract truth and
+must not invent behavior, timing, reset values, address maps, priorities, or
+protocol semantics.
+Use `.codex/oag/rtl-ppa-principles.md` and `.codex/oag/rtl-dialect-policy.md`
+for PPA-aware OAG SV-lite RTL generation. Use
+`.codex/scripts/oag_ppa_check.py` for lightweight generated-RTL screening when
+RTL files are available.
+Use `.codex/oag/domain-crossing-principles.md`,
+`.codex/oag/clock-reset-architecture.md`, and
+`.codex/oag/cdc-rdc-evidence.md` for CDC/RDC domain-safety intent. Use
+`.codex/scripts/oag_domain_crossing_check.py` for lightweight development
+screening when crossings or async inputs are in scope.
+Use `.codex/oag/verification-methodology-principles.md`,
+`.codex/oag/tb-methodology-policy.md`,
+`.codex/oag/tb-architecture-patterns.md`,
+`.codex/oag/coverage-closure-policy.md`, and
+`.codex/oag/assertion-formal-policy.md` for TB methodology. TB agents choose
+the smallest sufficient method; they do not force UVM, cocotb, SV, Verilog,
+OSVVM, UVVM, or PSS files unless the proof need justifies it.
+
 ## Operating Loop
 
 1. Identify `ip_dir`, `stage`, and user intent.
@@ -48,6 +76,9 @@ OAG, not through chat memory.
   final completion.
 - Missing obligations, missing contracts, missing evidence, stale evidence
   hashes, stale ledgers, and failed scoreboard rows are blockers.
+- Missing domain intent, unclassified async inputs, unsafe CDC/RDC mitigation,
+  and simulation-only CDC/RDC closure claims are blockers when domain safety is
+  in scope.
 - Closed records without explicit `rocev.validation.status` are blockers.
 - An open closure matrix is a blocker: each obligation must link to a contract
   and a closed validation record.
@@ -77,14 +108,30 @@ OAG, not through chat memory.
   `wrapper_adapter` for protected cores plus editable integration wrappers.
 - Treat `ontology/generated/design_spec.json` and
   `ontology/generated/authoring_packets/*.json` as read-only projections from
-  authored ontology. If they are wrong, edit source ontology and recompile.
+  authored ontology. Treat `ontology/generated/domain_crossing_matrix.json` as
+  the generated projection from `ontology/domain_intent.yaml`. If they are
+  wrong, edit source ontology and recompile.
 - TB implementation is not a decision criterion. Evidence semantics are:
   `scoreboard_rows.v1` rows with `expected`, `observed`, and DUT-facing
   `observed_source`.
+- TB methodology is a decision criterion when TB evidence is load-bearing:
+  scenario intent, driver/monitor separation, independent predictor,
+  scoreboard, coverage strategy, assertion/formal hooks when useful, and OAG
+  evidence writer responsibilities must be covered by `ontology/tb_methodology.yaml`,
+  contracts, evidence plan, or receipts.
+- Random or constrained-random evidence needs constraints and coverage goals
+  before it can support closure. Failed tests and failed scoreboard rows do not
+  count toward closure coverage.
 - For semantic RTL hazards and coding policy, use `ontology/design_rules.yaml`:
   same-cycle priority, event/state commit consistency, contract-to-proof
-  coverage, fault-model coverage, verification role decomposition, and RTL
-  language subset.
+  coverage, fault-model coverage, verification role decomposition, CDC/RDC
+  crossing coverage, and RTL language subset. The default RTL subset is
+  Verilog-2001 plus `logic` and static `generate` constructs; `always_ff`,
+  `always_comb`, and procedural loops outside generate are forbidden by
+  default. PPA notes should cover likely timing paths, high-toggle logic/state,
+  area-risk structures, and tradeoffs for nontrivial RTL. Domain crossing notes
+  should cover clock/reset domains, CDC/RDC structures, and open blockers for
+  crossing-sensitive RTL.
 - `action=signoff` requires `closure_profile: signoff`, a compiled truth graph,
   a closed closure matrix, fresh evidence hashes, fresh stage receipts, clean
   protected fields, a valid append-only ledger, monotonic closure, an

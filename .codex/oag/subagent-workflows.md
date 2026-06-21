@@ -9,6 +9,11 @@ the normal ROCEV flow.
 Project-scoped custom agent definitions live in `.codex/agents/*.toml`. OAG
 metadata for those roles lives in `.codex/oag/agent-catalog.toml`.
 
+Native subagent assignments should include the posture from
+`.codex/oag/agent-common-preamble.md`: preserve design truth, use the smallest
+sufficient proof, do not infer expected behavior from RTL, and leave weak
+closure claims open with precise blockers.
+
 For team use, ask for OAG mode explicitly with the exact `oag` keyword. Terms
 like `auto research`, `subagent`, and `signoff` describe work, but do not
 activate OAG mode by themselves. Project config requests native subagent
@@ -208,6 +213,29 @@ Spawn:
 - agent_type=oag-tb-implementation-agent for tb/<test_or_monitor> only.
 - agent_type=oag-rtl-lint-static-agent as read-only reviewer for filelist,
   compile, lint, and static risks after the write agents report.
+
+The RTL implementation agent must implement assigned behavior/cycle refs, stay
+within OAG SV-lite by default, identify likely critical paths, high-toggle
+state/datapath, and area-risk structures before nontrivial RTL edits, run or
+assign `oag_ppa_check.py` when applicable, read `ontology/domain_intent.yaml`
+when crossings, async inputs, clocks, or resets are in scope, use approved
+CDC/RDC patterns only, run or assign `oag_domain_crossing_check.py` when
+applicable, and report `rtl_dialect`,
+`implemented_contracts`, `behavior_refs_implemented`,
+`cycle_rule_refs_implemented`, `ppa_notes`, `domain_crossing_notes`,
+`changed_paths`, `checks_run`, and `may_claim_complete=false`.
+
+The TB implementation agent must act as a verification methodology agent, not a
+framework generator. It should read `ontology/tb_methodology.yaml` when present,
+classify each target, choose directed/table-driven, transaction-based,
+constrained-random, assertion-assisted, formal-candidate, or PSS-style scenario
+planning depth as appropriate, and report `tb_methodology_notes` with
+methodology_profile, framework, architecture roles, stimulus_strategy,
+coverage_strategy, assertion_hooks, formal_candidates, and open blockers. It
+may test functional consequences of CDC/RDC rules, such as synchronizer latency
+or reset sequencing, but must not claim CDC/RDC, low-power, safety, or AMS
+closure from ordinary simulation alone. Failed rows must not count toward
+closure coverage.
 
 Each subagent must report changed paths, evidence commands, blockers, and ROCEV
 links. Write-capable evidence-producing subagents must write a non-empty receipt

@@ -31,6 +31,7 @@ AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
 CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
+DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -328,6 +329,9 @@ def make_ip(root: Path) -> Path:
     assert (ip / "ontology" / "requirements.yaml").is_file()
     assert (ip / "ontology" / "obligations.yaml").is_file()
     assert (ip / "ontology" / "contracts.yaml").is_file()
+    assert (ip / "ontology" / "modeling.yaml").is_file()
+    assert (ip / "ontology" / "domain_intent.yaml").is_file()
+    assert (ip / "ontology" / "tb_methodology.yaml").is_file()
     assert (ip / "ontology" / "structure.yaml").is_file()
     assert (ip / "ontology" / "decomposition.yaml").is_file()
     assert (ip / "ontology" / "design_rules.yaml").is_file()
@@ -339,9 +343,14 @@ def make_ip(root: Path) -> Path:
     assert "hook_auto_continue_until: all" in policy_text, policy_text
     assert "graph_policy:" in policy_text, policy_text
     assert "compile_skip_when_fresh: true" in policy_text, policy_text
+    assert "modeling_policy:" in policy_text, policy_text
+    assert "domain_crossing_policy:" in policy_text, policy_text
+    assert "tb_methodology_policy:" in policy_text, policy_text
     assert (ip / "ontology" / "protection.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "scoreboard_rows.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "stage_run_receipt.v1.yaml").is_file()
+    assert (ip / "ontology" / "evidence" / "cdc_rdc_report.v1.yaml").is_file()
+    assert (ip / "ontology" / "evidence" / "tb_methodology_report.v1.yaml").is_file()
     assert (ip / "ontology" / "decision_receipt.v1.yaml").is_file()
     assert (ip / "ontology" / "run_state.v1.yaml").is_file()
     assert (ip / "ontology" / "metrics").is_dir()
@@ -371,12 +380,18 @@ def make_ip(root: Path) -> Path:
     (ip / "sim" / "results.xml").write_text('<testsuite failures="0"/>\n', encoding="utf-8")
     rows = [
         {
+            "event_id": "EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS",
             "goal_id": "GOAL_COUNTER_INC",
+            "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+            "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
             "scenario_id": "SC_INC_001",
             "cycle": 1,
             "stimulus": {"valid": 1},
             "expected": {"count": 1},
-            "expected_source": {"kind": "manual_spec", "ref": "req/locked_truth.md"},
+            "expected_source": {
+                "kind": "behavior_model",
+                "refs": ["behavior_model.seed_obligations.reset_known_state"],
+            },
             "observed": {"count": 1},
             "observed_source": {"kind": "dut_signal", "path": "dut.count"},
             "passed": True,
@@ -384,12 +399,18 @@ def make_ip(root: Path) -> Path:
             "coverage_refs": ["COV_INC"],
         },
         {
+            "event_id": "EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS",
             "goal_id": "GOAL_COUNTER_INC",
+            "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+            "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
             "scenario_id": "SC_INC_002",
             "cycle": 2,
             "stimulus": {"valid": 1},
             "expected": {"count": 2},
-            "expected_source": {"kind": "manual_spec", "ref": "req/locked_truth.md"},
+            "expected_source": {
+                "kind": "behavior_model",
+                "refs": ["behavior_model.seed_obligations.reset_known_state"],
+            },
             "observed": {"count": 2},
             "observed_source": {"kind": "monitor", "path": "counter_monitor.count"},
             "passed": True,
@@ -399,6 +420,28 @@ def make_ip(root: Path) -> Path:
     ]
     (ip / "sim" / "scoreboard_events.jsonl").write_text(
         "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    (ip / "sim" / "scenario_mapping.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_scenario_mapping.v1",
+                "scenarios": [
+                    {
+                        "id": "SC_INC_001",
+                        "contracts": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
+                        "scoreboard_rows": ["EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS"],
+                    },
+                    {
+                        "id": "SC_INC_002",
+                        "contracts": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
+                        "scoreboard_rows": ["EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS"],
+                    },
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
     (ip / "cov" / "coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
@@ -577,6 +620,7 @@ def main() -> int:
         assert CODEX_CONFIG_DOCTOR.is_file(), CODEX_CONFIG_DOCTOR
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
+        assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
@@ -1052,9 +1096,14 @@ def main() -> int:
         assert compiled["result"]["stats"]["design_rules"] >= 13, compiled
         assert compiled["result"]["stats"]["modules"] >= 1, compiled
         assert compiled["result"]["stats"]["design_facts_modules"] == 0, compiled
+        assert compiled["result"]["stats"]["domain_rdc_crossings"] >= 1, compiled
+        assert compiled["result"]["stats"]["tb_methodology_roles"] >= 6, compiled
+        assert compiled["result"]["stats"]["tb_coverage_goals"] >= 1, compiled
         assert compiled["result"]["stats"]["authoring_packets"] >= 1, compiled
         assert (ip / "ontology" / "generated" / "design_truth_graph.json").is_file()
         assert (ip / "ontology" / "generated" / "design_spec.json").is_file()
+        assert (ip / "ontology" / "generated" / "domain_crossing_matrix.json").is_file()
+        assert (ip / "ontology" / "generated" / "tb_methodology_matrix.json").is_file()
         assert (ip / "ontology" / "generated" / "compile_manifest.json").is_file()
         compile_cached = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
         assert compile_cached["result"]["status"] == "pass", compile_cached
@@ -1072,6 +1121,9 @@ def main() -> int:
         truth_graph = json.loads((ip / "ontology" / "generated" / "design_truth_graph.json").read_text(encoding="utf-8"))
         truth_facts = truth_graph.get("generated", {}).get("design_facts", {})
         assert "git_head" not in (truth_facts.get("extractor") or {}), truth_graph
+        domain_matrix = json.loads((ip / "ontology" / "generated" / "domain_crossing_matrix.json").read_text(encoding="utf-8"))
+        assert domain_matrix["schema_version"] == "oag_domain_crossing_matrix.v1", domain_matrix
+        assert domain_matrix["status"] == "present", domain_matrix
         assert (ip / "ontology" / "generated" / "authoring_packets" / "module__demo_counter_cx1.json").is_file()
         assert (ip / "ontology" / "runs").is_dir()
         inspect = call({"tool": "oag.inspect", "arguments": {"ip_dir": str(ip), "stage": "sim"}})
@@ -2245,7 +2297,7 @@ def main() -> int:
             1,
         )
         bad_lang_rules = bad_lang_rules.replace(
-            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, package, import, interface, modport, typedef, enum, always_latch]",
+            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, always_ff, always_comb, always_latch, package, import, interface, modport, typedef, enum, struct, class, assertions, covergroups]",
             "    forbidden_constructs: [procedural_for, procedural_while, generate_for]",
             1,
         )

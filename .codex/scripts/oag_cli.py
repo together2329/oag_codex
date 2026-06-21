@@ -45,7 +45,26 @@ OBSERVED_SOURCE_KINDS = {
     "interface_sample",
     "bus_monitor",
 }
-MODEL_SOURCE_KINDS = {"fl_model", "cl_model", "golden_model", "reference_model", "model"}
+MODEL_SOURCE_KINDS = {
+    "behavior_model",
+    "cycle_rules",
+    "fl_model",
+    "cl_model",
+    "golden_model",
+    "reference_model",
+    "formal_property",
+    "approved_equivalent_oracle",
+    "model",
+}
+EXPECTED_ORACLE_SOURCE_KINDS = MODEL_SOURCE_KINDS | {"assertion", "golden_vector", "manual_spec", "reference_log"}
+DUT_DERIVED_EXPECTED_SOURCE_KINDS = OBSERVED_SOURCE_KINDS | {
+    "dut_output",
+    "rtl_expression",
+    "rtl_observed",
+    "observed_dut_output",
+    "post_hoc_simulation",
+    "posthoc_simulation",
+}
 TRUTH_GRAPH_REL = Path("ontology/generated/design_truth_graph.json")
 DESIGN_SPEC_REL = Path("ontology/generated/design_spec.json")
 DESIGN_FACTS_REL = Path("ontology/generated/design_facts_graph.json")
@@ -60,6 +79,15 @@ HANDOFF_READINESS_HISTORY_REL = Path("handoff/readiness_history.jsonl")
 DESIGN_RULES_REL = Path("ontology/design_rules.yaml")
 STRUCTURE_REL = Path("ontology/structure.yaml")
 DECOMPOSITION_REL = Path("ontology/decomposition.yaml")
+MODELING_REL = Path("ontology/modeling.yaml")
+DOMAIN_INTENT_REL = Path("ontology/domain_intent.yaml")
+TB_METHODOLOGY_REL = Path("ontology/tb_methodology.yaml")
+POLICIES_REL = Path("ontology/policies.yaml")
+EVIDENCE_PLAN_REL = Path("req/evidence_plan.yaml")
+SCENARIO_MAPPING_REL = Path("sim/scenario_mapping.json")
+SCOREBOARD_REL = Path("sim/scoreboard_events.jsonl")
+DOMAIN_CROSSING_MATRIX_REL = Path("ontology/generated/domain_crossing_matrix.json")
+TB_METHODOLOGY_MATRIX_REL = Path("ontology/generated/tb_methodology_matrix.json")
 DRAFTS_REL = Path("ontology/drafts")
 PROTECTION_REL = Path("ontology/protection.yaml")
 SCOPE_LOCK_REL = Path("ontology/scope_lock.json")
@@ -88,6 +116,7 @@ SIGNOFF_DESIGN_RULE_KINDS = {
     "reset_xprop_coverage": "reset/X-prop coverage",
     "rtl_language_subset": "RTL language subset",
 }
+DOMAIN_CROSSING_CONTRACT_TYPES = {"cdc", "rdc", "cdc_rdc", "domain_crossing", "clock_reset_domain_crossing"}
 POST_LOCK_ARTIFACT_PATTERNS = (
     "rtl/*.sv",
     "rtl/*.v",
@@ -246,7 +275,27 @@ def _decomposition_doc(ip: Path) -> dict[str, Any]:
 
 
 def _policy_doc(ip: Path) -> dict[str, Any]:
-    data = _read_yaml_file(ip / "ontology" / "policies.yaml")
+    data = _read_yaml_file(ip / POLICIES_REL)
+    return data if isinstance(data, dict) else {}
+
+
+def _modeling_doc(ip: Path) -> dict[str, Any]:
+    data = _read_yaml_file(ip / MODELING_REL)
+    return data if isinstance(data, dict) else {}
+
+
+def _domain_intent_doc(ip: Path) -> dict[str, Any]:
+    data = _read_yaml_file(ip / DOMAIN_INTENT_REL)
+    return data if isinstance(data, dict) else {}
+
+
+def _tb_methodology_doc(ip: Path) -> dict[str, Any]:
+    data = _read_yaml_file(ip / TB_METHODOLOGY_REL)
+    return data if isinstance(data, dict) else {}
+
+
+def _evidence_plan_doc(ip: Path) -> dict[str, Any]:
+    data = _read_yaml_file(ip / EVIDENCE_PLAN_REL)
     return data if isinstance(data, dict) else {}
 
 
@@ -359,6 +408,7 @@ def _decomposition_issues(
     issues: list[str] = []
     policies = _policy_doc(ip)
     structure = _structure_doc(ip)
+    domain_intent = _domain_intent_doc(ip)
     decomposition = _decomposition_doc(ip)
     modules = _module_items(decomposition)
     structure_policy = policies.get("structure_policy") if isinstance(policies.get("structure_policy"), dict) else {}
@@ -912,6 +962,121 @@ def _write_design_facts_graph(ip: Path, decomposition: dict[str, Any], profile: 
     return _write_json_semantic_stable(path, facts, volatile_keys={"generated_at"})
 
 
+def _write_domain_crossing_matrix(ip: Path) -> dict[str, Any]:
+    domain_intent = _domain_intent_doc(ip)
+    clock_domains = [item for item in _as_list(domain_intent.get("clock_domains")) if isinstance(item, dict)]
+    reset_domains = [item for item in _as_list(domain_intent.get("reset_domains")) if isinstance(item, dict)]
+    cdc = [item for item in _as_list(domain_intent.get("cdc_crossings")) if isinstance(item, dict)]
+    rdc = [item for item in _as_list(domain_intent.get("rdc_crossings")) if isinstance(item, dict)]
+    async_inputs = [item for item in _as_list(domain_intent.get("async_inputs")) if isinstance(item, dict)]
+    clock_ids = sorted({_domain_item_id(item, "clock") for item in clock_domains if _domain_item_id(item, "clock")})
+    reset_ids = sorted({_domain_item_id(item, "reset") for item in reset_domains if _domain_item_id(item, "reset")})
+    matrix = {
+        "schema_version": "oag_domain_crossing_matrix.v1",
+        "generated_by": "oag.compile",
+        "generated_at": _now(),
+        "ip": ip.name,
+        "source": str(DOMAIN_INTENT_REL),
+        "status": "present" if domain_intent else "missing",
+        "clock_domains": clock_ids,
+        "reset_domains": reset_ids,
+        "async_inputs": [
+            {
+                "id": _domain_item_id(item, "signal"),
+                "signal": str(item.get("signal") or ""),
+                "classification": str(item.get("classification") or ""),
+                "required_mitigation": str(item.get("required_mitigation") or item.get("allowed_pattern") or ""),
+            }
+            for item in async_inputs
+        ],
+        "cdc_crossings": [
+            {
+                "id": _domain_item_id(item, "source"),
+                "source": str(item.get("source") or ""),
+                "source_domain": str(item.get("source_domain") or item.get("source") or ""),
+                "destination_domain": str(item.get("destination_domain") or item.get("destination") or ""),
+                "crossing_type": str(item.get("crossing_type") or item.get("classification") or ""),
+                "allowed_pattern": str(item.get("allowed_pattern") or item.get("mitigation") or ""),
+            }
+            for item in cdc
+        ],
+        "rdc_crossings": [
+            {
+                "id": _domain_item_id(item, "classification"),
+                "classification": str(item.get("classification") or ""),
+                "source_reset_domain": str(item.get("source_reset_domain") or item.get("source_reset") or ""),
+                "destination_reset_domain": str(item.get("destination_reset_domain") or item.get("destination_reset") or ""),
+                "mitigation": str(item.get("mitigation") or item.get("reset_sequence") or item.get("isolation") or ""),
+            }
+            for item in rdc
+        ],
+        "stats": {
+            "clock_domains": len(clock_ids),
+            "reset_domains": len(reset_ids),
+            "async_inputs": len(async_inputs),
+            "cdc_crossings": len(cdc),
+            "rdc_crossings": len(rdc),
+        },
+    }
+    path = ip / DOMAIN_CROSSING_MATRIX_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return _write_json_semantic_stable(path, matrix, volatile_keys={"generated_at"})
+
+
+def _write_tb_methodology_matrix(ip: Path) -> dict[str, Any]:
+    tb_methodology = _tb_methodology_doc(ip)
+    policy = tb_methodology.get("methodology_policy") if isinstance(tb_methodology.get("methodology_policy"), dict) else {}
+    roles = tb_methodology.get("architecture_roles") if isinstance(tb_methodology.get("architecture_roles"), dict) else {}
+    stimulus = tb_methodology.get("stimulus_strategy") if isinstance(tb_methodology.get("stimulus_strategy"), dict) else {}
+    coverage_goals = [item for item in _as_list(tb_methodology.get("coverage_goals")) if isinstance(item, dict)]
+    assertion_candidates = [item for item in _as_list(tb_methodology.get("assertion_candidates")) if isinstance(item, dict)]
+    formal_candidates = [item for item in _as_list(tb_methodology.get("formal_candidates")) if isinstance(item, dict)]
+    matrix = {
+        "schema_version": "oag_tb_methodology_matrix.v1",
+        "generated_by": "oag.compile",
+        "generated_at": _now(),
+        "ip": ip.name,
+        "source": str(TB_METHODOLOGY_REL),
+        "status": "present" if tb_methodology else "missing",
+        "profile": str(policy.get("profile") or ""),
+        "framework_required": policy.get("framework_required"),
+        "full_uvm_required": policy.get("full_uvm_required"),
+        "default_depth": str(policy.get("default_depth") or ""),
+        "roles": sorted(str(role) for role in roles if str(role).strip()),
+        "stimulus": {
+            "directed_smoke": stimulus.get("directed_smoke"),
+            "table_driven_register_tests": stimulus.get("table_driven_register_tests"),
+            "constrained_random": stimulus.get("constrained_random") if isinstance(stimulus.get("constrained_random"), dict) else {},
+        },
+        "coverage_goals": [
+            {
+                "id": str(item.get("id") or item.get("name") or item.get("coverage_ref") or ""),
+                "requirement": str(item.get("requirement") or item.get("requirement_id") or ""),
+                "obligation": str(item.get("obligation") or item.get("obligation_id") or ""),
+                "contract": str(item.get("contract") or item.get("contract_id") or ""),
+            }
+            for item in coverage_goals
+        ],
+        "assertion_candidates": [
+            str(item.get("id") or item.get("property") or item.get("name") or "")
+            for item in assertion_candidates
+        ],
+        "formal_candidates": [
+            str(item.get("id") or item.get("property") or item.get("name") or "")
+            for item in formal_candidates
+        ],
+        "stats": {
+            "roles": len(roles),
+            "coverage_goals": len(coverage_goals),
+            "assertion_candidates": len(assertion_candidates),
+            "formal_candidates": len(formal_candidates),
+        },
+    }
+    path = ip / TB_METHODOLOGY_MATRIX_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return _write_json_semantic_stable(path, matrix, volatile_keys={"generated_at"})
+
+
 def _write_generated_design_views(
     ip: Path,
     *,
@@ -941,6 +1106,9 @@ def _write_generated_design_views(
             "ontology/obligations.yaml",
             "ontology/contracts.yaml",
             "ontology/policies.yaml",
+            str(MODELING_REL),
+            str(DOMAIN_INTENT_REL),
+            str(TB_METHODOLOGY_REL),
         ],
         "structure_profile": profile,
         "status": "pass" if not issues else "fail",
@@ -1258,6 +1426,240 @@ def _yaml_items(ip: Path, rel: str, key: str) -> list[dict[str, Any]]:
     for match in re.finditer(r"(?m)^\s*-\s*id\s*:\s*([A-Za-z0-9_.:-]+)", path.read_text(encoding="utf-8", errors="ignore")):
         items.append({"id": match.group(1)})
     return items
+
+
+def _flatten_model_refs(value: Any, prefix: str) -> set[str]:
+    refs: set[str] = set()
+
+    def walk(node: Any, path: list[str]) -> None:
+        if path:
+            refs.add(f"{prefix}.{'.'.join(path)}")
+        if isinstance(node, dict):
+            for key, child in node.items():
+                key_text = str(key).strip()
+                if key_text:
+                    walk(child, [*path, key_text])
+        elif isinstance(node, list):
+            for item in node:
+                if isinstance(item, dict):
+                    item_id = str(item.get("id") or item.get("name") or "").strip()
+                    if item_id:
+                        walk(item, [*path, item_id])
+
+    walk(value, [])
+    return refs
+
+
+def _model_ref_resolves(ref: str, known_refs: set[str], prefix: str) -> bool:
+    ref = str(ref or "").strip()
+    if not ref:
+        return False
+    if ref in known_refs:
+        return True
+    if ref.startswith(f"{prefix}."):
+        return any(item.startswith(f"{ref}.") or ref.startswith(f"{item}.") for item in known_refs)
+    return False
+
+
+def _planned_scenario_ids(ip: Path) -> set[str]:
+    plan = _evidence_plan_doc(ip)
+    ids: set[str] = set()
+    for item in _as_list(plan.get("planned_scenarios")):
+        if isinstance(item, dict):
+            sid = str(item.get("id") or item.get("scenario_id") or "").strip()
+            if sid:
+                ids.add(sid)
+        else:
+            sid = str(item or "").strip()
+            if sid:
+                ids.add(sid)
+    for contract in _as_list(plan.get("contracts")):
+        if not isinstance(contract, dict):
+            continue
+        ids.update(_str_items(contract.get("scenario_refs")))
+        for item in _as_list(contract.get("planned_scenarios")):
+            if isinstance(item, dict):
+                sid = str(item.get("id") or item.get("scenario_id") or "").strip()
+                if sid:
+                    ids.add(sid)
+            else:
+                sid = str(item or "").strip()
+                if sid:
+                    ids.add(sid)
+    return ids
+
+
+def _scenario_mapping_ids(ip: Path) -> set[str]:
+    data = _read_json_file(ip / SCENARIO_MAPPING_REL)
+    ids: set[str] = set()
+
+    def collect(node: Any) -> None:
+        if isinstance(node, dict):
+            sid = str(node.get("scenario_id") or node.get("id") or "").strip()
+            if sid:
+                ids.add(sid)
+            for key in ("scenarios", "mappings", "scenario_mapping", "scenario_mappings"):
+                collect(node.get(key))
+            for key, child in node.items():
+                if isinstance(child, dict) and key not in {"expected", "observed"}:
+                    if re.match(r"^[A-Za-z0-9_.:-]+$", str(key)):
+                        ids.add(str(key))
+                    collect(child)
+                elif isinstance(child, list):
+                    collect(child)
+        elif isinstance(node, list):
+            for item in node:
+                collect(item)
+
+    collect(data)
+    return ids
+
+
+def _scoreboard_rows(ip: Path) -> list[tuple[int, dict[str, Any]]]:
+    path = ip / SCOREBOARD_REL
+    if not path.is_file():
+        return []
+    rows: list[tuple[int, dict[str, Any]]] = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(row, dict):
+            rows.append((line_no, row))
+    return rows
+
+
+def _scoreboard_row_ids(ip: Path) -> set[str]:
+    ids: set[str] = set()
+    for _line_no, row in _scoreboard_rows(ip):
+        for key in ("row_id", "event_id", "id", "goal_id"):
+            value = str(row.get(key) or "").strip()
+            if value:
+                ids.add(value)
+    return ids
+
+
+def _closed_contract_ids(ip: Path, closure_matrix: dict[str, Any] | None = None) -> set[str]:
+    closed: set[str] = set()
+    for contract in _yaml_items(ip, "ontology/contracts.yaml", "contracts"):
+        if _normal_status(contract.get("status")) in CLOSED_STATUSES:
+            cid = str(contract.get("id") or "").strip()
+            if cid:
+                closed.add(cid)
+    for link in _closed_record_links(ip):
+        cid = str(link.get("contract") or "").strip()
+        if cid:
+            closed.add(cid)
+    if isinstance(closure_matrix, dict):
+        for row in _as_list(closure_matrix.get("rows")):
+            if not isinstance(row, dict) or not row.get("closed"):
+                continue
+            closed.update(_str_items(row.get("contracts")))
+    return closed
+
+
+def _closed_records_reference_scoreboard(ip: Path) -> bool:
+    for record in _knowledge_records(ip):
+        validation = record.get("validation") if isinstance(record.get("validation"), dict) else {}
+        rocev = record.get("rocev") if isinstance(record.get("rocev"), dict) else {}
+        rocev_validation = rocev.get("validation") if isinstance(rocev.get("validation"), dict) else {}
+        if _normal_status(validation.get("status") or record.get("status")) not in CLOSED_STATUSES:
+            continue
+        if _normal_status(rocev_validation.get("status")) not in CLOSED_STATUSES:
+            continue
+        evidence = record.get("evidence") if isinstance(record.get("evidence"), dict) else {}
+        if any(str(item).strip() == str(SCOREBOARD_REL) for item in _as_list(evidence.get("files"))):
+            return True
+    return False
+
+
+def _domain_item_id(item: dict[str, Any], *fallback_keys: str) -> str:
+    for key in ("id", "name", *fallback_keys):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _domain_refs_by_kind(domain_intent: dict[str, Any]) -> dict[str, set[str]]:
+    mapping: dict[str, set[str]] = {
+        "clock_domains": set(),
+        "reset_domains": set(),
+        "async_inputs": set(),
+        "cdc_crossings": set(),
+        "rdc_crossings": set(),
+        "sync_structures": set(),
+    }
+    for key, fallback in (
+        ("clock_domains", ("clock",)),
+        ("reset_domains", ("reset",)),
+        ("async_inputs", ("signal",)),
+        ("cdc_crossings", ("source",)),
+        ("rdc_crossings", ("classification",)),
+        ("sync_structures", ("structure", "signal")),
+    ):
+        for item in _as_list(domain_intent.get(key)):
+            if not isinstance(item, dict):
+                continue
+            item_id = _domain_item_id(item, *fallback)
+            if not item_id:
+                continue
+            mapping[key].add(item_id)
+            mapping[key].add(f"{key}.{item_id}")
+    return mapping
+
+
+def _domain_ref_resolves(ref: str, known: dict[str, set[str]], allowed_kinds: tuple[str, ...]) -> bool:
+    text = str(ref or "").strip()
+    if not text:
+        return False
+    for kind in allowed_kinds:
+        if text in known.get(kind, set()):
+            return True
+        prefix = f"{kind}."
+        if text.startswith(prefix) and text[len(prefix) :] in known.get(kind, set()):
+            return True
+    return False
+
+
+def _domain_evidence_refs(contract: dict[str, Any], prefix: str) -> list[str]:
+    refs: list[str] = []
+    for key in (
+        "evidence_refs",
+        f"{prefix}_evidence_refs",
+        f"static_{prefix}_report",
+        f"static_{prefix}_reports",
+        f"{prefix}_report",
+        f"{prefix}_reports",
+        "formal_refs",
+        "tool_report_refs",
+        "tool_reports",
+    ):
+        refs.extend(_str_items(contract.get(key)))
+    evidence = contract.get("evidence") if isinstance(contract.get("evidence"), dict) else {}
+    for ref in _str_items(evidence.get("files")):
+        lower = ref.lower()
+        if any(token in lower for token in (prefix, "cdc", "rdc", "formal", "static", "tool", "report", "signoff")):
+            refs.append(ref)
+    return sorted(dict.fromkeys(refs))
+
+
+def _domain_contract_type(contract: dict[str, Any]) -> str:
+    ctype = str(contract.get("contract_type") or contract.get("type") or "").strip().lower()
+    if ctype in DOMAIN_CROSSING_CONTRACT_TYPES:
+        return ctype
+    if _str_items(contract.get("cdc_crossing_refs") or contract.get("clock_domain_refs")):
+        return "cdc"
+    if _str_items(contract.get("rdc_crossing_refs") or contract.get("reset_domain_refs")):
+        return "rdc"
+    return ctype
+
+
+def _safe_domain_crossing_pattern(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_")
 
 
 def _contract_evidence_refs(contract: dict[str, Any]) -> list[str]:
@@ -2556,6 +2958,21 @@ def _scoreboard_row_issues(row: dict[str, Any], line_no: int) -> tuple[list[str]
         if not any(observed_source.get(key) for key in locator_keys):
             issues.append(f"line {line_no}: observed_source needs path/signal/monitor/wave/transaction/assertion")
 
+    expected_source = row.get("expected_source")
+    if expected_source is not None:
+        if not isinstance(expected_source, dict):
+            issues.append(f"line {line_no}: expected_source must be an object when present")
+        else:
+            kind = str(expected_source.get("kind") or "").strip()
+            if kind in DUT_DERIVED_EXPECTED_SOURCE_KINDS:
+                issues.append(f"line {line_no}: expected_source.kind must not be derived from DUT behavior: {kind}")
+            elif kind and kind not in EXPECTED_ORACLE_SOURCE_KINDS:
+                issues.append(f"line {line_no}: expected_source.kind unsupported: {kind}")
+            if kind == "approved_equivalent_oracle" and not str(expected_source.get("decision_receipt_id") or "").strip():
+                issues.append(
+                    f"line {line_no}: approved_equivalent_oracle expected_source requires decision_receipt_id"
+                )
+
     if not str(row.get("goal_id") or "").strip():
         issues.append(f"line {line_no}: goal_id is required")
     if not str(row.get("scenario_id") or "").strip():
@@ -2647,6 +3064,9 @@ def _compile_input_fingerprints(ip: Path) -> list[dict[str, str]]:
         ip / DESIGN_RULES_REL,
         ip / STRUCTURE_REL,
         ip / DECOMPOSITION_REL,
+        ip / MODELING_REL,
+        ip / DOMAIN_INTENT_REL,
+        ip / TB_METHODOLOGY_REL,
         ip / "ontology" / "policies.yaml",
         ip / PROTECTION_REL,
         ip / "list" / "rtl.f",
@@ -2684,7 +3104,13 @@ def _compile_input_fingerprints(ip: Path) -> list[dict[str, str]]:
 
 
 def _compile_outputs_present(ip: Path) -> bool:
-    required = [ip / TRUTH_GRAPH_REL, ip / DESIGN_SPEC_REL, ip / DESIGN_FACTS_REL]
+    required = [
+        ip / TRUTH_GRAPH_REL,
+        ip / DESIGN_SPEC_REL,
+        ip / DESIGN_FACTS_REL,
+        ip / DOMAIN_CROSSING_MATRIX_REL,
+        ip / TB_METHODOLOGY_MATRIX_REL,
+    ]
     return all(path.is_file() for path in required)
 
 
@@ -2746,7 +3172,7 @@ def _fresh_compile_manifest(ip: Path, inputs: list[dict[str, str]]) -> dict[str,
 
 def _write_compile_manifest(ip: Path, *, inputs: list[dict[str, str]], graph: dict[str, Any], generated: dict[str, Any]) -> dict[str, Any]:
     outputs = []
-    for rel in (TRUTH_GRAPH_REL, DESIGN_SPEC_REL, DESIGN_FACTS_REL):
+    for rel in (TRUTH_GRAPH_REL, DESIGN_SPEC_REL, DESIGN_FACTS_REL, DOMAIN_CROSSING_MATRIX_REL, TB_METHODOLOGY_MATRIX_REL):
         path = ip / rel
         outputs.append({"path": str(rel), "sha256": _sha256(path) if path.is_file() else "missing"})
     manifest = {
@@ -2800,6 +3226,8 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     rule_instances = _yaml_items(ip, str(DESIGN_RULES_REL), "instances")
     policies = _policy_doc(ip)
     structure = _structure_doc(ip)
+    domain_intent = _domain_intent_doc(ip)
+    tb_methodology = _tb_methodology_doc(ip)
     decomposition = _decomposition_doc(ip)
     profile = _policy_profile(ip)
     structure_profile = _structure_profile(ip, policies=policies, decomposition=decomposition)
@@ -2836,6 +3264,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     rule_ids = {str(item.get("id") or "") for item in design_rules if item.get("id")}
     rule_kind_by_id = {str(item.get("id") or ""): str(item.get("kind") or "") for item in design_rules if item.get("id")}
     rule_kinds = {kind for kind in rule_kind_by_id.values() if kind}
+    domain_refs = _domain_refs_by_kind(domain_intent)
     if not req_ids:
         issues.append("no requirements in ontology/requirements.yaml")
     if not obl_ids:
@@ -2848,6 +3277,10 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         issues.append(f"no design rules in {DESIGN_RULES_REL}")
     for kind in sorted(REQUIRED_DESIGN_RULE_KINDS - rule_kinds):
         issues.append(f"missing required design rule kind: {kind}")
+    if domain_intent and domain_intent.get("schema_version") != "oag_domain_intent.v1":
+        issues.append(f"{DOMAIN_INTENT_REL}: schema_version must be oag_domain_intent.v1")
+    if tb_methodology and tb_methodology.get("schema_version") != "oag_tb_methodology.v1":
+        issues.append(f"{TB_METHODOLOGY_REL}: schema_version must be oag_tb_methodology.v1")
     issues.extend(_protection_issues(ip))
     structure_issues, decomposition_summary = _decomposition_issues(
         ip,
@@ -3135,6 +3568,37 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             if construct not in forbidden:
                 issues.append(f"{rid}: rtl language subset must forbid {construct}")
 
+    for kind, node_type in (
+        ("clock_domains", "clock_domain"),
+        ("reset_domains", "reset_domain"),
+        ("async_inputs", "async_input"),
+        ("cdc_crossings", "cdc_crossing"),
+        ("rdc_crossings", "rdc_crossing"),
+    ):
+        for item in _as_list(domain_intent.get(kind)):
+            if not isinstance(item, dict):
+                continue
+            item_id = _domain_item_id(item, "clock", "reset", "signal", "source", "classification")
+            if not item_id:
+                issues.append(f"{DOMAIN_INTENT_REL}: {kind} item missing id")
+                continue
+            node_id = f"{node_type}::{item_id}"
+            status = str(item.get("status") or "declared")
+            nodes.append({"id": node_id, "type": node_type, "label": item_id, "status": status})
+            edges.append({"source": f"ip::{ip.name}", "target": node_id, "type": f"has_{node_type}", "load_bearing": kind in {"cdc_crossings", "rdc_crossings"}})
+            for ref_key, target_kind, edge_type in (
+                ("clock_domain", "clock_domains", "uses_clock_domain"),
+                ("source_domain", "clock_domains", "source_clock_domain"),
+                ("destination_domain", "clock_domains", "destination_clock_domain"),
+                ("reset_domain", "reset_domains", "uses_reset_domain"),
+                ("source_reset_domain", "reset_domains", "source_reset_domain"),
+                ("destination_reset_domain", "reset_domains", "destination_reset_domain"),
+            ):
+                ref = str(item.get(ref_key) or "").strip()
+                if ref and _domain_ref_resolves(ref, domain_refs, (target_kind,)):
+                    clean_ref = ref.split(".", 1)[1] if ref.startswith(f"{target_kind}.") else ref
+                    edges.append({"source": node_id, "target": f"{target_kind[:-1]}::{clean_ref}", "type": edge_type, "load_bearing": True})
+
     for stage in stages:
         sid = str(stage.get("id") or "")
         if not sid:
@@ -3166,6 +3630,18 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         "stats": design_facts.get("stats") or {},
         "extractor": design_facts.get("extractor") or {},
     }
+    domain_matrix = _write_domain_crossing_matrix(ip)
+    generated_views["domain_crossing_matrix"] = {
+        "path": str(ip / DOMAIN_CROSSING_MATRIX_REL),
+        "status": domain_matrix.get("status") or "missing",
+        "stats": domain_matrix.get("stats") or {},
+    }
+    tb_matrix = _write_tb_methodology_matrix(ip)
+    generated_views["tb_methodology_matrix"] = {
+        "path": str(ip / TB_METHODOLOGY_MATRIX_REL),
+        "status": tb_matrix.get("status") or "missing",
+        "stats": tb_matrix.get("stats") or {},
+    }
 
     graph = {
         "schema_version": "oag_design_truth_graph.v1",
@@ -3184,6 +3660,14 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             "modules": int(decomposition_summary.get("module_count") or 0),
             "design_facts_modules": int((design_facts.get("stats") or {}).get("modules") or 0),
             "design_facts_instances": int((design_facts.get("stats") or {}).get("instances") or 0),
+            "domain_clock_domains": int((domain_matrix.get("stats") or {}).get("clock_domains") or 0),
+            "domain_reset_domains": int((domain_matrix.get("stats") or {}).get("reset_domains") or 0),
+            "domain_cdc_crossings": int((domain_matrix.get("stats") or {}).get("cdc_crossings") or 0),
+            "domain_rdc_crossings": int((domain_matrix.get("stats") or {}).get("rdc_crossings") or 0),
+            "tb_methodology_roles": int((tb_matrix.get("stats") or {}).get("roles") or 0),
+            "tb_coverage_goals": int((tb_matrix.get("stats") or {}).get("coverage_goals") or 0),
+            "tb_assertion_candidates": int((tb_matrix.get("stats") or {}).get("assertion_candidates") or 0),
+            "tb_formal_candidates": int((tb_matrix.get("stats") or {}).get("formal_candidates") or 0),
             "stages": len(stages),
             "design_rules": len(rule_ids),
             "design_rule_instances": len(rule_instances),
@@ -3568,6 +4052,422 @@ def _closure_matrix(ip: Path) -> dict[str, Any]:
         "closed": sum(1 for row in rows if row.get("closed")),
         "total": len(rows),
     }
+
+
+def _approved_equivalent_oracle_issues(context: str, source: dict[str, Any]) -> list[str]:
+    required = [
+        "decision_receipt_id",
+        "approver",
+        "scope",
+        "substitute_artifact",
+        "reason_full_model_not_required",
+        "obligations_covered",
+    ]
+    missing = [key for key in required if not source.get(key)]
+    if missing:
+        return [
+            f"{context}: approved equivalent oracle requires {', '.join(missing)}"
+        ]
+    return []
+
+
+def _tb_coverage_goal_ids(ip: Path, tb_methodology: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    for item in _as_list(tb_methodology.get("coverage_goals")):
+        if not isinstance(item, dict):
+            refs.update(_str_items(item))
+            continue
+        refs.update(
+            _str_items(
+                item.get("id")
+                or item.get("name")
+                or item.get("ref")
+                or item.get("coverage_ref")
+                or item.get("coverage_refs")
+            )
+        )
+    evidence_plan = _evidence_plan_doc(ip)
+    for item in _as_list(evidence_plan.get("coverage_goals")):
+        if isinstance(item, dict):
+            refs.update(_str_items(item.get("id") or item.get("name") or item.get("coverage_ref") or item.get("coverage_refs")))
+        else:
+            refs.update(_str_items(item))
+    for scenario in _as_list(evidence_plan.get("planned_scenarios")):
+        if isinstance(scenario, dict):
+            refs.update(_str_items(scenario.get("coverage_refs") or scenario.get("expected_coverage_refs")))
+    for instance in _yaml_items(ip, str(DESIGN_RULES_REL), "instances"):
+        refs.update(_instance_coverage_refs(instance))
+    refs.update(_coverage_json_refs(ip))
+    return {ref for ref in refs if ref}
+
+
+def _tb_random_enabled(tb_methodology: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    policy = tb_methodology.get("methodology_policy") if isinstance(tb_methodology.get("methodology_policy"), dict) else {}
+    stimulus = tb_methodology.get("stimulus_strategy") if isinstance(tb_methodology.get("stimulus_strategy"), dict) else {}
+    random_cfg = stimulus.get("constrained_random")
+    if not isinstance(random_cfg, dict):
+        random_cfg = {}
+    text = " ".join(
+        str(value or "").lower()
+        for value in (
+            policy.get("default_depth"),
+            policy.get("methodology_depth"),
+            stimulus.get("methodology_depth"),
+            stimulus.get("random_strategy"),
+        )
+    )
+    enabled = bool(random_cfg.get("enabled") is True or "random" in text)
+    return enabled, random_cfg
+
+
+def _tb_methodology_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    policies = _policy_doc(ip)
+    tb_policy = policies.get("tb_methodology_policy") if isinstance(policies.get("tb_methodology_policy"), dict) else {}
+    tb_path = ip / TB_METHODOLOGY_REL
+    tb_methodology = _tb_methodology_doc(ip)
+    closed_contracts = _closed_contract_ids(ip, closure_matrix)
+    scoreboard_rows = _scoreboard_rows(ip)
+    closure_uses_tb = bool(closed_contracts) and (
+        _closed_records_reference_scoreboard(ip)
+        or bool(scoreboard_rows)
+        or (ip / SCENARIO_MAPPING_REL).is_file()
+        or (ip / "sim" / "results.xml").is_file()
+    )
+
+    required = bool(tb_policy) or closure_uses_tb
+    if required and not tb_policy:
+        issues.append(f"TB_CHECK_METHODOLOGY_POLICY_PRESENT: {POLICIES_REL} missing tb_methodology_policy")
+    if required and not tb_path.is_file():
+        issues.append(f"TB_CHECK_METHODOLOGY_PRESENT: missing canonical TB methodology file {TB_METHODOLOGY_REL}")
+        return issues
+    if not tb_path.is_file():
+        return issues
+    if tb_methodology.get("schema_version") != "oag_tb_methodology.v1":
+        issues.append(f"{TB_METHODOLOGY_REL}: schema_version must be oag_tb_methodology.v1")
+
+    goal_ids = _tb_coverage_goal_ids(ip, tb_methodology)
+    random_enabled, random_cfg = _tb_random_enabled(tb_methodology)
+    if random_enabled:
+        constraints = _as_list(random_cfg.get("constraints"))
+        if tb_policy.get("random_requires_constraints") is True and not [item for item in constraints if str(item).strip()]:
+            issues.append("TB_CHECK_RANDOM_REQUIRES_CONSTRAINTS: constrained-random closure requires named constraints")
+        if tb_policy.get("random_requires_coverage_goals") is True and not goal_ids:
+            issues.append("TB_CHECK_RANDOM_REQUIRES_COVERAGE_GOALS: constrained-random closure requires coverage_goals")
+
+    if not closure_uses_tb:
+        return issues
+
+    if tb_policy.get("results_xml_required_after_sim") is True and not (ip / "sim" / "results.xml").is_file():
+        issues.append("TB_CHECK_RESULTS_XML_PRESENT: missing sim/results.xml for closure-grade TB/sim evidence")
+    if tb_policy.get("scenario_mapping_required_after_sim") is True and not (ip / SCENARIO_MAPPING_REL).is_file():
+        issues.append(
+            f"TB_CHECK_SCENARIO_MAPPING_PRESENT_AFTER_SIM: missing {SCENARIO_MAPPING_REL} for closure-grade TB/sim evidence"
+        )
+    if tb_policy.get("scoreboard_rows_required_after_sim") is True and not scoreboard_rows:
+        issues.append(
+            f"TB_CHECK_SCOREBOARD_ROWS_PRESENT_AFTER_SIM: missing {SCOREBOARD_REL} rows for closure-grade TB/sim evidence"
+        )
+
+    coverage_refs_require_goals = tb_policy.get("coverage_refs_require_goals") is True
+    for line_no, row in scoreboard_rows:
+        if not str(row.get("contract_id") or "").strip():
+            issues.append(f"TB_CHECK_SCOREBOARD_ROWS_HAVE_CONTRACT_AND_OBLIGATION: line {line_no}: missing contract_id")
+        if not str(row.get("obligation_id") or "").strip():
+            issues.append(f"TB_CHECK_SCOREBOARD_ROWS_HAVE_CONTRACT_AND_OBLIGATION: line {line_no}: missing obligation_id")
+        refs = _str_items(row.get("coverage_refs"))
+        if _scoreboard_row_failed(row) and refs:
+            issues.append(
+                f"TB_CHECK_FAILED_ROWS_NOT_COUNTED_FOR_COVERAGE: line {line_no}: failed row carries coverage_refs {', '.join(refs)}"
+            )
+        if coverage_refs_require_goals:
+            for ref in refs:
+                if ref not in goal_ids:
+                    issues.append(f"TB_CHECK_COVERAGE_REFS_RESOLVE_TO_CONTRACTS: line {line_no}: coverage_ref not resolved: {ref}")
+
+    return issues
+
+
+def _modeling_oracle_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    policies = _policy_doc(ip)
+    modeling_policy = policies.get("modeling_policy") if isinstance(policies.get("modeling_policy"), dict) else {}
+    modeling_path = ip / MODELING_REL
+    modeling = _modeling_doc(ip)
+
+    if not modeling_policy:
+        issues.append(f"CHECK_MODELING_POLICY_PRESENT: {POLICIES_REL} missing modeling_policy")
+    if not modeling_path.is_file():
+        issues.append(f"CHECK_MODELING_POLICY_PRESENT: missing canonical modeling file {MODELING_REL}")
+    elif modeling.get("schema_version") != "oag_modeling.v1":
+        issues.append(f"{MODELING_REL}: schema_version must be oag_modeling.v1")
+
+    behavior_refs_known = _flatten_model_refs(modeling.get("behavior_model") if isinstance(modeling, dict) else {}, "behavior_model")
+    cycle_refs_known = _flatten_model_refs(modeling.get("cycle_rules") if isinstance(modeling, dict) else {}, "cycle_rules")
+    planned_scenarios = _planned_scenario_ids(ip)
+    actual_scenarios = _scenario_mapping_ids(ip)
+    scoreboard_ids = _scoreboard_row_ids(ip)
+    closed_contracts = _closed_contract_ids(ip, closure_matrix)
+    contracts = _yaml_items(ip, "ontology/contracts.yaml", "contracts")
+
+    for item in _as_list(modeling.get("approved_equivalent_oracles") if isinstance(modeling, dict) else []):
+        if isinstance(item, dict):
+            oid = str(item.get("id") or item.get("decision_receipt_id") or "approved_equivalent_oracle").strip()
+            issues.extend(_approved_equivalent_oracle_issues(f"{MODELING_REL}:{oid}", item))
+
+    for contract in contracts:
+        cid = str(contract.get("id") or "").strip()
+        if not cid:
+            continue
+        contract_type = str(contract.get("contract_type") or contract.get("type") or "").strip().lower()
+        behavior_refs = _str_items(contract.get("behavior_refs"))
+        cycle_rule_refs = _str_items(contract.get("cycle_rule_refs"))
+        scenario_refs = _str_items(contract.get("scenario_refs"))
+        scoreboard_row_refs = _str_items(contract.get("scoreboard_row_refs"))
+        approved_equivalents = [
+            item
+            for item in _as_list(contract.get("approved_equivalent_oracles"))
+            if isinstance(item, dict)
+        ]
+
+        for ref in behavior_refs:
+            if not _model_ref_resolves(ref, behavior_refs_known, "behavior_model"):
+                issues.append(f"CHECK_CONTRACT_REFS_RESOLVE: {cid}: behavior_ref not found: {ref}")
+        for ref in cycle_rule_refs:
+            if not _model_ref_resolves(ref, cycle_refs_known, "cycle_rules"):
+                issues.append(f"CHECK_CONTRACT_REFS_RESOLVE: {cid}: cycle_rule_ref not found: {ref}")
+        for ref in scenario_refs:
+            if ref not in planned_scenarios and ref not in actual_scenarios:
+                issues.append(f"CHECK_CONTRACT_REFS_RESOLVE: {cid}: scenario_ref not found: {ref}")
+        if scoreboard_ids:
+            for ref in scoreboard_row_refs:
+                if ref not in scoreboard_ids:
+                    issues.append(f"CHECK_CONTRACT_REFS_RESOLVE: {cid}: scoreboard_row_ref not found: {ref}")
+        for item in approved_equivalents:
+            issues.extend(_approved_equivalent_oracle_issues(f"{cid}", item))
+
+        if cid not in closed_contracts:
+            continue
+
+        has_equivalent = bool(approved_equivalents)
+        if contract_type == "behavioral" and not behavior_refs and not has_equivalent:
+            issues.append(
+                f"CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE: {cid}: "
+                "closed behavioral contract requires behavior_refs or approved equivalent oracle with decision_receipt_id"
+            )
+        if contract_type == "temporal" and not cycle_rule_refs and not has_equivalent:
+            issues.append(
+                f"CHECK_CYCLE_RULES_REQUIRED_FOR_TEMPORAL_CLOSURE: {cid}: "
+                "closed temporal contract requires cycle_rule_refs or approved equivalent oracle with decision_receipt_id"
+            )
+        method = str(contract.get("method") or "").strip().lower()
+        if method == "scoreboard" and not scenario_refs:
+            issues.append(
+                f"CHECK_PLANNED_SCENARIOS_EXIST_BEFORE_IMPL_CLOSURE: {cid}: "
+                "scoreboard closure requires scenario_refs backed by req/evidence_plan.yaml"
+            )
+
+    scoreboard_rows = _scoreboard_rows(ip)
+    closure_uses_scoreboard = bool(closed_contracts) and (_closed_records_reference_scoreboard(ip) or bool(scoreboard_rows))
+    if closure_uses_scoreboard and not (ip / SCENARIO_MAPPING_REL).is_file():
+        issues.append(
+            f"CHECK_SCENARIO_MAPPING_EXISTS_AFTER_TB: missing {SCENARIO_MAPPING_REL} for closure-grade TB/sim evidence"
+        )
+
+    if closed_contracts:
+        for line_no, row in scoreboard_rows:
+            expected_source = row.get("expected_source")
+            if not isinstance(expected_source, dict):
+                issues.append(
+                    f"CHECK_SCOREBOARD_EXPECTED_SOURCE_INDEPENDENT: line {line_no}: "
+                    "closure-grade scoreboard row requires expected_source"
+                )
+                continue
+            kind = str(expected_source.get("kind") or "").strip()
+            if kind in DUT_DERIVED_EXPECTED_SOURCE_KINDS:
+                issues.append(
+                    f"CHECK_DUT_DERIVED_EXPECTED_BLOCKED: line {line_no}: "
+                    f"expected_source.kind must not be derived from DUT behavior: {kind}"
+                )
+            if kind == "manual_spec":
+                issues.append(
+                    f"CHECK_MANUAL_SPEC_DOWNGRADED_FOR_CLOSURE: line {line_no}: "
+                    "manual_spec expected_source is provisional smoke/debug evidence only"
+                )
+            if kind == "approved_equivalent_oracle":
+                issues.extend(_approved_equivalent_oracle_issues(f"line {line_no}", expected_source))
+
+    return issues
+
+
+def _domain_intent_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    policies = _policy_doc(ip)
+    domain_policy = policies.get("domain_crossing_policy") if isinstance(policies.get("domain_crossing_policy"), dict) else {}
+    structure = _structure_doc(ip)
+    domain_path = ip / DOMAIN_INTENT_REL
+    domain_intent = _domain_intent_doc(ip)
+    contracts = _yaml_items(ip, "ontology/contracts.yaml", "contracts")
+    closed_contracts = _closed_contract_ids(ip, closure_matrix)
+    known = _domain_refs_by_kind(domain_intent)
+    domain_contracts = [contract for contract in contracts if _domain_contract_type(contract) in DOMAIN_CROSSING_CONTRACT_TYPES]
+    closed_domain_contracts = [contract for contract in domain_contracts if str(contract.get("id") or "").strip() in closed_contracts]
+
+    structure_clock_domains = _as_list(structure.get("clock_domains"))
+    structure_reset_domains = _as_list(structure.get("reset_domains"))
+    intent_required = (
+        domain_policy.get("domain_intent_required") is True
+        or len(structure_clock_domains) > 1
+        or len(structure_reset_domains) > 1
+        or bool(closed_domain_contracts)
+    )
+    if intent_required and not domain_path.is_file():
+        issues.append(f"CHECK_DOMAIN_INTENT_PRESENT: missing canonical domain intent file {DOMAIN_INTENT_REL}")
+        return issues
+    if not domain_path.is_file():
+        return issues
+    if domain_intent.get("schema_version") != "oag_domain_intent.v1":
+        issues.append(f"{DOMAIN_INTENT_REL}: schema_version must be oag_domain_intent.v1")
+
+    for clock in _as_list(domain_intent.get("clock_domains")):
+        if not isinstance(clock, dict):
+            issues.append(f"{DOMAIN_INTENT_REL}: clock_domains entries must be objects")
+            continue
+        cid = _domain_item_id(clock, "clock")
+        if not cid:
+            issues.append(f"{DOMAIN_INTENT_REL}: clock domain missing id")
+        if not str(clock.get("clock") or "").strip():
+            issues.append(f"{DOMAIN_INTENT_REL}:{cid or '<clock_domain>'}: clock domain missing clock")
+
+    for reset in _as_list(domain_intent.get("reset_domains")):
+        if not isinstance(reset, dict):
+            issues.append(f"{DOMAIN_INTENT_REL}: reset_domains entries must be objects")
+            continue
+        rid = _domain_item_id(reset, "reset")
+        if not rid:
+            issues.append(f"{DOMAIN_INTENT_REL}: reset domain missing id")
+        for field in ("reset", "polarity", "assertion", "deassertion"):
+            if not str(reset.get(field) or "").strip():
+                issues.append(f"{DOMAIN_INTENT_REL}:{rid or '<reset_domain>'}: reset domain missing {field}")
+
+    for async_input in _as_list(domain_intent.get("async_inputs")):
+        if not isinstance(async_input, dict):
+            issues.append(f"{DOMAIN_INTENT_REL}: async_inputs entries must be objects")
+            continue
+        signal = str(async_input.get("signal") or async_input.get("id") or "").strip()
+        classification = _safe_domain_crossing_pattern(async_input.get("classification"))
+        mitigation = _safe_domain_crossing_pattern(async_input.get("required_mitigation") or async_input.get("allowed_pattern"))
+        if not signal:
+            issues.append(f"{DOMAIN_INTENT_REL}: async input missing signal")
+        if not classification:
+            issues.append(f"CHECK_ASYNC_INPUT_CLASSIFIED: {signal or '<async_input>'}: async input missing classification")
+        if not mitigation and not str(async_input.get("stable_assumption") or async_input.get("decision_receipt_id") or "").strip():
+            issues.append(f"CHECK_ASYNC_INPUT_MITIGATION_PRESENT: {signal or '<async_input>'}: async input missing required_mitigation or explicit assumption")
+
+    for crossing in _as_list(domain_intent.get("cdc_crossings")):
+        if not isinstance(crossing, dict):
+            issues.append(f"{DOMAIN_INTENT_REL}: cdc_crossings entries must be objects")
+            continue
+        cid = _domain_item_id(crossing, "source")
+        ctype = _safe_domain_crossing_pattern(crossing.get("crossing_type") or crossing.get("classification"))
+        pattern = _safe_domain_crossing_pattern(crossing.get("allowed_pattern") or crossing.get("mitigation"))
+        if not cid:
+            issues.append(f"{DOMAIN_INTENT_REL}: CDC crossing missing id")
+        for field in ("source_domain", "destination_domain"):
+            ref = str(crossing.get(field) or "").strip()
+            if not ref:
+                issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid or '<cdc_crossing>'}: CDC crossing missing {field}")
+            elif not _domain_ref_resolves(ref, known, ("clock_domains",)):
+                issues.append(f"CHECK_CDC_CROSSING_REFS_RESOLVE: {cid}: {field} not found: {ref}")
+        if not ctype:
+            issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid or '<cdc_crossing>'}: CDC crossing missing crossing_type")
+        if not pattern and not str(crossing.get("stable_assumption") or crossing.get("decision_receipt_id") or "").strip():
+            issues.append(f"CHECK_CDC_MITIGATION_PRESENT: {cid or '<cdc_crossing>'}: CDC crossing missing allowed_pattern or explicit assumption")
+        if "multi_bit" in ctype:
+            safe_multibit = any(token in ctype or token in pattern for token in ("gray", "fifo", "handshake", "mcp", "stable", "sample", "sampled", "approved"))
+            if not safe_multibit:
+                issues.append(
+                    f"CHECK_CDC_MULTIBIT_UNSAFE: {cid or '<cdc_crossing>'}: multi-bit CDC needs Gray, FIFO, handshake, MCP, stable/sample classification, or approved waiver"
+                )
+        if pattern in {"direct", "none", "no_sync", "unsynchronized"}:
+            issues.append(f"CHECK_CDC_MITIGATION_PRESENT: {cid or '<cdc_crossing>'}: CDC crossing uses unsafe mitigation pattern: {pattern}")
+
+    for crossing in _as_list(domain_intent.get("rdc_crossings")):
+        if not isinstance(crossing, dict):
+            issues.append(f"{DOMAIN_INTENT_REL}: rdc_crossings entries must be objects")
+            continue
+        rid = _domain_item_id(crossing, "classification")
+        classification = _safe_domain_crossing_pattern(crossing.get("classification"))
+        no_rdc = classification in {"no_known_rdc", "none", "not_applicable"}
+        if not rid:
+            issues.append(f"{DOMAIN_INTENT_REL}: RDC crossing missing id")
+        if no_rdc:
+            if not _str_items(crossing.get("basis")) and not str(crossing.get("rationale") or "").strip():
+                issues.append(f"CHECK_RDC_RELATION_PRESENT: {rid or '<rdc_crossing>'}: no-known-RDC classification needs basis")
+            continue
+        for field in ("source_reset_domain", "destination_reset_domain"):
+            ref = str(crossing.get(field) or "").strip()
+            if not ref:
+                issues.append(f"CHECK_RDC_RELATION_PRESENT: {rid or '<rdc_crossing>'}: RDC crossing missing {field}")
+            elif not _domain_ref_resolves(ref, known, ("reset_domains",)):
+                issues.append(f"CHECK_RDC_CROSSING_REFS_RESOLVE: {rid}: {field} not found: {ref}")
+        mitigation = str(crossing.get("mitigation") or crossing.get("reset_sequence") or crossing.get("isolation") or crossing.get("synchronizer") or crossing.get("qualifier") or "").strip()
+        if not mitigation and not str(crossing.get("decision_receipt_id") or "").strip():
+            issues.append(f"CHECK_RDC_MITIGATION_PRESENT: {rid or '<rdc_crossing>'}: RDC crossing needs sequencing, isolation, synchronizer, qualifier, or decision receipt")
+
+    for contract in domain_contracts:
+        cid = str(contract.get("id") or "").strip()
+        if not cid:
+            continue
+        ctype = _domain_contract_type(contract)
+        crossing_refs = _str_items(contract.get("crossing_refs"))
+        crossing_refs.extend(_str_items(contract.get("cdc_crossing_refs")))
+        rdc_refs = _str_items(contract.get("rdc_crossing_refs"))
+        clock_refs = _str_items(contract.get("clock_domain_refs"))
+        reset_refs = _str_items(contract.get("reset_domain_refs"))
+        mitigation_refs = _str_items(contract.get("mitigation_refs"))
+        mitigation_refs.extend(_str_items(contract.get("reset_sequence_or_isolation_or_sync_refs")))
+
+        for ref in clock_refs:
+            if not _domain_ref_resolves(ref, known, ("clock_domains",)):
+                issues.append(f"CHECK_DOMAIN_CONTRACT_REFS_RESOLVE: {cid}: clock_domain_ref not found: {ref}")
+        for ref in reset_refs:
+            if not _domain_ref_resolves(ref, known, ("reset_domains",)):
+                issues.append(f"CHECK_DOMAIN_CONTRACT_REFS_RESOLVE: {cid}: reset_domain_ref not found: {ref}")
+        for ref in crossing_refs:
+            if not _domain_ref_resolves(ref, known, ("cdc_crossings",)):
+                issues.append(f"CHECK_DOMAIN_CONTRACT_REFS_RESOLVE: {cid}: cdc crossing_ref not found: {ref}")
+        for ref in rdc_refs:
+            if not _domain_ref_resolves(ref, known, ("rdc_crossings",)):
+                issues.append(f"CHECK_DOMAIN_CONTRACT_REFS_RESOLVE: {cid}: rdc_crossing_ref not found: {ref}")
+        for ref in mitigation_refs:
+            if not _domain_ref_resolves(ref, known, ("sync_structures", "cdc_crossings", "rdc_crossings")) and not ref.startswith(("cycle_rules.", "behavior_model.")):
+                issues.append(f"CHECK_DOMAIN_CONTRACT_REFS_RESOLVE: {cid}: mitigation_ref not found: {ref}")
+
+        if cid not in closed_contracts:
+            continue
+        cdc_like = ctype in {"cdc", "cdc_rdc", "domain_crossing", "clock_reset_domain_crossing"}
+        rdc_like = ctype in {"rdc", "cdc_rdc", "clock_reset_domain_crossing"}
+        if cdc_like:
+            if not crossing_refs:
+                issues.append(f"CHECK_CDC_CONTRACT_REFS_REQUIRED: {cid}: closed CDC contract requires crossing_refs or cdc_crossing_refs")
+            if not mitigation_refs:
+                issues.append(f"CHECK_CDC_MITIGATION_PRESENT: {cid}: closed CDC contract requires mitigation_refs")
+            evidence_refs = _domain_evidence_refs(contract, "cdc")
+            if not evidence_refs:
+                issues.append(f"CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED: {cid}: CDC closure requires static/formal/tool or mitigation evidence, not simulation alone")
+        if rdc_like:
+            if not (rdc_refs or crossing_refs):
+                issues.append(f"CHECK_RDC_CONTRACT_REFS_REQUIRED: {cid}: closed RDC contract requires rdc_crossing_refs")
+            if not reset_refs:
+                issues.append(f"CHECK_RDC_CONTRACT_REFS_REQUIRED: {cid}: closed RDC contract requires reset_domain_refs")
+            if not mitigation_refs:
+                issues.append(f"CHECK_RDC_MITIGATION_PRESENT: {cid}: closed RDC contract requires reset sequencing/isolation/synchronizer/qualifier refs")
+            evidence_refs = _domain_evidence_refs(contract, "rdc")
+            if not evidence_refs:
+                issues.append(f"CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED: {cid}: RDC closure requires static/formal/tool or mitigation evidence, not simulation alone")
+
+    return issues
 
 
 def _metrics_history_path(ip: Path) -> Path:
@@ -5044,9 +5944,16 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
         issues.extend(_protection_issues(ip))
     closure_matrix = _closure_matrix(ip)
     issues.extend(closure_matrix["issues"])
+    if (ip / "ontology").is_dir():
+        issues.extend(_modeling_oracle_issues(ip, closure_matrix))
+        issues.extend(_domain_intent_issues(ip, closure_matrix))
+        issues.extend(_tb_methodology_issues(ip, closure_matrix))
     issues.extend(_ledger_issues(ip))
     issues.extend(_monotonic_issues(ip))
     issues.extend(_record_evidence_issues(ip))
+    scoreboard = _scoreboard_summary(ip / SCOREBOARD_REL)
+    if scoreboard.get("present"):
+        issues.extend([f"scoreboard_rows.v1: {issue}" for issue in _as_list(scoreboard.get("issues"))])
     issues.extend(_stage_receipt_issues(ip))
     issues.extend(_scope_lock_issues(ip))
     result = {

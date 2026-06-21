@@ -148,6 +148,25 @@ def _human_approve_signoff_profile(ip: Path) -> None:
     assert approval["result"]["ledger_event"], approval
 
 
+def _read_yaml(path: Path) -> dict[str, Any]:
+    import yaml  # type: ignore
+
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    assert isinstance(data, dict), path
+    return data
+
+
+def _write_yaml(path: Path, data: dict[str, Any]) -> None:
+    import yaml  # type: ignore
+
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _check_issues(ip: Path) -> list[str]:
+    response = smoke_test.call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    return [str(item) for item in response["result"]["issues"]]
+
+
 def _record_closed_validation(ip: Path, *, surface: str = "eval") -> dict[str, Any]:
     response = smoke_test.call(
         {
@@ -235,6 +254,407 @@ def case_compile_skips_fresh_graph(root: Path) -> dict[str, Any]:
         "second_skipped": second["result"]["skipped"],
         "manifest": str(manifest),
     }
+
+
+def case_modeling_scaffold_seed(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "modeling_seed")
+    policies = _read_yaml(ip / "ontology" / "policies.yaml")
+    modeling = _read_yaml(ip / "ontology" / "modeling.yaml")
+    modeling_policy = policies.get("modeling_policy") if isinstance(policies.get("modeling_policy"), dict) else {}
+    assert modeling_policy.get("canonical_modeling_file") == "ontology/modeling.yaml", policies
+    assert modeling_policy.get("full_fl_model_required") is False, policies
+    assert modeling_policy.get("full_cl_model_required") is False, policies
+    assert modeling.get("schema_version") == "oag_modeling.v1", modeling
+    assert isinstance(modeling.get("behavior_model"), dict) and modeling["behavior_model"], modeling
+    assert isinstance(modeling.get("cycle_rules"), dict) and modeling["cycle_rules"], modeling
+    return {
+        "ip": str(ip),
+        "profile": modeling_policy.get("profile"),
+        "full_fl_model_required": modeling_policy.get("full_fl_model_required"),
+        "full_cl_model_required": modeling_policy.get("full_cl_model_required"),
+    }
+
+
+def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_sample", pattern: str = "per_bit_two_stage_sync") -> dict[str, Any]:
+    return {
+        "schema_version": "oag_domain_intent.v1",
+        "ip": ip.name,
+        "policy": {
+            "profile": "simple_leaf_peripheral",
+            "development_static_check_required": True,
+            "release_requires_static_or_formal_cdc_rdc": True,
+        },
+        "clock_domains": [
+            {"id": "external_async_domain", "clock": "external_async", "kind": "external"},
+            {"id": "pclk_domain", "clock": "PCLK", "kind": "primary", "reset_domain": "presetn_domain"},
+        ],
+        "reset_domains": [
+            {
+                "id": "presetn_domain",
+                "reset": "PRESETn",
+                "polarity": "active_low",
+                "assertion": "asynchronous",
+                "deassertion": "synchronous",
+                "clock_domain": "pclk_domain",
+            }
+        ],
+        "async_inputs": [
+            {
+                "id": "GPIO_I_ASYNC",
+                "signal": "gpio_i",
+                "source_domain": "external_async_domain",
+                "destination_domain": "pclk_domain",
+                "classification": crossing_type,
+                "required_mitigation": pattern,
+            }
+        ],
+        "cdc_crossings": [
+            {
+                "id": "CDC_GPIO_I_TO_PCLK",
+                "source": "gpio_i",
+                "source_domain": "external_async_domain",
+                "destination_domain": "pclk_domain",
+                "crossing_type": crossing_type,
+                "allowed_pattern": pattern,
+            }
+        ],
+        "rdc_crossings": [
+            {
+                "id": "RDC_NONE_SINGLE_RESET_DOMAIN",
+                "classification": "no_known_rdc",
+                "basis": ["single reset domain PRESETn"],
+            }
+        ],
+        "sync_structures": [
+            {
+                "id": "gpio_i_two_stage_sync",
+                "crossing": "CDC_GPIO_I_TO_PCLK",
+                "pattern": "per_bit_two_stage_sync",
+            }
+        ],
+    }
+
+
+def case_domain_intent_scaffold_seed(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "domain_intent_seed")
+    policies = _read_yaml(ip / "ontology" / "policies.yaml")
+    domain_intent = _read_yaml(ip / "ontology" / "domain_intent.yaml")
+    domain_policy = policies.get("domain_crossing_policy") if isinstance(policies.get("domain_crossing_policy"), dict) else {}
+    assert domain_policy.get("canonical_domain_intent_file") == "ontology/domain_intent.yaml", policies
+    assert domain_policy.get("domain_intent_required") is True, policies
+    assert domain_intent.get("schema_version") == "oag_domain_intent.v1", domain_intent
+    compiled = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip), "force": True}})
+    assert compiled["result"]["status"] == "pass", compiled
+    matrix = json.loads((ip / "ontology" / "generated" / "domain_crossing_matrix.json").read_text(encoding="utf-8"))
+    assert matrix["schema_version"] == "oag_domain_crossing_matrix.v1", matrix
+    return {
+        "ip": str(ip),
+        "domain_intent": domain_intent.get("schema_version"),
+        "domain_crossing_policy": domain_policy.get("profile"),
+        "matrix_status": matrix["status"],
+    }
+
+
+def case_tb_methodology_scaffold_seed(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "tb_methodology_seed")
+    policies = _read_yaml(ip / "ontology" / "policies.yaml")
+    tb_methodology = _read_yaml(ip / "ontology" / "tb_methodology.yaml")
+    tb_policy = policies.get("tb_methodology_policy") if isinstance(policies.get("tb_methodology_policy"), dict) else {}
+    assert tb_policy.get("canonical_tb_methodology_file") == "ontology/tb_methodology.yaml", policies
+    assert tb_policy.get("framework_required") is False, policies
+    assert tb_policy.get("full_uvm_required") is False, policies
+    assert tb_methodology.get("schema_version") == "oag_tb_methodology.v1", tb_methodology
+    assert isinstance(tb_methodology.get("architecture_roles"), dict) and tb_methodology["architecture_roles"], tb_methodology
+    assert isinstance(tb_methodology.get("coverage_goals"), list) and tb_methodology["coverage_goals"], tb_methodology
+    compiled = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip), "force": True}})
+    assert compiled["result"]["status"] == "pass", compiled
+    matrix = json.loads((ip / "ontology" / "generated" / "tb_methodology_matrix.json").read_text(encoding="utf-8"))
+    assert matrix["schema_version"] == "oag_tb_methodology_matrix.v1", matrix
+    assert matrix["stats"]["coverage_goals"] >= 1, matrix
+    return {
+        "ip": str(ip),
+        "tb_methodology": tb_methodology.get("schema_version"),
+        "tb_methodology_policy": tb_policy.get("profile"),
+        "matrix_status": matrix["status"],
+    }
+
+
+def case_random_without_coverage_goals_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "random_without_coverage")
+    path = ip / "ontology" / "tb_methodology.yaml"
+    tb_methodology = _read_yaml(path)
+    tb_methodology["coverage_goals"] = []
+    tb_methodology["stimulus_strategy"]["constrained_random"] = {
+        "enabled": True,
+        "constraints": [],
+        "seed_strategy": "fixed_seed",
+    }
+    _write_yaml(path, tb_methodology)
+    _approve_eval_protected_update(ip, summary="eval enables random TB methodology without constraints or coverage goals")
+    issues = _check_issues(ip)
+    assert any("TB_CHECK_RANDOM_REQUIRES_CONSTRAINTS" in issue for issue in issues), issues
+    assert any("TB_CHECK_RANDOM_REQUIRES_COVERAGE_GOALS" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issues": ["TB_CHECK_RANDOM_REQUIRES_CONSTRAINTS", "TB_CHECK_RANDOM_REQUIRES_COVERAGE_GOALS"]}
+
+
+def case_failed_scoreboard_row_with_coverage_ref_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "failed_row_coverage")
+    rows = []
+    for line in (ip / "sim" / "scoreboard_events.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        rows.append(row)
+    rows[0]["passed"] = False
+    rows[0]["mismatch"] = "intentional eval mismatch"
+    rows[0]["coverage_refs"] = ["COV_INC"]
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    _record_closed_validation(ip)
+    issues = _check_issues(ip)
+    assert any("TB_CHECK_FAILED_ROWS_NOT_COUNTED_FOR_COVERAGE" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "TB_CHECK_FAILED_ROWS_NOT_COUNTED_FOR_COVERAGE"}
+
+
+def case_unresolved_scoreboard_coverage_ref_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "unresolved_coverage_ref")
+    rows = []
+    for line in (ip / "sim" / "scoreboard_events.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        row["coverage_refs"] = ["COV_UNKNOWN_METHOD"]
+        rows.append(row)
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    _record_closed_validation(ip)
+    issues = _check_issues(ip)
+    assert any("TB_CHECK_COVERAGE_REFS_RESOLVE_TO_CONTRACTS" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "TB_CHECK_COVERAGE_REFS_RESOLVE_TO_CONTRACTS"}
+
+
+def case_missing_results_xml_after_tb_closure_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "missing_results_xml")
+    _record_closed_validation(ip)
+    (ip / "sim" / "results.xml").unlink()
+    issues = _check_issues(ip)
+    assert any("TB_CHECK_RESULTS_XML_PRESENT" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "TB_CHECK_RESULTS_XML_PRESENT"}
+
+
+def case_missing_domain_intent_blocks_cdc_closure(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "missing_domain_intent")
+    (ip / "ontology" / "domain_intent.yaml").unlink()
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contract = contracts["contracts"][0]
+    contract["status"] = "closed"
+    contract["contract_type"] = "cdc"
+    contract["clock_domain_refs"] = ["clock_domains.pclk_domain"]
+    contract["crossing_refs"] = ["cdc_crossings.CDC_GPIO_I_TO_PCLK"]
+    contract["mitigation_refs"] = ["sync_structures.gpio_i_two_stage_sync"]
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval removes domain intent while claiming CDC closure")
+    issues = _check_issues(ip)
+    assert any("CHECK_DOMAIN_INTENT_PRESENT" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_DOMAIN_INTENT_PRESENT"}
+
+
+def case_cdc_sim_only_closure_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "cdc_sim_only")
+    _write_yaml(ip / "ontology" / "domain_intent.yaml", _domain_intent_template(ip))
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contract = contracts["contracts"][0]
+    contract["status"] = "closed"
+    contract["contract_type"] = "cdc"
+    contract["clock_domain_refs"] = ["clock_domains.pclk_domain"]
+    contract["crossing_refs"] = ["cdc_crossings.CDC_GPIO_I_TO_PCLK"]
+    contract["mitigation_refs"] = ["sync_structures.gpio_i_two_stage_sync"]
+    contract.pop("cdc_evidence_refs", None)
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval claims CDC closure without CDC evidence refs")
+    issues = _check_issues(ip)
+    assert any("CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED"}
+
+
+def case_multibit_cdc_direct_sample_fails(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "multibit_cdc_direct")
+    _write_yaml(
+        ip / "ontology" / "domain_intent.yaml",
+        _domain_intent_template(ip, crossing_type="multi_bit_data", pattern="direct"),
+    )
+    _approve_eval_protected_update(ip, summary="eval declares unsafe direct multi-bit CDC")
+    issues = _check_issues(ip)
+    assert any("CHECK_CDC_MULTIBIT_UNSAFE" in issue for issue in issues), issues
+    assert any("CHECK_CDC_MITIGATION_PRESENT" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issues": ["CHECK_CDC_MULTIBIT_UNSAFE", "CHECK_CDC_MITIGATION_PRESENT"]}
+
+
+def case_rdc_contract_requires_reset_relation(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "rdc_requires_relation")
+    domain_intent = _domain_intent_template(ip)
+    domain_intent["reset_domains"].append(
+        {
+            "id": "por_domain",
+            "reset": "PORn",
+            "polarity": "active_low",
+            "assertion": "asynchronous",
+            "deassertion": "asynchronous",
+            "clock_domain": "pclk_domain",
+        }
+    )
+    domain_intent["rdc_crossings"] = [
+        {
+            "id": "RDC_POR_TO_PRESETN",
+            "classification": "async_reset_crossing",
+            "source_reset_domain": "por_domain",
+            "destination_reset_domain": "presetn_domain",
+        }
+    ]
+    _write_yaml(ip / "ontology" / "domain_intent.yaml", domain_intent)
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contract = contracts["contracts"][0]
+    contract["status"] = "closed"
+    contract["contract_type"] = "rdc"
+    contract["reset_domain_refs"] = ["reset_domains.presetn_domain", "reset_domains.por_domain"]
+    contract["rdc_crossing_refs"] = ["rdc_crossings.RDC_POR_TO_PRESETN"]
+    contract["reset_sequence_or_isolation_or_sync_refs"] = []
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval claims RDC closure without mitigation evidence")
+    issues = _check_issues(ip)
+    assert any("CHECK_RDC_MITIGATION_PRESENT" in issue for issue in issues), issues
+    assert any("CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issues": ["CHECK_RDC_MITIGATION_PRESENT", "CHECK_CDC_RDC_SIM_ONLY_CLOSURE_BLOCKED"]}
+
+
+def case_missing_behavior_model_blocks_behavioral_closure(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "missing_behavior_model")
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contracts["contracts"][0]["status"] = "closed"
+    contracts["contracts"][0]["contract_type"] = "behavioral"
+    contracts["contracts"][0]["behavior_refs"] = []
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval removes behavior_refs from a closed behavioral contract")
+    issues = _check_issues(ip)
+    assert any("CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE"}
+
+
+def case_missing_cycle_rules_blocks_temporal_closure(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "missing_cycle_rules")
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contracts["contracts"][0]["status"] = "closed"
+    contracts["contracts"][0]["contract_type"] = "temporal"
+    contracts["contracts"][0]["cycle_rule_refs"] = []
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval removes cycle_rule_refs from a closed temporal contract")
+    issues = _check_issues(ip)
+    assert any("CHECK_CYCLE_RULES_REQUIRED_FOR_TEMPORAL_CLOSURE" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_CYCLE_RULES_REQUIRED_FOR_TEMPORAL_CLOSURE"}
+
+
+def case_prose_only_contract_fails_closure_grade_check(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "prose_only_contract")
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    contracts = _read_yaml(contracts_path)
+    contract = contracts["contracts"][0]
+    contract["status"] = "closed"
+    contract["contract_type"] = "behavioral"
+    contract["behavior_refs"] = []
+    contract["cycle_rule_refs"] = []
+    contract["scenario_refs"] = []
+    contract["scoreboard_row_refs"] = []
+    contract["pass_condition"] = "simulation passes"
+    _write_yaml(contracts_path, contracts)
+    _approve_eval_protected_update(ip, summary="eval downgrades a contract to prose-only closure")
+    issues = _check_issues(ip)
+    assert any("CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE" in issue for issue in issues), issues
+    assert any("CHECK_PLANNED_SCENARIOS_EXIST_BEFORE_IMPL_CLOSURE" in issue for issue in issues), issues
+    return {
+        "ip": str(ip),
+        "matched_issues": [
+            "CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE",
+            "CHECK_PLANNED_SCENARIOS_EXIST_BEFORE_IMPL_CLOSURE",
+        ],
+    }
+
+
+def case_scoreboard_without_scenario_id_fails_check(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "scoreboard_missing_scenario")
+    rows = [
+        {
+            "event_id": "EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS",
+            "goal_id": "GOAL_COUNTER_INC",
+            "cycle": 3,
+            "stimulus": {"valid": 1},
+            "expected": {"count": 3},
+            "expected_source": {"kind": "behavior_model", "refs": ["behavior_model.seed_obligations.reset_known_state"]},
+            "observed": {"count": 3},
+            "observed_source": {"kind": "dut_signal", "path": "dut.count"},
+            "passed": True,
+            "mismatch": "",
+            "coverage_refs": ["COV_INC"],
+        }
+    ]
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    issues = _check_issues(ip)
+    assert any("scoreboard_rows.v1: line 1: missing scoreboard_rows.v1 field(s): scenario_id" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "missing scoreboard_rows.v1 field(s): scenario_id"}
+
+
+def case_scoreboard_dut_derived_expected_source_fails_check(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "scoreboard_dut_expected")
+    rows = []
+    for line in (ip / "sim" / "scoreboard_events.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            rows.append(json.loads(line))
+    rows[0]["expected_source"] = {"kind": "dut_signal", "signal": "dut.count"}
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    issues = _check_issues(ip)
+    assert any("expected_source.kind must not be derived from DUT behavior" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "expected_source.kind must not be derived from DUT behavior"}
+
+
+def case_manual_spec_expected_source_blocks_closure(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "manual_spec_closure")
+    rows = []
+    for line in (ip / "sim" / "scoreboard_events.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            row = json.loads(line)
+            row["expected_source"] = {"kind": "manual_spec", "status": "provisional", "ref": "req/locked_truth.md"}
+            rows.append(row)
+    (ip / "sim" / "scoreboard_events.jsonl").write_text(
+        "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    _record_closed_validation(ip)
+    issues = _check_issues(ip)
+    assert any("CHECK_MANUAL_SPEC_DOWNGRADED_FOR_CLOSURE" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_MANUAL_SPEC_DOWNGRADED_FOR_CLOSURE"}
+
+
+def case_scenario_mapping_required_after_tb_closure(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "missing_scenario_mapping")
+    (ip / "sim" / "scenario_mapping.json").unlink()
+    _record_closed_validation(ip)
+    issues = _check_issues(ip)
+    assert any("CHECK_SCENARIO_MAPPING_EXISTS_AFTER_TB" in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": "CHECK_SCENARIO_MAPPING_EXISTS_AFTER_TB"}
 
 
 def case_stop_gate_allows_complete(root: Path) -> dict[str, Any]:
@@ -1209,6 +1629,24 @@ CASES: list[tuple[str, CaseFn]] = [
     ("stop_gate_blocks_incomplete", case_stop_gate_blocks_incomplete),
     ("stop_gate_obeys_policy_limit", case_stop_gate_obeys_policy_limit),
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
+    ("modeling_scaffold_seed", case_modeling_scaffold_seed),
+    ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
+    ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),
+    ("random_without_coverage_goals_fails", case_random_without_coverage_goals_fails),
+    ("failed_scoreboard_row_with_coverage_ref_fails", case_failed_scoreboard_row_with_coverage_ref_fails),
+    ("unresolved_scoreboard_coverage_ref_fails", case_unresolved_scoreboard_coverage_ref_fails),
+    ("missing_results_xml_after_tb_closure_fails", case_missing_results_xml_after_tb_closure_fails),
+    ("missing_domain_intent_blocks_cdc_closure", case_missing_domain_intent_blocks_cdc_closure),
+    ("cdc_sim_only_closure_fails", case_cdc_sim_only_closure_fails),
+    ("multibit_cdc_direct_sample_fails", case_multibit_cdc_direct_sample_fails),
+    ("rdc_contract_requires_reset_relation", case_rdc_contract_requires_reset_relation),
+    ("missing_behavior_model_blocks_behavioral_closure", case_missing_behavior_model_blocks_behavioral_closure),
+    ("missing_cycle_rules_blocks_temporal_closure", case_missing_cycle_rules_blocks_temporal_closure),
+    ("prose_only_contract_fails_closure_grade_check", case_prose_only_contract_fails_closure_grade_check),
+    ("scoreboard_without_scenario_id_fails_check", case_scoreboard_without_scenario_id_fails_check),
+    ("scoreboard_dut_derived_expected_source_fails_check", case_scoreboard_dut_derived_expected_source_fails_check),
+    ("manual_spec_expected_source_blocks_closure", case_manual_spec_expected_source_blocks_closure),
+    ("scenario_mapping_required_after_tb_closure", case_scenario_mapping_required_after_tb_closure),
     ("stop_gate_allows_complete", case_stop_gate_allows_complete),
     ("stop_gate_allows_needs_human", case_stop_gate_allows_needs_human),
     ("completion_requires_decision_receipt", case_completion_requires_decision_receipt),

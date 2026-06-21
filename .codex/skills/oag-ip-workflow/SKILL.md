@@ -1,6 +1,6 @@
 ---
 name: oag-ip-workflow
-description: Use when working on hardware IP requirements, RTL, testbench, simulation, coverage, signoff, common design-rule review, or evidence review through the Ontology Agent Gateway. Calls OAG before acting, records ROCEV-backed findings with explicit validation status, checks closure matrix and completion decisions, keeps scoreboard evidence TB/simulator agnostic through scoreboard_rows.v1, protects locked truth fields, preserves append-only evidence ledger events, enforces monotonic closure and evidence freshness hashes, writes decision receipts, and applies common design rules such as same-cycle priority, event/state commit consistency, contract-to-proof coverage, fault-model coverage, verification role decomposition, and RTL language subset.
+description: Use when working on hardware IP requirements, RTL, testbench, simulation, coverage, signoff, common design-rule review, or evidence review through the Ontology Agent Gateway. Calls OAG before acting, records ROCEV-backed findings with explicit validation status, checks closure matrix and completion decisions, keeps scoreboard evidence TB/simulator agnostic through scoreboard_rows.v1, protects locked truth fields, preserves append-only evidence ledger events, enforces monotonic closure and evidence freshness hashes, writes decision receipts, and applies common design rules such as same-cycle priority, event/state commit consistency, contract-to-proof coverage, fault-model coverage, verification methodology, verification role decomposition, CDC/RDC domain safety, PPA-aware RTL, and RTL language subset.
 ---
 
 # OAG IP Workflow
@@ -105,13 +105,23 @@ registry, stage receipt schema, decision receipt schema, failure-ticket schema,
 an append-only `knowledge/ledger.jsonl`, and a common
 `ontology/design_rules.yaml` rulebook. It also creates
 `ontology/structure.yaml` for the shared signal/register/interface namespace and
-`ontology/decomposition.yaml` for module ownership and structure profile.
+`ontology/decomposition.yaml` for module ownership and structure profile. It
+also creates `ontology/modeling.yaml` for micro behavior/cycle oracle truth and
+`ontology/domain_intent.yaml` for clock/reset-domain intent. It also creates
+`ontology/tb_methodology.yaml` for framework-neutral verification methodology
+intent.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 
 Do not require a specific testbench implementation. Verilog, SystemVerilog,
 UVM, Python, cocotb, or a simulator adapter are all valid if they emit the
 standard evidence rows in `sim/scoreboard_events.jsonl`.
+Do require verification methodology responsibilities when TB evidence is used
+for closure: scenario intent, driver/BFM, monitor, independent predictor,
+scoreboard, coverage collector when load-bearing, assertion/formal hooks when
+useful, and OAG evidence writer. Random or constrained-random tests require
+constraints and coverage goals before they can support closure. Failed tests do
+not count toward closure coverage.
 
 Before editing or claiming analysis, call OAG for the active IP:
 
@@ -141,8 +151,9 @@ next. The run loop is a driver; it does not replace ROCEV records or decision
 receipts.
 
 After `oag.compile`, treat `ontology/generated/design_spec.json`,
-`ontology/generated/authoring_packets/*.json`, and
-`ontology/generated/design_facts_graph.json` as read-only work inputs. The
+`ontology/generated/authoring_packets/*.json`,
+`ontology/generated/design_facts_graph.json`, and
+`ontology/generated/domain_crossing_matrix.json` as read-only work inputs. The
 design spec and authoring packets are compiled projections from authored
 ontology. The design facts graph is extracted from current RTL with `pyslang`
 when available, falling back to a conservative parser when needed. If a
@@ -223,7 +234,7 @@ For implementation splits:
 
 ```text
 multi_agent_v1.spawn_agent({
-  "message": "TASK: act as the OAG RTL implementation agent. DELIVERABLE: the smallest RTL change plus changed paths, evidence command, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. DISPATCH: include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path from oag_dispatch.py create. VERIFY: compile or return the exact blocker. Write a non-empty receipt and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
+  "message": "TASK: act as the OAG PPA-aware RTL implementation agent. DELIVERABLE: the smallest RTL change that implements assigned contracts plus rtl_dialect, changed paths, implemented_contracts, behavior_refs_implemented, cycle_rule_refs_implemented, ppa_notes, checks_run, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. DISPATCH: include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path from oag_dispatch.py create. VERIFY: compile, run oag_ppa_check.py when applicable, or return the exact blocker. Use OAG SV-lite: Verilog-2001 plus logic and static generate by default. Write a non-empty receipt with may_claim_complete=false and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
   "agent_type": "oag-rtl-implementation-agent",
   "fork_context": false
 })
@@ -408,6 +419,17 @@ requiring UVM syntax or SystemVerilog classes: `sequence` owns stimulus intent,
 owns scenario/seed selection. Closed instances must keep expected_source,
 observed_source, and compare_source as separate roles.
 
+For general TB work, use `ontology/tb_methodology.yaml` and the documents under
+`.codex/oag/verification-methodology-principles.md`,
+`.codex/oag/tb-methodology-policy.md`,
+`.codex/oag/tb-architecture-patterns.md`,
+`.codex/oag/coverage-closure-policy.md`, and
+`.codex/oag/assertion-formal-policy.md`. The TB agent should choose the
+smallest sufficient methodology: directed/table-driven micro-TB for simple IPs,
+transaction/random/coverage/assertion-assisted TB for moderate IPs, and
+reusable agents/reference models/coverage-driven closure/formal candidates for
+complex IPs. Framework presence alone is not evidence.
+
 For signoff-grade domain claims, activate the SSOT-aligned rule kind instead of
 leaving the claim as review prose:
 
@@ -428,6 +450,14 @@ scoreboard rows or coverage JSON. For timing, use target clocks or
 `target_frequency_mhz` to derive `create_clock`; use CDC/RDC facts to derive
 async clock groups or CDC exceptions; default input/output delay is 50% of clock
 period unless the IP overrides it. DFT and power are not OAG v1 default gates.
+
+CDC/RDC is a domain-safety contract. Use `ontology/domain_intent.yaml` to record
+clock domains, reset domains, async inputs, crossing taxonomy, reset
+deassertion policy, and approved mitigation. Development checks may use
+`.codex/scripts/oag_domain_crossing_check.py` plus RTL structure notes and
+functional scenarios. Release-grade CDC/RDC closure requires static, formal,
+tool-grade, or explicitly approved equivalent evidence. Passing simulation alone
+does not close CDC/RDC.
 
 When a failure needs routed repair, create one failure ticket:
 
@@ -531,19 +561,36 @@ Use `scoreboard_rows.v1`: `goal_id`, `scenario_id`, `cycle`, `stimulus`,
 as `dut_signal`, `monitor`, `waveform`, `transaction`, or `assertion`; it must
 not be an FL/CL/model source.
 
+For coverage evidence, standardize the closure rule, not the tool. Coverage
+refs used for closure must resolve to contract-linked goals or evidence, and
+coverage from failed tests or failed scoreboard rows must not contribute to
+closure. Random stimulus without constraints and coverage goals is exploration,
+not closure evidence.
+
 For RTL semantics, use the common design rulebook instead of IP-specific prose.
 OAG expects rules for event/state commit consistency, same-cycle priority
 declaration, scoreboard evidence schema, contract-to-proof coverage,
 module/file ownership boundary, the RTL language subset, and optional
 signoff-grade CDC/protocol/timing/functional-coverage/reset-X-prop domain
 closures. Timing closure requires target frequency/clocks before SDC/STA can be
-claimed. The default
-language subset allows `logic` and Verilog
-`generate`/`genvar`/`generate for` for static elaboration; procedural `for`,
-`while`, `repeat`, or `forever` loops outside generate blocks are forbidden. OAG
-extracts lightweight RTL facts through `design_facts_graph.json`; it does not
-replace lint, elaboration, formal, protocol VIP, or signoff tools. It checks
-that declared hazards and language policies are tied to ROCEV objects and that
+claimed. Generated RTL is implementation, not truth: RTL agents may choose
+internal structure, but must not invent behavior, timing, reset values, address
+maps, priorities, or protocol semantics. PPA is architectural intent expressed
+in RTL structure; it must preserve locked behavior while considering critical
+paths, unnecessary switching, mux/register/memory growth, and synthesis-friendly
+structure. The default RTL subset is OAG SV-lite: Verilog-2001 baseline plus
+`logic` and static `generate`/`genvar`/`generate for`; `always_ff`,
+`always_comb`, and procedural `for`, `while`, `repeat`, or `forever` loops
+outside generate blocks are forbidden by default. Use
+`.codex/scripts/oag_ppa_check.py` for lightweight generated-RTL PPA/dialect
+screening when RTL files are available. Use
+`.codex/scripts/oag_domain_crossing_check.py` for lightweight development
+screening of domain intent and obvious unsafe crossings. OAG extracts
+lightweight RTL facts through `design_facts_graph.json` and domain-crossing
+intent through `domain_crossing_matrix.json`; these do not replace lint,
+elaboration, static CDC/RDC, formal, protocol VIP, synthesis, or signoff tools.
+It checks that declared hazards, crossings, and language policies are tied to
+ROCEV objects and that
 formal/assertion contracts name proof evidence.
 
 For closure semantics, OAG expects seven platform gates:
