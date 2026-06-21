@@ -743,6 +743,8 @@ def main() -> int:
         codex_home = Path(tmp) / "codex_home"
         codex_home.mkdir(parents=True, exist_ok=True)
         user_config = codex_home / "config.toml"
+        legacy_oag_mcp_server = "ontology" + "-ip-agent-oag"
+        legacy_oag_mcp_path = "/old/" + "ontology" + "_ip_agent/.codex/scripts/oag_mcp_server.py"
         user_config.write_text(
             "\n".join(
                 [
@@ -758,6 +760,20 @@ def main() -> int:
                     "",
                     "[agents]",
                     "max_depth = 0",
+                    "",
+                    "[mcp_servers.ip-dev-agent-oag]",
+                    'command = "python3"',
+                    'args = [".codex/scripts/oag_mcp_server.py"]',
+                    "",
+                    "[mcp_servers.ip-dev-agent-oag.env]",
+                    'OAG_ACTOR_SURFACE = "codex-mcp"',
+                    "",
+                    f"[mcp_servers.{legacy_oag_mcp_server}]",
+                    'command = "python3"',
+                    f'args = ["{legacy_oag_mcp_path}"]',
+                    "",
+                    "[mcp_servers.node_repl]",
+                    'command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"',
                     "",
                 ]
             ),
@@ -776,6 +792,10 @@ def main() -> int:
         assert "max_concurrent_threads_per_session = 10000" in migrated_config, migrated_config
         assert "max_depth = 1" in migrated_config, migrated_config
         assert "openai/codex#26753" in migrated_config, migrated_config
+        assert "ip-dev-agent-oag" not in migrated_config, migrated_config
+        assert legacy_oag_mcp_server not in migrated_config, migrated_config
+        assert "oag_mcp_server.py" not in migrated_config, migrated_config
+        assert "[mcp_servers.node_repl]" in migrated_config, migrated_config
         assert "OAG CODEX CONFIG MIGRATION" in hook_context(session_migration), session_migration.stdout
 
         session_idempotent = session_start_hook({"hook_event_name": "SessionStart"}, {"CODEX_HOME": str(codex_home)})

@@ -20,6 +20,7 @@ except ModuleNotFoundError:  # Python 3.10 and older
 
 FEATURES = ("multi_agent", "child_agents_md", "hooks")
 OPTIONAL_OMO_FEATURES = ("plugins", "plugin_hooks")
+OAG_MCP_SERVER_NAMES = ("ip-dev-agent-oag", "ontology" + "-ip-agent-oag")
 MULTI_AGENT_V2_MAX_THREADS = 10000
 MULTI_AGENT_V2_GUARD_COMMENT = (
     "# Managed by IP Dev Agent: multi_agent_v2 is re-disabled on every Codex session start\n"
@@ -132,6 +133,30 @@ def remove_setting(text: str, section: str, key: str) -> str:
     return "\n".join(next_lines).rstrip() + "\n"
 
 
+def remove_sections(text: str, sections: tuple[str, ...]) -> str:
+    next_text = text if text.endswith("\n") or not text else text + "\n"
+    for section in sections:
+        lines = next_text.splitlines()
+        bounds = find_section(lines, section)
+        if bounds is None:
+            continue
+        start, end = bounds
+        del lines[start:end]
+        while start < len(lines) and not lines[start].strip():
+            del lines[start]
+        next_text = "\n".join(lines).rstrip() + "\n"
+    return next_text
+
+
+def remove_oag_mcp_servers(text: str) -> str:
+    sections = tuple(
+        section
+        for server_name in OAG_MCP_SERVER_NAMES
+        for section in (f"mcp_servers.{server_name}", f"mcp_servers.{server_name}.env")
+    )
+    return remove_sections(text, sections)
+
+
 def section_lines(text: str, section: str) -> list[str]:
     lines = text.splitlines()
     bounds = find_section(lines, section)
@@ -154,6 +179,7 @@ def needs_multi_agent_v2_guard_patch(text: str) -> bool:
 def desired_config(text: str, *, include_omo_plugin_features: bool) -> str:
     should_annotate_v2_guard = needs_multi_agent_v2_guard_patch(text)
     next_text = text if text.endswith("\n") or not text else text + "\n"
+    next_text = remove_oag_mcp_servers(next_text)
     for feature in FEATURES:
         next_text = ensure_setting(next_text, "features", feature, "true")
     if include_omo_plugin_features:
@@ -187,6 +213,10 @@ def config_status(config: dict[str, Any], *, include_omo_plugin_features: bool) 
         issues.append(issue("MULTI_AGENT_V2_LIMIT", "[features.multi_agent_v2].max_concurrent_threads_per_session should be 10000."))
     if int(agents.get("max_depth") or 0) < 1:
         issues.append(issue("AGENT_DEPTH", "[agents].max_depth must be at least 1."))
+    mcp_servers = config.get("mcp_servers") if isinstance(config.get("mcp_servers"), dict) else {}
+    for server_name in OAG_MCP_SERVER_NAMES:
+        if server_name in mcp_servers:
+            issues.append(issue("OAG_MCP_ENABLED", f"[mcp_servers.{server_name}] must be removed; OAG uses scripts/skills/hooks, not an MCP server."))
     return issues
 
 

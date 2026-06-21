@@ -96,6 +96,9 @@ The default OAG workflow is script/skill based, not MCP based. Keep MCP server
 registration out of `.codex/config.toml`, and do not ship `.codex/mcp.json` in
 the pack. Use `.codex/scripts/oag_cli.py`, `.codex/scripts/oag_dispatch.py`,
 hooks, and the `oag-ip-workflow` skill as the primary runtime surface.
+`oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
+from user config while preserving unrelated Codex MCP tools such as browser or
+editor helpers.
 Native subagents must not depend on MCP startup for APB/RTL/TB/lint/sim/gate
 execution.
 Use `.codex/scripts/oag_protected_receipt_audit.py` to audit protected

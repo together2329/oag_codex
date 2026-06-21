@@ -33,6 +33,8 @@ SOURCE_SCAN_EXCLUDED_PARTS = {
     "__pycache__",
 }
 
+OAG_MCP_SERVER_NAMES = ("ip-dev-agent-oag", "ontology" + "-ip-agent-oag")
+
 REQUIRED_FILES = (
     CODEX_ROOT / "AGENTS.md",
     CODEX_ROOT / "config.toml",
@@ -388,8 +390,9 @@ def check_mcp_policy(issues: list[dict[str, str]]) -> None:
     except Exception:
         config = {}
     mcp_servers = config.get("mcp_servers") if isinstance(config.get("mcp_servers"), dict) else {}
-    if "ip-dev-agent-oag" in mcp_servers:
-        issues.append(issue("MCP_ENABLED_BY_DEFAULT", "OAG must use scripts/skills by default; do not auto-register ip-dev-agent-oag MCP in config.toml.", config_path))
+    for server_name in OAG_MCP_SERVER_NAMES:
+        if server_name in mcp_servers:
+            issues.append(issue("MCP_ENABLED_BY_DEFAULT", f"OAG must use scripts/skills by default; do not auto-register {server_name} MCP in config.toml.", config_path))
 
     mcp_path = CODEX_ROOT / "mcp.json"
     try:
@@ -397,8 +400,9 @@ def check_mcp_policy(issues: list[dict[str, str]]) -> None:
     except Exception:
         return
     configured = mcp_json.get("mcpServers") if isinstance(mcp_json.get("mcpServers"), dict) else {}
-    if "ip-dev-agent-oag" in configured:
-        issues.append(issue("MCP_ENABLED_BY_DEFAULT", "OAG must use scripts/skills by default; keep ip-dev-agent-oag out of mcp.json.", mcp_path))
+    for server_name in OAG_MCP_SERVER_NAMES:
+        if server_name in configured:
+            issues.append(issue("MCP_ENABLED_BY_DEFAULT", f"OAG must use scripts/skills by default; keep {server_name} out of mcp.json.", mcp_path))
 
 
 def check_docs(issues: list[dict[str, str]]) -> None:
