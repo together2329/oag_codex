@@ -81,6 +81,7 @@ Primary assets:
 - `scripts/oag_closure_check.py`
 - `scripts/oag_dispatch.py`
 - `scripts/oag_ppa_check.py`
+- `scripts/oag_pyslang_lint.py`
 - `scripts/oag_domain_crossing_check.py`
 - `scripts/oag_req_quality_check.py`
 - `scripts/oag_requirement_atom_check.py`
@@ -167,6 +168,9 @@ post-lock IP artifacts in ignored/untracked product directories against
 dispatch-backed native subagent receipts.
 Use `.codex/scripts/oag_ppa_check.py <rtl-file> --json` as the lightweight
 PPA/dialect screen for generated RTL changes when RTL files are available.
+Use `.codex/scripts/oag_pyslang_lint.py --ip-dir <ip> --json` as the optional
+pyslang syntax lint backend for `lint/dut_lint.json`. It complements Verilator
+lint and design-facts extraction; it does not prove behavior.
 Use `.codex/scripts/oag_domain_crossing_check.py --ip-dir <ip> --json` as the
 lightweight CDC/RDC intent screen when domain intent or RTL crossings are in
 scope. It does not replace release CDC/RDC tools.

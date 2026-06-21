@@ -143,6 +143,9 @@ domain crossings are in scope: record domain intent, classify every crossing,
 use approved mitigation patterns only, and never claim CDC/RDC closure from
 simulation alone. Use `.codex/scripts/oag_domain_crossing_check.py` as a
 lightweight development screen when applicable.
+Use `.codex/scripts/oag_pyslang_lint.py` as an optional pyslang syntax lint
+backend for `lint/dut_lint.json`; it complements Verilator/static evidence and
+does not prove behavior.
 Verification methodology is framework-neutral and profile-scaled. Do not force
 UVM, cocotb, SV, Verilog, OSVVM, or UVVM by default. Do require the role
 responsibilities that make evidence meaningful: planned scenario intent,

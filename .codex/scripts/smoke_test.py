@@ -32,6 +32,7 @@ CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
+PYSLANG_LINT = ROOT / "scripts" / "oag_pyslang_lint.py"
 REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
 CONTRACT_STRENGTH_CHECK = ROOT / "scripts" / "oag_contract_strength_check.py"
@@ -396,6 +397,9 @@ def make_ip(root: Path) -> Path:
     assert (ip / "knowledge" / "_index.json").is_file()
     assert (ip / "knowledge" / "ledger.jsonl").is_file()
     assert (ip / "list" / "rtl.f").is_file()
+    run_lint_text = (ip / "scripts" / "run_lint.sh").read_text(encoding="utf-8")
+    assert "OAG_LINT_BACKEND" in run_lint_text, run_lint_text
+    assert "oag_pyslang_lint.py" in run_lint_text, run_lint_text
     lock_status = call({"tool": "oag.lock_status", "arguments": {"ip_dir": str(ip)}})
     assert lock_status["result"]["state"] == "draft", lock_status
     locked = call(
@@ -484,6 +488,48 @@ def make_ip(root: Path) -> Path:
     (ip / "cov" / "coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     (ip / "signoff" / "truth_coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     return ip
+
+
+def test_pyslang_lint_runner() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        ip = Path(tmp) / "lint_ip"
+        (ip / "rtl").mkdir(parents=True)
+        (ip / "list").mkdir()
+        (ip / "rtl" / "demo.sv").write_text(
+            "\n".join(
+                [
+                    "module demo(input logic clk, output logic done);",
+                    "  assign done = clk;",
+                    "endmodule",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (ip / "list" / "rtl.f").write_text("+incdir+rtl\nrtl/*.sv\n", encoding="utf-8")
+        (ip / "list" / "lint.f").write_text("-f list/rtl.f\n", encoding="utf-8")
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(PYSLANG_LINT),
+                "--ip-dir",
+                str(ip),
+                "--filelist",
+                "list/lint.f",
+                "--out",
+                "lint/dut_lint.json",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert proc.returncode == 0, proc.stderr or proc.stdout
+        result = json.loads((ip / "lint" / "dut_lint.json").read_text(encoding="utf-8"))
+        assert result["status"] == "pass", result
+        assert result["tool"] == "pyslang", result
+        assert result["files"] == ["rtl/demo.sv"], result
 
 
 def write_stage_receipt(ip: Path, stage: str) -> None:
@@ -650,6 +696,7 @@ def main() -> int:
         assert ANSWER_KEY_EVAL.is_file(), ANSWER_KEY_EVAL
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
+        test_pyslang_lint_runner()
         assert DISPATCH.is_file(), DISPATCH
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
         assert VALIDATE_JSON.is_file(), VALIDATE_JSON
@@ -658,6 +705,7 @@ def main() -> int:
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
+        assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
         assert CONTRACT_STRENGTH_CHECK.is_file(), CONTRACT_STRENGTH_CHECK
@@ -724,6 +772,7 @@ def main() -> int:
         assert "oag_deep_semantic_intake.py" in skill_text, skill_text
         assert "oag_decision_matrix_generate.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_verification_plan_check.py" in skill_text, skill_text
+        assert "oag_pyslang_lint.py" in skill_text, skill_text
         assert "Skill Router" in skill_text, skill_text
         assert "oag-deep-semantic-intake" in skill_text, skill_text
         assert "oag-decision-matrix" in skill_text, skill_text

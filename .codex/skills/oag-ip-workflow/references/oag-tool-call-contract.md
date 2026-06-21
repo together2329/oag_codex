@@ -235,6 +235,16 @@ the authored module map. The source remains `ontology/requirements.yaml`,
 `ontology/design_rules.yaml`, `ontology/stages.yaml`, and
 `ontology/policies.yaml`.
 
+For lint evidence, generated scaffolds support an optional pyslang backend:
+
+```bash
+OAG_LINT_BACKEND=pyslang scripts/run_lint.sh
+```
+
+This writes `lint/dut_lint.json` through
+`.codex/scripts/oag_pyslang_lint.py`. It is syntax/static evidence only and does
+not replace Verilator lint, simulation, scoreboard, or closure validation.
+
 `ontology/policies.yaml` uses one closure strictness field:
 
 ```yaml

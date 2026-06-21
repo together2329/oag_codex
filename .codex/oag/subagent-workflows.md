@@ -228,7 +228,8 @@ Spawn:
   and strategy evidence only.
 - agent_type=oag-tb-implementation-agent for tb/<test_or_monitor> only.
 - agent_type=oag-rtl-lint-static-agent as read-only reviewer for filelist,
-  compile, lint, and static risks after the write agents report.
+  compile, lint, optional pyslang syntax lint via oag_pyslang_lint.py, and
+  static risks after the write agents report.
 
 The RTL implementation agent must implement assigned behavior/cycle refs, stay
 within OAG SV-lite by default, identify likely critical paths, high-toggle

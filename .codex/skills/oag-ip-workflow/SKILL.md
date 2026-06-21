@@ -305,7 +305,7 @@ For implementation splits:
 
 ```text
 multi_agent_v1.spawn_agent({
-  "message": "TASK: act as the OAG PPA-aware RTL implementation agent. DELIVERABLE: the smallest RTL change that implements assigned contracts plus rtl_dialect, changed paths, implemented_contracts, behavior_refs_implemented, cycle_rule_refs_implemented, ppa_notes, checks_run, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. DISPATCH: include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path from oag_dispatch.py create. VERIFY: compile, run oag_ppa_check.py when applicable, or return the exact blocker. Use OAG SV-lite: Verilog-2001 plus logic and static generate by default. Write a non-empty receipt with may_claim_complete=false and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
+  "message": "TASK: act as the OAG PPA-aware RTL implementation agent. DELIVERABLE: the smallest RTL change that implements assigned contracts plus rtl_dialect, changed paths, implemented_contracts, behavior_refs_implemented, cycle_rule_refs_implemented, ppa_notes, checks_run, blockers, and ROCEV links. SCOPE: rtl/<module>.sv only. DISPATCH: include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path from oag_dispatch.py create. VERIFY: compile, run oag_ppa_check.py when applicable, run optional oag_pyslang_lint.py syntax lint when available, or return the exact blocker. Use OAG SV-lite: Verilog-2001 plus logic and static generate by default. Write a non-empty receipt with may_claim_complete=false and end with OAG_EVIDENCE_RECORDED: <relative-path>. Do not claim final completion.",
   "agent_type": "oag-rtl-implementation-agent",
   "fork_context": false
 })
