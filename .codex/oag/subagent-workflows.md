@@ -210,6 +210,8 @@ Use Codex subagents and wait for all results.
 
 Spawn:
 - agent_type=oag-rtl-implementation-agent for rtl/<module>.sv only.
+- agent_type=oag-verification-strategy-agent for ontology/verification_plan.yaml
+  and strategy evidence only.
 - agent_type=oag-tb-implementation-agent for tb/<test_or_monitor> only.
 - agent_type=oag-rtl-lint-static-agent as read-only reviewer for filelist,
   compile, lint, and static risks after the write agents report.
@@ -225,17 +227,26 @@ applicable, and report `rtl_dialect`,
 `cycle_rule_refs_implemented`, `ppa_notes`, `domain_crossing_notes`,
 `changed_paths`, `checks_run`, and `may_claim_complete=false`.
 
-The TB implementation agent must act as a verification methodology agent, not a
-framework generator. It should read `ontology/tb_methodology.yaml` when present,
-classify each target, choose directed/table-driven, transaction-based,
+The verification strategy agent must act as the proof planner, not the TB
+writer. It should read locked requirements, obligations, contracts,
+behavior_model, cycle_rules, domain_intent, and evidence_plan, then write or
+review `ontology/verification_plan.yaml` with verification objectives,
+proof_methods, scenarios, coverage_goals, assertion/formal candidates,
+fault-model hooks, residual_risks, and open strategy blockers. It must not
+implement RTL/TB.
+
+The TB implementation agent must act as a verification methodology implementer,
+not the owner of the proof strategy. It should read
+`ontology/verification_plan.yaml` and `ontology/tb_methodology.yaml` when
+present, classify each target, choose directed/table-driven, transaction-based,
 constrained-random, assertion-assisted, formal-candidate, or PSS-style scenario
 planning depth as appropriate, and report `tb_methodology_notes` with
 methodology_profile, framework, architecture roles, stimulus_strategy,
-coverage_strategy, assertion_hooks, formal_candidates, and open blockers. It
-may test functional consequences of CDC/RDC rules, such as synchronizer latency
-or reset sequencing, but must not claim CDC/RDC, low-power, safety, or AMS
-closure from ordinary simulation alone. Failed rows must not count toward
-closure coverage.
+coverage_strategy, assertion_hooks, formal_candidates, and open blockers. TB
+writer must not define the proof strategy it is trying to satisfy. It may test
+functional consequences of CDC/RDC rules, such as synchronizer latency or reset
+sequencing, but must not claim CDC/RDC, low-power, safety, or AMS closure from
+ordinary simulation alone. Failed rows must not count toward closure coverage.
 
 Each subagent must report changed paths, evidence commands, blockers, and ROCEV
 links. Write-capable evidence-producing subagents must write a non-empty receipt

@@ -360,6 +360,9 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "REQ_STATUS_DRAFT" in hard_codes, hard
     assert "REQ_AMBIGUITY_STATUS" in hard_codes, hard
     assert "ATOM_AMBIGUITY" in hard_codes, hard
+    assert "VPLAN_OPEN_BLOCKERS" in hard_codes, hard
+    assert "VOBJ_NOT_READY" in hard_codes, hard
+    assert "VOBJ_OPEN_RISK" in hard_codes, hard
 
     locked_ip = smoke_test.make_ip(root / "lock_readiness_locked")
     locked_proc = subprocess.run(
@@ -378,6 +381,9 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "REQ_AMBIGUITY_STATUS" in locked_codes, locked
     assert "CONTRACT_ASSUME_MISSING" in locked_codes, locked
     assert "CONTRACT_GUARANTEE_MISSING" in locked_codes, locked
+    assert "VPLAN_OPEN_BLOCKERS" in locked_codes, locked
+    assert "VOBJ_NOT_READY" in locked_codes, locked
+    assert "VOBJ_OPEN_RISK" in locked_codes, locked
     return {
         "draft_ip": str(draft_ip),
         "locked_ip": str(locked_ip),
@@ -430,6 +436,52 @@ def case_requirement_quality_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "AMBIGUITY_LOCK_BLOCKER" in hard_codes, hard
     assert "REQ_STATUS_DRAFT" in hard_codes, hard
     assert "REQ_AMBIGUITY_STATUS" in hard_codes, hard
+    return {
+        "draft_ip": str(draft_ip),
+        "draft_status": draft["status"],
+        "hard_status": hard["status"],
+        "hard_issue_codes": sorted(hard_codes),
+    }
+
+
+def case_verification_plan_scaffold_seed(root: Path) -> dict[str, Any]:
+    draft_ip = root / "verification_plan_draft" / "demo_counter_cx1"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(draft_ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    policies = _read_yaml(draft_ip / "ontology" / "policies.yaml")
+    vplan = _read_yaml(draft_ip / "ontology" / "verification_plan.yaml")
+    strategy_policy = policies.get("verification_strategy_policy") if isinstance(policies.get("verification_strategy_policy"), dict) else {}
+    assert strategy_policy.get("canonical_verification_plan_file") == "ontology/verification_plan.yaml", policies
+    assert strategy_policy.get("owner_role") == "oag-verification-strategy-agent", policies
+    assert strategy_policy.get("tb_writer_may_define_strategy") is False, policies
+    assert vplan.get("schema_version") == "oag_verification_plan.v1", vplan
+    assert isinstance(vplan.get("verification_objectives"), list) and vplan["verification_objectives"], vplan
+
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_verification_plan_check.py"), "--ip-dir", str(draft_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+    assert draft["hard_gate"] is False, draft
+
+    hard_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_verification_plan_check.py"), "--ip-dir", str(draft_ip), "--require-locked", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert hard_proc.returncode != 0, hard_proc.stdout + hard_proc.stderr
+    hard = json.loads(hard_proc.stdout)
+    hard_codes = {item["code"] for item in hard["issues"]}
+    assert "VPLAN_OPEN_BLOCKERS" in hard_codes, hard
+    assert "VOBJ_NOT_READY" in hard_codes, hard
+    assert "VOBJ_OPEN_RISK" in hard_codes, hard
     return {
         "draft_ip": str(draft_ip),
         "draft_status": draft["status"],
@@ -1795,6 +1847,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
     ("requirement_quality_scaffold_seed", case_requirement_quality_scaffold_seed),
+    ("verification_plan_scaffold_seed", case_verification_plan_scaffold_seed),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),

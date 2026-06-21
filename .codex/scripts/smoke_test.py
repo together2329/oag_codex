@@ -56,7 +56,9 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_scope_lock.schema.json",
     ROOT / "schemas" / "oag_source_claims.schema.json",
     ROOT / "schemas" / "oag_ambiguity_register.schema.json",
+    ROOT / "schemas" / "oag_requirement_atom.schema.json",
     ROOT / "schemas" / "oag_decision_matrix.schema.json",
+    ROOT / "schemas" / "oag_verification_plan.schema.json",
 ]
 
 
@@ -341,6 +343,7 @@ def make_ip(root: Path) -> Path:
     assert (ip / "ontology" / "contracts.yaml").is_file()
     assert (ip / "ontology" / "modeling.yaml").is_file()
     assert (ip / "ontology" / "domain_intent.yaml").is_file()
+    assert (ip / "ontology" / "verification_plan.yaml").is_file()
     assert (ip / "ontology" / "tb_methodology.yaml").is_file()
     assert (ip / "ontology" / "structure.yaml").is_file()
     assert (ip / "ontology" / "decomposition.yaml").is_file()
@@ -357,12 +360,14 @@ def make_ip(root: Path) -> Path:
     assert "modeling_policy:" in policy_text, policy_text
     assert "requirement_decomposition_policy:" in policy_text, policy_text
     assert "decision_matrix_policy:" in policy_text, policy_text
+    assert "verification_strategy_policy:" in policy_text, policy_text
     assert "domain_crossing_policy:" in policy_text, policy_text
     assert "tb_methodology_policy:" in policy_text, policy_text
     assert (ip / "ontology" / "protection.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "scoreboard_rows.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "stage_run_receipt.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "cdc_rdc_report.v1.yaml").is_file()
+    assert (ip / "ontology" / "evidence" / "verification_plan_report.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "tb_methodology_report.v1.yaml").is_file()
     assert (ip / "ontology" / "decision_receipt.v1.yaml").is_file()
     assert (ip / "ontology" / "run_state.v1.yaml").is_file()
@@ -650,14 +655,14 @@ def main() -> int:
         assert agent_catalog_check.returncode == 0, agent_catalog_check.stderr or agent_catalog_check.stdout
         agent_catalog_result = json.loads(agent_catalog_check.stdout)
         assert agent_catalog_result["status"] == "pass", agent_catalog_result
-        assert agent_catalog_result["counts"] == {"core": 13, "custom": 3, "total": 16, "toml_files": 16}, agent_catalog_result
+        assert agent_catalog_result["counts"] == {"core": 14, "custom": 3, "total": 17, "toml_files": 17}, agent_catalog_result
         assert agent_catalog_result["completion_authority"] == ["oag-gate-reviewer"], agent_catalog_result
         assert agent_catalog_result["final_decision_authority"] == ["oag-gate-reviewer"], agent_catalog_result
         pack_release_check = run_pack_release_check()
         assert pack_release_check.returncode == 0, pack_release_check.stderr or pack_release_check.stdout
         pack_release_result = json.loads(pack_release_check.stdout)
         assert pack_release_result["status"] == "pass", pack_release_result
-        assert pack_release_result["counts"]["agent_tomls"] == 16, pack_release_result
+        assert pack_release_result["counts"]["agent_tomls"] == 17, pack_release_result
         assert pack_release_result["counts"]["schemas"] >= 4, pack_release_result
         subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
@@ -672,6 +677,8 @@ def main() -> int:
         assert "oag_exec_auto_research.py" in subagent_workflows, subagent_workflows
         assert "codex exec resume" in subagent_workflows, subagent_workflows
         assert "spawn_agent" in subagent_workflows and ".codex/runs/auto_research/" in subagent_workflows, subagent_workflows
+        assert "oag-verification-strategy-agent" in subagent_workflows, subagent_workflows
+        assert "ontology/verification_plan.yaml" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
         agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         directive_text = OAG_MODE_DIRECTIVE.read_text(encoding="utf-8")
@@ -681,6 +688,7 @@ def main() -> int:
         assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_req_quality_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_lock_readiness_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_verification_plan_check.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
@@ -700,6 +708,8 @@ def main() -> int:
         assert "req/source_claims.yaml" in agents_text, agents_text
         assert "req/ambiguity_register.yaml" in agents_text, agents_text
         assert "oag_lock_readiness_check.py" in agents_text, agents_text
+        assert "oag_verification_plan_check.py" in agents_text, agents_text
+        assert "ontology/verification_plan.yaml" in agents_text, agents_text
         assert "After user lock, main agent orchestrates" in agents_text, agents_text
         assert "oag_main_write_gate.py" in agents_text, agents_text
         assert "oag_exec_auto_research.py" in agents_text, agents_text
@@ -710,6 +720,8 @@ def main() -> int:
         assert "req/source_claims.yaml" in directive_text, directive_text
         assert "req/ambiguity_register.yaml" in directive_text, directive_text
         assert "oag_lock_readiness_check.py" in directive_text, directive_text
+        assert "oag_verification_plan_check.py" in directive_text, directive_text
+        assert "ontology/verification_plan.yaml" in directive_text, directive_text
         assert "After user lock, main agent orchestrates" in directive_text, directive_text
         assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text

@@ -100,12 +100,15 @@ After lock and before implementation or closure, run the OAG V2 semantic gate:
 python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json
 ```
 
 Resolve failures before relying on obligations or contracts. These checks block
 locked scopes that still have unresolved source ambiguity, weak requirement
 shape, unresolved requirement-atom ambiguity, prose-only obligations, or
-closure-grade contracts without explicit assume/guarantee.
+closure-grade contracts without explicit assume/guarantee. For locked TB work,
+`ontology/verification_plan.yaml` must define the proof objectives before the
+TB implementation agent satisfies them.
 The lock-readiness check also blocks lock-required decision rows that are still
 unresolved, proposed, or blocked. Passing it is implementation readiness, not
 IP closure.
@@ -204,7 +207,7 @@ under `req/interview_draft.md`, `ontology/drafts/`, and `knowledge/records/`.
 
 Codex-facing OAG roles are individual `.codex/agents/oag-*.toml` custom agent
 files. OAG metadata for those roles lives in `.codex/oag/agent-catalog.toml`.
-The stable set is 13 core duties plus 3 custom dynamic duties:
+The stable set is 14 core duties plus 3 custom dynamic duties:
 
 - `oag-custom-researcher`: bounded research shard.
 - `oag-custom-worker`: bounded implementation or repair shard.
@@ -451,14 +454,18 @@ observed_source, and compare_source as separate roles.
 
 For general TB work, use `ontology/tb_methodology.yaml` and the documents under
 `.codex/oag/verification-methodology-principles.md`,
+`.codex/oag/verification-strategy-policy.md`,
 `.codex/oag/tb-methodology-policy.md`,
 `.codex/oag/tb-architecture-patterns.md`,
 `.codex/oag/coverage-closure-policy.md`, and
-`.codex/oag/assertion-formal-policy.md`. The TB agent should choose the
-smallest sufficient methodology: directed/table-driven micro-TB for simple IPs,
-transaction/random/coverage/assertion-assisted TB for moderate IPs, and
-reusable agents/reference models/coverage-driven closure/formal candidates for
-complex IPs. Framework presence alone is not evidence.
+`.codex/oag/assertion-formal-policy.md`. Verification strategy belongs in
+`ontology/verification_plan.yaml` and should be authored or reviewed by
+`oag-verification-strategy-agent` after lock. The TB implementation agent should
+consume that plan and choose the smallest sufficient methodology:
+directed/table-driven micro-TB for simple IPs, transaction/random/coverage/
+assertion-assisted TB for moderate IPs, and reusable agents/reference
+models/coverage-driven closure/formal candidates for complex IPs. Framework
+presence alone is not evidence.
 
 For signoff-grade domain claims, activate the SSOT-aligned rule kind instead of
 leaving the claim as review prose:

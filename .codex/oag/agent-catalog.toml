@@ -62,7 +62,22 @@ final_decision_authority = false
 requires_oag_context = true
 required_evidence = ["per-IP evidence contract", "observable list", "owner routing map"]
 forbidden_actions = ["implement RTL/TB", "select a fixed UART/DMA/SPI template as authority"]
-handoff_targets = ["oag-rtl-implementation-agent", "oag-tb-implementation-agent", "oag-evidence-validator"]
+handoff_targets = ["oag-rtl-implementation-agent", "oag-verification-strategy-agent", "oag-evidence-validator"]
+
+[[agents]]
+id = "oag-verification-strategy-agent"
+source_file = ".codex/agents/oag-verification-strategy-agent.toml"
+kind = "core"
+responsibility = "Define verification objectives, proof method depth, scenarios, coverage intent, assertion/formal candidates, and residual risk before TB implementation."
+may_modify_source = false
+may_write_evidence = true
+allowed_write_paths = ["ontology/verification_plan.yaml", "knowledge/verification_strategy/", "reports/"]
+may_claim_complete = false
+final_decision_authority = false
+requires_oag_context = true
+required_evidence = ["verification plan", "strategy blockers", "residual risk notes"]
+forbidden_actions = ["implement RTL/TB", "define strategy by copying easy TB cases", "claim closure from strategy alone"]
+handoff_targets = ["oag-tb-implementation-agent", "oag-coverage-agent", "oag-mutation-guard-agent", "oag-evidence-validator"]
 
 [[agents]]
 id = "oag-rtl-implementation-agent"
@@ -98,7 +113,7 @@ handoff_targets = ["oag-rtl-implementation-agent", "oag-evidence-validator"]
 id = "oag-tb-implementation-agent"
 source_file = ".codex/agents/oag-tb-implementation-agent.toml"
 kind = "core"
-responsibility = "Implement TB, scenarios, monitors, reference prediction, scoreboard rows, and coverage collection."
+responsibility = "Implement TB, scenarios, monitors, reference prediction, scoreboard rows, and coverage collection from verification strategy."
 may_modify_source = true
 may_write_evidence = true
 allowed_write_paths = ["tb/", "sim/", "tests/", "knowledge/scoreboards/"]

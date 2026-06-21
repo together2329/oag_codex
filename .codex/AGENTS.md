@@ -26,6 +26,7 @@ Primary assets:
 - `oag/clock-reset-architecture.md`
 - `oag/cdc-rdc-evidence.md`
 - `oag/verification-methodology-principles.md`
+- `oag/verification-strategy-policy.md`
 - `oag/tb-methodology-policy.md`
 - `oag/tb-architecture-patterns.md`
 - `oag/coverage-closure-policy.md`
@@ -36,6 +37,7 @@ Primary assets:
 - `rules/oag-requirements-quality.rules.md`
 - `rules/oag-requirement-decomposition.rules.md`
 - `rules/oag-lock-readiness.rules.md`
+- `rules/oag-verification-strategy.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
 - `rules/oag-tb-methodology.rules.md`
@@ -71,6 +73,7 @@ Primary assets:
 - `scripts/oag_req_quality_check.py`
 - `scripts/oag_requirement_atom_check.py`
 - `scripts/oag_lock_readiness_check.py`
+- `scripts/oag_verification_plan_check.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
@@ -102,8 +105,9 @@ PPA-aware RTL structure, `oag/domain-crossing-principles.md` and
 inventory, and allowed crossing patterns, `oag/cdc-rdc-evidence.md` defines
 development vs release CDC/RDC evidence strength,
 `oag/verification-methodology-principles.md` defines framework-neutral TB
-methodology, `oag/tb-methodology-policy.md` defines profile-scaled TB depth,
-`oag/tb-architecture-patterns.md` defines driver/monitor/predictor/scoreboard
+methodology, `oag/verification-strategy-policy.md` defines the split between
+verification strategy and TB implementation, `oag/tb-methodology-policy.md`
+defines profile-scaled TB depth, `oag/tb-architecture-patterns.md` defines driver/monitor/predictor/scoreboard
 roles, `oag/coverage-closure-policy.md` defines coverage that can and cannot
 support closure, `oag/assertion-formal-policy.md` defines assertion/formal
 escalation, `oag/scoreboard-evidence.md` defines expected/observed
@@ -143,27 +147,36 @@ Use `.codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json` as the
 post-lock readiness screen for `ontology/decision_matrix.yaml` plus the
 requirement atom gate. It blocks implementation when any lock-required decision
 is still unresolved, proposed, or blocked.
+Use `.codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json` as the
+verification strategy screen for `ontology/verification_plan.yaml`. After lock,
+TB implementation should consume the verification plan rather than define the
+proof strategy it is trying to satisfy.
 Use `.codex/scripts/oag_workflow_whole_db.py` to generate a single Markdown
 review bundle of the `.codex` workflow pack as `oag_workflow_whole_db.md`.
 The bundle is generated review evidence, not canonical OAG truth.
-Use `ontology/tb_methodology.yaml` and `.codex/oag/tb-methodology-policy.md` to
-scale TB depth by IP profile. The TB agent should prefer the smallest
-self-checking architecture that preserves independent expected behavior,
-scenario mapping, scoreboard rows, contract-linked coverage, and assertion or
-formal hooks when those hooks improve proof strength.
+Use `ontology/verification_plan.yaml` and
+`.codex/oag/verification-strategy-policy.md` to define verification objectives,
+proof methods, scenarios, coverage goals, assertion/formal candidates, and
+residual risk. Use `ontology/tb_methodology.yaml` and
+`.codex/oag/tb-methodology-policy.md` to scale TB implementation depth by IP
+profile. The TB agent should prefer the smallest self-checking architecture
+that satisfies the verification plan while preserving independent expected
+behavior, scenario mapping, scoreboard rows, contract-linked coverage, and
+assertion or formal hooks when those hooks improve proof strength.
 
 Use `.codex/agents/*.toml` as Codex custom agent definitions. Each TOML file
 must be a standalone Codex agent file with `name`, `description`, and
 `developer_instructions`. OAG metadata for those agents lives outside that
 loader path in `.codex/oag/agent-catalog.toml`.
 
-The OAG role catalog defines 13 core duties plus 3 custom dynamic duties. The
+The OAG role catalog defines 14 core duties plus 3 custom dynamic duties. The
 role TOMLs are prompts and guardrails; durable state is still the IP ontology,
 ledger, records, receipts, and evidence artifacts.
 
 Critical OAG reasoning lanes must use `model_reasoning_effort = "xhigh"`:
-requirement/contract, legacy/reference analysis, IP contract derivation, RTL
-implementation, TB implementation, evidence validation, and gate review.
+requirement/contract, legacy/reference analysis, IP contract derivation,
+verification strategy, RTL implementation, TB implementation, evidence
+validation, and gate review.
 Procedural lanes such as lint/static checks, sim execution, coverage, and custom
 worker shards may stay lower for throughput.
 
@@ -238,7 +251,8 @@ gate decision stale and requires re-validation and re-gate.
 For post-lock implementation or closure, run
 `python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json`,
 `python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` and
-`python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json`, then
+`python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json`, and
+`python3 .codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json`, then
 resolve failures before relying on obligations or contracts. This prevents
 requirements without source claims or clear ambiguity status, prose-only
 obligations such as "APB works", closure-grade contracts without explicit

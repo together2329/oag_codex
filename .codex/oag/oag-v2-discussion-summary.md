@@ -433,19 +433,24 @@ Applied MVP files:
 .codex/oag/deep-semantic-intake-policy.md
 .codex/oag/requirements-quality-policy.md
 .codex/oag/decision-matrix-policy.md
+.codex/oag/verification-strategy-policy.md
 .codex/oag/requirement-decomposition-principles.md
 .codex/oag/assume-guarantee-contracts.md
 .codex/oag/phenomena-boundary-model.md
 .codex/rules/oag-requirements-quality.rules.md
+.codex/rules/oag-verification-strategy.rules.md
 .codex/rules/oag-requirement-decomposition.rules.md
 .codex/rules/oag-lock-readiness.rules.md
 .codex/schemas/oag_source_claims.schema.json
 .codex/schemas/oag_ambiguity_register.schema.json
 .codex/schemas/oag_decision_matrix.schema.json
+.codex/schemas/oag_verification_plan.schema.json
 .codex/schemas/oag_requirement_atom.schema.json
 .codex/scripts/oag_req_quality_check.py
+.codex/scripts/oag_verification_plan_check.py
 .codex/scripts/oag_lock_readiness_check.py
 .codex/scripts/oag_requirement_atom_check.py
+.codex/agents/oag-verification-strategy-agent.toml
 ```
 
 IP canonical seed now created by scaffold:
@@ -455,6 +460,7 @@ req/deep_semantic_intake/
 req/source_claims.yaml
 req/ambiguity_register.yaml
 ontology/decision_matrix.yaml
+ontology/verification_plan.yaml
 ontology/requirement_atoms.yaml
 ```
 
@@ -468,6 +474,11 @@ The MVP is intentionally a thin extension:
 - `oag_lock_readiness_check.py` now aggregates decision blockers, requirement
   quality blockers, requirement atom blockers, shallow obligations, and
   assume/guarantee contract weakness.
+- `oag-verification-strategy-agent` and `ontology/verification_plan.yaml` split
+  proof strategy from TB implementation. The strategy layer owns verification
+  objectives, proof methods, scenarios, coverage goals, assertion/formal
+  candidates, fault-model hooks, and residual risk. The TB implementation agent
+  consumes the strategy instead of defining it.
 - OAG mode and the `oag-ip-workflow` skill now point agents to requirement
   quality, decisions, and requirement atoms before lock, then to
   `oag_req_quality_check.py`, `oag_requirement_atom_check.py`, and
@@ -486,6 +497,7 @@ Next wave:
 .codex/scripts/oag_contract_strength_check.py
 ontology/assurance_argument.yaml
 ontology/coverage_fault_models.yaml
+ontology/coverage_model.yaml
 ```
 
 ## Minimum Gate Rules

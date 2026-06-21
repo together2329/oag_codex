@@ -61,6 +61,9 @@ Use the OAG principle layer before choosing artifacts:
   strength.
 - `.codex/oag/verification-methodology-principles.md` for framework-neutral TB
   methodology.
+- `.codex/oag/verification-strategy-policy.md` for verification objectives,
+  proof methods, scenarios, coverage goals, assertion/formal candidates, and
+  residual risk before TB implementation.
 - `.codex/oag/tb-methodology-policy.md` for profile-scaled TB depth.
 - `.codex/oag/tb-architecture-patterns.md` for driver, monitor, predictor,
   scoreboard, coverage, assertion hook, and result writer roles.
@@ -167,6 +170,7 @@ After lock, run:
 python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json
 ```
 
 Resolve failures before implementation, validation, gate review, or closure.
@@ -314,6 +318,9 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   obligations and closure-grade contracts without assume/guarantee are blockers.
 - Locked scopes must pass `oag_lock_readiness_check.py`; unresolved or proposed
   lock-required decisions are blockers.
+- Locked TB or verification work must pass `oag_verification_plan_check.py`;
+  `ontology/verification_plan.yaml` owns proof objectives, while TB
+  implementation satisfies the plan.
 - After lock, no main-agent RTL/TB/verification writes. Use native subagent
   dispatch + receipt or stop with BLOCKED. Stop hook runs
   `oag_main_write_gate.py` to enforce this.
