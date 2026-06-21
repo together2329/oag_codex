@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT.parent
 OAG = ROOT / "scripts" / "oag_cli.py"
 GRAPH = ROOT / "scripts" / "oag_graph.py"
-MCP = ROOT / "scripts" / "oag_mcp_server.py"
 PORTABLE_DB = ROOT / "scripts" / "oag_portable_db.py"
 OKF = ROOT / "scripts" / "oag_okf.py"
 EVAL = ROOT / "scripts" / "oag_eval.py"
@@ -535,81 +534,6 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
     )
 
 
-def mcp_frame(payload: dict) -> bytes:
-    body = json.dumps(payload).encode("utf-8")
-    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
-
-
-def parse_mcp_frames(raw: bytes) -> list[dict]:
-    messages = []
-    while raw:
-        header_end = raw.find(b"\r\n\r\n")
-        if header_end < 0:
-            raise RuntimeError(f"Missing MCP header terminator in {raw[:80]!r}")
-        header = raw[:header_end].decode("ascii")
-        length = None
-        for line in header.splitlines():
-            name, separator, value = line.partition(":")
-            if separator and name.lower() == "content-length":
-                length = int(value.strip())
-        if length is None:
-            raise RuntimeError(f"Missing MCP Content-Length in {header!r}")
-        body_start = header_end + 4
-        body_end = body_start + length
-        body = raw[body_start:body_end]
-        if len(body) != length:
-            raise RuntimeError(f"Truncated MCP body: wanted {length}, got {len(body)}")
-        messages.append(json.loads(body.decode("utf-8")))
-        raw = raw[body_end:]
-    return messages
-
-
-def mcp_tools_list_line() -> dict:
-    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
-    tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-    proc = subprocess.run(
-        [sys.executable, str(MCP)],
-        input=json.dumps(initialize) + "\n" + json.dumps(tools) + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
-        cwd=ROOT,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr or proc.stdout)
-    lines = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-    return lines[-1]
-
-
-def mcp_tools_list_framed() -> dict:
-    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
-    initialized = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
-    tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
-    proc = subprocess.run(
-        [sys.executable, str(MCP)],
-        input=mcp_frame(initialize) + mcp_frame(initialized) + mcp_frame(tools),
-        capture_output=True,
-        check=False,
-        cwd=ROOT,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.decode(errors="replace") or proc.stdout.decode(errors="replace"))
-    messages = parse_mcp_frames(proc.stdout)
-    assert len(messages) == 2, messages
-    assert messages[0]["id"] == 1, messages
-    assert messages[1]["id"] == 2, messages
-    return messages[-1]
-
-
-def mcp_tools_list() -> dict:
-    line_response = mcp_tools_list_line()
-    framed_response = mcp_tools_list_framed()
-    line_tools = [tool["name"] for tool in line_response["result"]["tools"]]
-    framed_tools = [tool["name"] for tool in framed_response["result"]["tools"]]
-    assert framed_tools == line_tools, (line_tools, framed_tools)
-    return framed_response
-
-
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
@@ -725,15 +649,14 @@ def main() -> int:
         assert "observed" in subagent_workflows and "native-spawn blocker" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" not in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
-        mcp_text = (ROOT / "mcp.json").read_text(encoding="utf-8")
         user_home_prefix = "/" + "Users/"
         assert user_home_prefix not in config_text, config_text
-        assert user_home_prefix not in mcp_text, mcp_text
         assert 'multi_agent = true' in config_text, config_text
         assert 'child_agents_md = true' in config_text, config_text
         assert 'enabled = false' in config_text, config_text
         assert 'max_concurrent_threads_per_session = 10000' in config_text, config_text
         assert 'max_depth = 1' in config_text, config_text
+        assert "mcp_servers" not in config_text, config_text
 
         dry_run_root = Path(tmp) / "exec_auto_research_runs"
         exec_auto_research = subprocess.run(
@@ -1835,8 +1758,6 @@ def main() -> int:
         assert any(node["type"] == "run" for node in graph_data["graph"]["nodes"]), graph_data
         assert any(node["type"] == "ticket" for node in graph_data["graph"]["nodes"]), graph_data
         assert "OAG Ontology Graph" in graph_html.read_text(encoding="utf-8")
-        tools = mcp_tools_list()
-        assert len(tools["result"]["tools"]) >= 10, tools
         portable_archive = Path(tmp) / "oag_portable_smoke.tar.gz"
         portable_export = subprocess.run(
             [
@@ -2996,7 +2917,7 @@ def main() -> int:
         monotonic_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(monotonic_ip)}})
         assert monotonic_check["result"]["ok"] is False, monotonic_check
         assert any("monotonic closure violation" in issue for issue in monotonic_check["result"]["issues"]), monotonic_check
-        print(json.dumps({"ok": True, "ip": str(ip), "mcp_tools": len(tools["result"]["tools"])}, indent=2))
+        print(json.dumps({"ok": True, "ip": str(ip), "runtime": "script_skill_hooks"}, indent=2))
     return 0
 
 

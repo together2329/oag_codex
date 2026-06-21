@@ -26,7 +26,6 @@ Primary assets:
 - `hooks/codex_subagent_oag_gate.py`
 - `hooks.json`
 - `scripts/oag_cli.py`
-- `scripts/oag_mcp_server.py`
 - `scripts/oag_scaffold_ip.py`
 - `scripts/oag_graph.py`
 - `scripts/oag_portable_db.py`
@@ -40,11 +39,17 @@ Primary assets:
 - `scripts/oag_pack_release_check.py`
 - `scripts/oag_exec_auto_research.py`
 - `schemas/*.schema.json`
-- `mcp.json`
 - `config.toml`
 
 Use OAG as the common interface for Requirement -> Obligation -> Contract ->
 Evidence -> Validation IP work.
+
+The default OAG workflow is script/skill based, not MCP based. Keep MCP server
+registration out of `.codex/config.toml`, and do not ship `.codex/mcp.json` in
+the pack. Use `.codex/scripts/oag_cli.py`, `.codex/scripts/oag_dispatch.py`,
+hooks, and the `oag-ip-workflow` skill as the primary runtime surface.
+Native subagents must not depend on MCP startup for APB/RTL/TB/lint/sim/gate
+execution.
 
 Use `.codex/agents/*.toml` as Codex custom agent definitions. Each TOML file
 must be a standalone Codex agent file with `name`, `description`, and
