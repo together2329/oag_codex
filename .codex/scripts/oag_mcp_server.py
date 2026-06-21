@@ -2,7 +2,9 @@
 """Minimal MCP stdio server for the OAG tool-call gateway.
 
 This implementation avoids external MCP dependencies so the plugin can be
-tested immediately. It supports initialize, tools/list, and tools/call.
+tested immediately. It supports initialize, tools/list, and tools/call. Codex
+uses MCP stdio framing, while a few local smoke tests still use newline JSON;
+this server accepts both transports.
 """
 
 from __future__ import annotations
@@ -309,6 +311,83 @@ def _jsonrpc_error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
+def _encode_response(response: dict[str, Any]) -> bytes:
+    return json.dumps(response, ensure_ascii=False).encode("utf-8")
+
+
+def _write_line_response(response: dict[str, Any]) -> None:
+    print(json.dumps(response, ensure_ascii=False), flush=True)
+
+
+def _write_framed_response(response: dict[str, Any]) -> None:
+    payload = _encode_response(response)
+    sys.stdout.buffer.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
+
+
+def _read_framed_headers() -> dict[str, str] | None:
+    headers: dict[str, str] = {}
+    while True:
+        line = sys.stdin.buffer.readline()
+        if line == b"":
+            return None
+        line = line.rstrip(b"\r\n")
+        if not line:
+            return headers
+        name, separator, value = line.partition(b":")
+        if not separator:
+            raise ValueError(f"invalid MCP header line: {line!r}")
+        headers[name.decode("ascii", errors="strict").lower()] = value.strip().decode(
+            "ascii", errors="strict"
+        )
+
+
+def _iter_framed_requests():
+    while True:
+        headers = _read_framed_headers()
+        if headers is None:
+            return
+        raw_length = headers.get("content-length")
+        if raw_length is None:
+            raise ValueError("missing MCP Content-Length header")
+        try:
+            content_length = int(raw_length)
+        except ValueError as exc:
+            raise ValueError(f"invalid MCP Content-Length: {raw_length!r}") from exc
+        if content_length < 0:
+            raise ValueError(f"invalid negative MCP Content-Length: {content_length}")
+        body = sys.stdin.buffer.read(content_length)
+        if len(body) != content_length:
+            raise EOFError("unexpected EOF while reading MCP message body")
+        yield json.loads(body.decode("utf-8"))
+
+
+def _run_framed_stdio() -> int:
+    for request in _iter_framed_requests():
+        try:
+            response = handle(request)
+        except Exception as exc:
+            response = _jsonrpc_error(None, -32000, str(exc))
+        if response is not None:
+            _write_framed_response(response)
+    return 0
+
+
+def _run_line_stdio() -> int:
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+            response = handle(request)
+        except Exception as exc:
+            response = _jsonrpc_error(None, -32000, str(exc))
+        if response is not None:
+            _write_line_response(response)
+    return 0
+
+
 def _tool_to_oag(name: str) -> str:
     mapping = {
         "oag_scaffold": "oag.scaffold",
@@ -399,17 +478,13 @@ def handle(request: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def main() -> int:
-    for line in sys.stdin:
-        if not line.strip():
-            continue
-        try:
-            request = json.loads(line)
-            response = handle(request)
-        except Exception as exc:
-            response = _jsonrpc_error(None, -32000, str(exc))
-        if response is not None:
-            print(json.dumps(response, ensure_ascii=False), flush=True)
-    return 0
+    try:
+        first_bytes = sys.stdin.buffer.peek(32)[:32]
+    except AttributeError:
+        return _run_line_stdio()
+    if first_bytes.lower().startswith(b"content-length:"):
+        return _run_framed_stdio()
+    return _run_line_stdio()
 
 
 if __name__ == "__main__":

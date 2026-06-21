@@ -535,7 +535,36 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
     )
 
 
-def mcp_tools_list() -> dict:
+def mcp_frame(payload: dict) -> bytes:
+    body = json.dumps(payload).encode("utf-8")
+    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+
+
+def parse_mcp_frames(raw: bytes) -> list[dict]:
+    messages = []
+    while raw:
+        header_end = raw.find(b"\r\n\r\n")
+        if header_end < 0:
+            raise RuntimeError(f"Missing MCP header terminator in {raw[:80]!r}")
+        header = raw[:header_end].decode("ascii")
+        length = None
+        for line in header.splitlines():
+            name, separator, value = line.partition(":")
+            if separator and name.lower() == "content-length":
+                length = int(value.strip())
+        if length is None:
+            raise RuntimeError(f"Missing MCP Content-Length in {header!r}")
+        body_start = header_end + 4
+        body_end = body_start + length
+        body = raw[body_start:body_end]
+        if len(body) != length:
+            raise RuntimeError(f"Truncated MCP body: wanted {length}, got {len(body)}")
+        messages.append(json.loads(body.decode("utf-8")))
+        raw = raw[body_end:]
+    return messages
+
+
+def mcp_tools_list_line() -> dict:
     initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
     tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
     proc = subprocess.run(
@@ -550,6 +579,35 @@ def mcp_tools_list() -> dict:
         raise RuntimeError(proc.stderr or proc.stdout)
     lines = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
     return lines[-1]
+
+
+def mcp_tools_list_framed() -> dict:
+    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    initialized = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+    tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+    proc = subprocess.run(
+        [sys.executable, str(MCP)],
+        input=mcp_frame(initialize) + mcp_frame(initialized) + mcp_frame(tools),
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.decode(errors="replace") or proc.stdout.decode(errors="replace"))
+    messages = parse_mcp_frames(proc.stdout)
+    assert len(messages) == 2, messages
+    assert messages[0]["id"] == 1, messages
+    assert messages[1]["id"] == 2, messages
+    return messages[-1]
+
+
+def mcp_tools_list() -> dict:
+    line_response = mcp_tools_list_line()
+    framed_response = mcp_tools_list_framed()
+    line_tools = [tool["name"] for tool in line_response["result"]["tools"]]
+    framed_tools = [tool["name"] for tool in framed_response["result"]["tools"]]
+    assert framed_tools == line_tools, (line_tools, framed_tools)
+    return framed_response
 
 
 def main() -> int:

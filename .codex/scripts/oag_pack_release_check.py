@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import py_compile
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -254,6 +255,71 @@ def check_python_compile(issues: list[dict[str, str]]) -> None:
                 issues.append(issue("PY_COMPILE", str(exc), path))
 
 
+def mcp_frame(payload: dict[str, Any]) -> bytes:
+    body = json.dumps(payload).encode("utf-8")
+    return f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+
+
+def parse_mcp_frames(raw: bytes) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    while raw:
+        header_end = raw.find(b"\r\n\r\n")
+        if header_end < 0:
+            raise ValueError("missing MCP header terminator")
+        header = raw[:header_end].decode("ascii")
+        length: int | None = None
+        for line in header.splitlines():
+            name, separator, value = line.partition(":")
+            if separator and name.lower() == "content-length":
+                length = int(value.strip())
+        if length is None:
+            raise ValueError("missing MCP Content-Length header")
+        body_start = header_end + 4
+        body_end = body_start + length
+        body = raw[body_start:body_end]
+        if len(body) != length:
+            raise ValueError("truncated MCP response body")
+        messages.append(json.loads(body.decode("utf-8")))
+        raw = raw[body_end:]
+    return messages
+
+
+def check_mcp_stdio_transport(issues: list[dict[str, str]]) -> None:
+    initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    initialized = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+    tools = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "oag_mcp_server.py")],
+            input=mcp_frame(initialize) + mcp_frame(initialized) + mcp_frame(tools),
+            capture_output=True,
+            check=False,
+            cwd=CODEX_ROOT,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        issues.append(issue("MCP_STDIO_TIMEOUT", "OAG MCP server did not complete framed initialize/tools-list smoke.", SCRIPTS_DIR / "oag_mcp_server.py"))
+        return
+    if proc.returncode != 0:
+        message = proc.stderr.decode(errors="replace") or proc.stdout.decode(errors="replace")
+        issues.append(issue("MCP_STDIO_EXIT", f"OAG MCP server exited non-zero: {message[:300]}", SCRIPTS_DIR / "oag_mcp_server.py"))
+        return
+    if proc.stderr:
+        issues.append(issue("MCP_STDIO_STDERR", f"OAG MCP server wrote stderr during startup: {proc.stderr.decode(errors='replace')[:300]}", SCRIPTS_DIR / "oag_mcp_server.py"))
+        return
+    try:
+        messages = parse_mcp_frames(proc.stdout)
+    except Exception as exc:
+        issues.append(issue("MCP_STDIO_FRAMING", f"OAG MCP server returned invalid framed output: {exc}", SCRIPTS_DIR / "oag_mcp_server.py"))
+        return
+    if len(messages) != 2 or messages[0].get("id") != 1 or messages[1].get("id") != 2:
+        issues.append(issue("MCP_STDIO_SEQUENCE", "OAG MCP server must return initialize and tools/list responses.", SCRIPTS_DIR / "oag_mcp_server.py"))
+        return
+    tools_payload = (((messages[1].get("result") or {}).get("tools")) or [])
+    if not isinstance(tools_payload, list) or len(tools_payload) < 10:
+        issues.append(issue("MCP_STDIO_TOOLS", "OAG MCP server tools/list response is missing OAG tools.", SCRIPTS_DIR / "oag_mcp_server.py"))
+
+
 def check_catalog(issues: list[dict[str, str]]) -> dict[str, Any]:
     sys.path.insert(0, str(SCRIPTS_DIR))
     from oag_agent_catalog_check import check_catalog as catalog_check  # pylint: disable=import-outside-toplevel
@@ -405,6 +471,7 @@ def check_pack() -> dict[str, Any]:
     check_json_files(issues)
     check_toml_files(issues)
     check_python_compile(issues)
+    check_mcp_stdio_transport(issues)
     catalog = check_catalog(issues)
     check_agent_loader_boundary(issues)
     check_hooks_policy(issues)
