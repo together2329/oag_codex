@@ -8,6 +8,27 @@ description: Use when working on hardware IP requirements, RTL, testbench, simul
 Use this skill for hardware IP work where requirement, obligation, contract,
 evidence, and validation must stay explicit.
 
+## Skill Router
+
+Treat this skill as the umbrella workflow. Use the narrower OAG skills when a
+task enters one of these lanes:
+
+- `oag-deep-semantic-intake`: compressed natural-language intent, source
+  claims, hidden implications, ambiguity rows, and first decision candidates.
+- `oag-decision-matrix`: lock-blocking product/design choices, profile-seeded
+  decisions, recommended/default separation, and unresolved decision audits.
+- `oag-contract-projection`: requirement atoms, obligations, assume/guarantee
+  contracts, behavior/cycle refs, and proof projection.
+- `oag-authoring-packet`: post-lock `oag.compile`, role-specific `rtl__*.json`
+  and `tb__*.json` packet checks, and native subagent packet handoff.
+- `oag-evidence-closure`: scoreboard, coverage, validation, trace graph,
+  freshness, gate, and `claim_complete` readiness.
+
+Do not let this umbrella skill hide ownership. Intake and decisions are draft
+workflow. Contract projection prepares implementation truth. Authoring packets
+feed RTL/TB subagents. Evidence closure audits proof strength and decision
+freshness.
+
 ## Start
 
 ### New IP Intake Guard

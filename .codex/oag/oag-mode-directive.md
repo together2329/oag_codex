@@ -28,6 +28,22 @@ Tests green is not final completion. Final closure requires:
 If evidence is missing, stale, unverifiable, or outside allowed paths, report
 the blocker instead of claiming completion.
 
+## Skill Routing
+
+Use `.codex/skills/oag-ip-workflow/SKILL.md` as the umbrella workflow only.
+When the task enters a narrow lane, apply the matching skill:
+
+- `oag-deep-semantic-intake` for compressed source intent, source claims,
+  hidden implications, ambiguity, and first decision candidates.
+- `oag-decision-matrix` for lock-blocking product/design decisions and
+  profile-seeded unresolved/proposed rows.
+- `oag-contract-projection` for requirement atoms, obligations, and
+  assume/guarantee contracts with proof refs.
+- `oag-authoring-packet` for generated `rtl__*.json` and `tb__*.json`
+  role-specific packets before native RTL/TB subagent dispatch.
+- `oag-evidence-closure` for trace graph, scoreboard, coverage, validation,
+  freshness, gate, and completion decision audits.
+
 ## Modeling Contract Principle
 
 Use the OAG principle layer before choosing artifacts:

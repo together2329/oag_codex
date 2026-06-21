@@ -42,7 +42,13 @@ DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
+OAG_RULE_INDEX = ROOT / "rules" / "oag-rule-index.yaml"
 OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
+OAG_DEEP_SEMANTIC_SKILL = ROOT / "skills" / "oag-deep-semantic-intake" / "SKILL.md"
+OAG_DECISION_MATRIX_SKILL = ROOT / "skills" / "oag-decision-matrix" / "SKILL.md"
+OAG_CONTRACT_PROJECTION_SKILL = ROOT / "skills" / "oag-contract-projection" / "SKILL.md"
+OAG_AUTHORING_PACKET_SKILL = ROOT / "skills" / "oag-authoring-packet" / "SKILL.md"
+OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -662,7 +668,13 @@ def main() -> int:
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
+        assert OAG_RULE_INDEX.is_file(), OAG_RULE_INDEX
         assert OAG_IP_WORKFLOW_SKILL.is_file(), OAG_IP_WORKFLOW_SKILL
+        assert OAG_DEEP_SEMANTIC_SKILL.is_file(), OAG_DEEP_SEMANTIC_SKILL
+        assert OAG_DECISION_MATRIX_SKILL.is_file(), OAG_DECISION_MATRIX_SKILL
+        assert OAG_CONTRACT_PROJECTION_SKILL.is_file(), OAG_CONTRACT_PROJECTION_SKILL
+        assert OAG_AUTHORING_PACKET_SKILL.is_file(), OAG_AUTHORING_PACKET_SKILL
+        assert OAG_EVIDENCE_CLOSURE_SKILL.is_file(), OAG_EVIDENCE_CLOSURE_SKILL
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -712,6 +724,12 @@ def main() -> int:
         assert "oag_deep_semantic_intake.py" in skill_text, skill_text
         assert "oag_decision_matrix_generate.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_verification_plan_check.py" in skill_text, skill_text
+        assert "Skill Router" in skill_text, skill_text
+        assert "oag-deep-semantic-intake" in skill_text, skill_text
+        assert "oag-decision-matrix" in skill_text, skill_text
+        assert "oag-contract-projection" in skill_text, skill_text
+        assert "oag-authoring-packet" in skill_text, skill_text
+        assert "oag-evidence-closure" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
@@ -724,6 +742,23 @@ def main() -> int:
         assert "short IP request" in skill_text, skill_text
         assert "do not enrich or rewrite `req/locked_truth.md`" in skill_text, skill_text
         assert "single-packet versus multi-packet" in skill_text, skill_text
+        rule_index_text = OAG_RULE_INDEX.read_text(encoding="utf-8")
+        assert "RULE-LOCK-003" in rule_index_text, rule_index_text
+        assert "RULE-CONTRACT-AG-001" in rule_index_text, rule_index_text
+        assert "RULE-PACKET-ROLE-001" in rule_index_text, rule_index_text
+        assert "RULE-TRACE-001" in rule_index_text, rule_index_text
+        decision_skill_text = OAG_DECISION_MATRIX_SKILL.read_text(encoding="utf-8")
+        contract_skill_text = OAG_CONTRACT_PROJECTION_SKILL.read_text(encoding="utf-8")
+        packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
+        closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
+        assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
+        assert "lock_required: true" in decision_skill_text, decision_skill_text
+        assert "assume" in contract_skill_text and "guarantee" in contract_skill_text, contract_skill_text
+        assert "oag_contract_strength_check.py" in contract_skill_text, contract_skill_text
+        assert "rtl__*.json" in packet_skill_text and "tb__*.json" in packet_skill_text, packet_skill_text
+        assert "oag_authoring_packet_check.py" in packet_skill_text, packet_skill_text
+        assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
+        assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
         assert "scope_lock.json" in agents_text, agents_text
         assert "No lock, no RTL" in agents_text, agents_text

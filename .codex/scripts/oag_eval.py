@@ -637,6 +637,29 @@ def case_deep_semantic_intake_mctp_profile(root: Path) -> dict[str, Any]:
     return {"ip": str(ip), "report": str(report), "decision_count": len(decision_ids)}
 
 
+def case_skill_router_split_contract(root: Path) -> dict[str, Any]:
+    del root
+    skill_root = smoke_test.ROOT / "skills"
+    skill_names = [
+        "oag-deep-semantic-intake",
+        "oag-decision-matrix",
+        "oag-contract-projection",
+        "oag-authoring-packet",
+        "oag-evidence-closure",
+    ]
+    umbrella = (skill_root / "oag-ip-workflow" / "SKILL.md").read_text(encoding="utf-8")
+    assert "Skill Router" in umbrella, umbrella
+    for name in skill_names:
+        assert name in umbrella, umbrella
+        assert (skill_root / name / "SKILL.md").is_file(), name
+    rule_index = (smoke_test.ROOT / "rules" / "oag-rule-index.yaml").read_text(encoding="utf-8")
+    for rule_id in ("RULE-LOCK-003", "RULE-CONTRACT-AG-001", "RULE-PACKET-ROLE-001", "RULE-TRACE-001"):
+        assert rule_id in rule_index, rule_index
+    assert "scripts/oag_lock_readiness_check.py" in rule_index, rule_index
+    assert "scripts/oag_contract_strength_check.py" in rule_index, rule_index
+    return {"skills": skill_names, "rule_index": "rules/oag-rule-index.yaml"}
+
+
 def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_sample", pattern: str = "per_bit_two_stage_sync") -> dict[str, Any]:
     return {
         "schema_version": "oag_domain_intent.v1",
@@ -2000,6 +2023,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("trace_graph_scaffold_seed", case_trace_graph_scaffold_seed),
     ("decision_matrix_generator_mctp_profile", case_decision_matrix_generator_mctp_profile),
     ("deep_semantic_intake_mctp_profile", case_deep_semantic_intake_mctp_profile),
+    ("skill_router_split_contract", case_skill_router_split_contract),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),

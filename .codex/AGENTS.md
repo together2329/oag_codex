@@ -37,6 +37,7 @@ Primary assets:
 - `oag/scoreboard-evidence.md`
 - `oag/recovery-playbook.md`
 - `rules/oag-invariants.rules.md`
+- `rules/oag-rule-index.yaml`
 - `rules/oag-requirements-quality.rules.md`
 - `rules/oag-requirement-decomposition.rules.md`
 - `rules/oag-lock-readiness.rules.md`
@@ -48,6 +49,11 @@ Primary assets:
 - `rules/oag-cdc-rdc.rules.md`
 - `rules/oag-tb-methodology.rules.md`
 - `skills/oag-ip-workflow/SKILL.md`
+- `skills/oag-deep-semantic-intake/SKILL.md`
+- `skills/oag-decision-matrix/SKILL.md`
+- `skills/oag-contract-projection/SKILL.md`
+- `skills/oag-authoring-packet/SKILL.md`
+- `skills/oag-evidence-closure/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
 - `oag/agent-catalog.toml`
@@ -134,10 +140,23 @@ claimed closed. Likewise, UVM, cocotb, SV, Verilog, OSVVM, UVVM, and simulator
 adapters are implementation choices; verification methodology responsibilities
 are not optional for TB closure.
 
+Use `rules/oag-rule-index.yaml` as the stable ID map from hard rules to policy
+documents and executable checkers. For example, `RULE-LOCK-003` maps
+lock-required decisions to `oag/decision-matrix-policy.md` and
+`scripts/oag_lock_readiness_check.py`. Validation and gate reports should prefer
+stable rule IDs when they need durable blocker names.
+
 The default OAG workflow is script/skill based, not MCP based. Keep MCP server
 registration out of `.codex/config.toml`, and do not ship `.codex/mcp.json` in
 the pack. Use `.codex/scripts/oag_cli.py`, `.codex/scripts/oag_dispatch.py`,
 hooks, and the `oag-ip-workflow` skill as the primary runtime surface.
+`oag-ip-workflow` is the umbrella router skill. Use the narrower skills for
+their specific lanes: `oag-deep-semantic-intake` for source claims and
+ambiguity, `oag-decision-matrix` for lock-blocking decisions,
+`oag-contract-projection` for requirement atom to assume/guarantee contract
+projection, `oag-authoring-packet` for role-specific `rtl__*.json` and
+`tb__*.json` packet handoff, and `oag-evidence-closure` for trace, scoreboard,
+coverage, validation, and gate readiness.
 `oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
 from user config while preserving unrelated Codex MCP tools such as browser or
 editor helpers.
