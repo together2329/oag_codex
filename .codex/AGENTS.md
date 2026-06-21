@@ -12,6 +12,9 @@ Primary assets:
 - `oag/agent-common-preamble.md`
 - `oag/principles.md`
 - `oag/modeling-policy.md`
+- `oag/requirement-decomposition-principles.md`
+- `oag/assume-guarantee-contracts.md`
+- `oag/phenomena-boundary-model.md`
 - `oag/contract-projection.md`
 - `oag/rtl-implementation.md`
 - `oag/rtl-dialect-policy.md`
@@ -27,6 +30,7 @@ Primary assets:
 - `oag/scoreboard-evidence.md`
 - `oag/recovery-playbook.md`
 - `rules/oag-invariants.rules.md`
+- `rules/oag-requirement-decomposition.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
 - `rules/oag-tb-methodology.rules.md`
@@ -59,9 +63,11 @@ Primary assets:
 - `scripts/oag_dispatch.py`
 - `scripts/oag_ppa_check.py`
 - `scripts/oag_domain_crossing_check.py`
+- `scripts/oag_requirement_atom_check.py`
 - `scripts/oag_validate_json.py`
 - `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
+- `scripts/oag_workflow_whole_db.py`
 - `scripts/oag_exec_auto_research.py`
 - `schemas/*.schema.json`
 - `config.toml`
@@ -71,7 +77,11 @@ Evidence -> Validation IP work.
 Use the OAG principle documents as the reasoning layer, not as templates to
 fill. `oag/principles.md` defines design-truth preservation,
 `oag/modeling-policy.md` defines profile-based FL/CL and oracle depth,
-`oag/contract-projection.md` defines ROCEV projection,
+`oag/requirement-decomposition-principles.md` defines the OAG V2 semantic atom
+layer before obligations, `oag/assume-guarantee-contracts.md` defines
+environment assumptions versus DUT guarantees,
+`oag/phenomena-boundary-model.md` defines monitored/controlled phenomena and
+DUT boundary ownership, `oag/contract-projection.md` defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines
 the portable RTL subset, `oag/rtl-ppa-principles.md` defines correctness-first
@@ -109,6 +119,13 @@ PPA/dialect screen for generated RTL changes when RTL files are available.
 Use `.codex/scripts/oag_domain_crossing_check.py --ip-dir <ip> --json` as the
 lightweight CDC/RDC intent screen when domain intent or RTL crossings are in
 scope. It does not replace release CDC/RDC tools.
+Use `.codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` as the
+lightweight OAG V2 semantic screen for requirement atoms, shallow obligations,
+and assume/guarantee contract strength. In draft it supports interview hygiene;
+after scope lock it becomes a hard gate for implementation and closure claims.
+Use `.codex/scripts/oag_workflow_whole_db.py` to generate a single Markdown
+review bundle of the `.codex` workflow pack as `oag_workflow_whole_db.md`.
+The bundle is generated review evidence, not canonical OAG truth.
 Use `ontology/tb_methodology.yaml` and `.codex/oag/tb-methodology-policy.md` to
 scale TB depth by IP profile. The TB agent should prefer the smallest
 self-checking architecture that preserves independent expected behavior,
@@ -198,6 +215,11 @@ pass with `oag.check`, `oag.inspect`, an `oag_validation_report.v1` from
 `oag-gate-reviewer`. Gate decisions must include `checked_artifact_hashes` for
 current closure artifacts; evidence added or changed after gate PASS makes the
 gate decision stale and requires re-validation and re-gate.
+For post-lock implementation or closure, run
+`python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` and
+resolve failures before relying on obligations or contracts. This prevents
+prose-only obligations such as "APB works" and closure-grade contracts without
+explicit assume/guarantee sections.
 
 Before releasing this pack to a team, run:
 
@@ -265,6 +287,12 @@ the user confirms scope or provides a concrete spec. For protocol IPs, first
 surface open questions for spec version, transport boundary, interfaces,
 single-packet versus multi-packet scope, buffering/backpressure,
 filtering/addressing, and error/drop/status policy.
+Before promoting a short request into locked requirements, derive
+`ontology/requirement_atoms.yaml` from
+`.codex/oag/requirement-decomposition-principles.md`. If trigger, condition,
+response, boundary, phenomena, assumptions, timing, exception, or observable
+proof shape is unknown, keep the atom in draft or blocked state and ask the
+user instead of inventing architecture.
 
 Use `ontology/scope_lock.json` as the implementation permission switch.
 `state=draft` allows only questions, summaries, options, and `oag.draft`

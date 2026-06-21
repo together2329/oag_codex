@@ -275,6 +275,52 @@ def case_modeling_scaffold_seed(root: Path) -> dict[str, Any]:
     }
 
 
+def case_requirement_atom_scaffold_seed(root: Path) -> dict[str, Any]:
+    draft_ip = root / "requirement_atom_draft" / "demo_counter_cx1"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(draft_ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    policies = _read_yaml(draft_ip / "ontology" / "policies.yaml")
+    atoms = _read_yaml(draft_ip / "ontology" / "requirement_atoms.yaml")
+    decomposition_policy = policies.get("requirement_decomposition_policy") if isinstance(policies.get("requirement_decomposition_policy"), dict) else {}
+    assert decomposition_policy.get("canonical_requirement_atom_file") == "ontology/requirement_atoms.yaml", policies
+    assert decomposition_policy.get("require_atoms_after_lock") is True, policies
+    assert atoms.get("schema_version") == "oag_requirement_atoms.v1", atoms
+    assert isinstance(atoms.get("requirement_atoms"), list) and atoms["requirement_atoms"], atoms
+
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_requirement_atom_check.py"), "--ip-dir", str(draft_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+
+    locked_ip = smoke_test.make_ip(root / "requirement_atom_locked")
+    locked_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_requirement_atom_check.py"), "--ip-dir", str(locked_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert locked_proc.returncode != 0, locked_proc.stdout + locked_proc.stderr
+    locked = json.loads(locked_proc.stdout)
+    codes = {item["code"] for item in locked["issues"]}
+    assert "ATOM_AMBIGUITY" in codes, locked
+    assert "CONTRACT_ASSUME_MISSING" in codes, locked
+    assert "CONTRACT_GUARANTEE_MISSING" in codes, locked
+    return {
+        "draft_ip": str(draft_ip),
+        "locked_ip": str(locked_ip),
+        "draft_status": draft["status"],
+        "locked_status": locked["status"],
+        "locked_issue_codes": sorted(codes),
+    }
+
+
 def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_sample", pattern: str = "per_bit_two_stage_sync") -> dict[str, Any]:
     return {
         "schema_version": "oag_domain_intent.v1",
@@ -1630,6 +1676,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("stop_gate_obeys_policy_limit", case_stop_gate_obeys_policy_limit),
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
+    ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),
     ("random_without_coverage_goals_fails", case_random_without_coverage_goals_fails),

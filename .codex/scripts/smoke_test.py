@@ -327,6 +327,7 @@ def make_ip(root: Path) -> Path:
     assert scaffold["result"]["schema_version"] == "oag_scaffold_result.v1", scaffold
     assert (ip / "ontology" / "ip.yaml").is_file()
     assert (ip / "ontology" / "requirements.yaml").is_file()
+    assert (ip / "ontology" / "requirement_atoms.yaml").is_file()
     assert (ip / "ontology" / "obligations.yaml").is_file()
     assert (ip / "ontology" / "contracts.yaml").is_file()
     assert (ip / "ontology" / "modeling.yaml").is_file()
@@ -344,6 +345,7 @@ def make_ip(root: Path) -> Path:
     assert "graph_policy:" in policy_text, policy_text
     assert "compile_skip_when_fresh: true" in policy_text, policy_text
     assert "modeling_policy:" in policy_text, policy_text
+    assert "requirement_decomposition_policy:" in policy_text, policy_text
     assert "domain_crossing_policy:" in policy_text, policy_text
     assert "tb_methodology_policy:" in policy_text, policy_text
     assert (ip / "ontology" / "protection.yaml").is_file()
