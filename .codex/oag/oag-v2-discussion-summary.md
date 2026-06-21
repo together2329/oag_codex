@@ -430,30 +430,54 @@ Do not rewrite OAG V1. Add a thin semantic layer.
 Applied MVP files:
 
 ```text
+.codex/oag/deep-semantic-intake-policy.md
+.codex/oag/requirements-quality-policy.md
+.codex/oag/decision-matrix-policy.md
 .codex/oag/requirement-decomposition-principles.md
 .codex/oag/assume-guarantee-contracts.md
 .codex/oag/phenomena-boundary-model.md
+.codex/rules/oag-requirements-quality.rules.md
 .codex/rules/oag-requirement-decomposition.rules.md
+.codex/rules/oag-lock-readiness.rules.md
+.codex/schemas/oag_source_claims.schema.json
+.codex/schemas/oag_ambiguity_register.schema.json
+.codex/schemas/oag_decision_matrix.schema.json
 .codex/schemas/oag_requirement_atom.schema.json
+.codex/scripts/oag_req_quality_check.py
+.codex/scripts/oag_lock_readiness_check.py
 .codex/scripts/oag_requirement_atom_check.py
 ```
 
 IP canonical seed now created by scaffold:
 
 ```text
+req/deep_semantic_intake/
+req/source_claims.yaml
+req/ambiguity_register.yaml
+ontology/decision_matrix.yaml
 ontology/requirement_atoms.yaml
 ```
 
 The MVP is intentionally a thin extension:
 
+- New scaffolds preserve source intent, unresolved ambiguities, lock-required
+  decisions, and requirement atoms before any implementation authority exists.
+- `oag_req_quality_check.py` passes draft scaffolds as advisory but fails lock
+  readiness when source claims, ambiguity resolution, requirement type,
+  verification method, or ambiguity status are missing.
+- `oag_lock_readiness_check.py` now aggregates decision blockers, requirement
+  quality blockers, requirement atom blockers, shallow obligations, and
+  assume/guarantee contract weakness.
 - OAG mode and the `oag-ip-workflow` skill now point agents to requirement
-  atoms before lock and to `oag_requirement_atom_check.py` after lock.
-- New scaffolds create draft `ontology/requirement_atoms.yaml`.
+  quality, decisions, and requirement atoms before lock, then to
+  `oag_req_quality_check.py`, `oag_requirement_atom_check.py`, and
+  `oag_lock_readiness_check.py` after lock.
 - Protected-field policy includes requirement atom semantic fields.
-- Release checks require the new docs, rule file, schema, and checker.
-- The checker passes draft scaffolds but fails post-lock/proof mode when atoms
-  are ambiguous, obligations are prose-only, or closure-grade contracts lack
-  assume/guarantee sections.
+- Release checks require the new docs, rule files, schemas, and checkers.
+- The checkers pass draft scaffolds but fail post-lock/proof mode when source
+  intent is unresolved, lock-required decisions are open, atoms are ambiguous,
+  obligations are prose-only, or closure-grade contracts lack assume/guarantee
+  sections.
 
 Next wave:
 

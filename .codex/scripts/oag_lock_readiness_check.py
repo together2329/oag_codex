@@ -14,6 +14,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import oag_requirement_atom_check  # noqa: E402
+import oag_req_quality_check  # noqa: E402
 
 
 LOCK_READY_STATUSES = {"decided", "waived"}
@@ -143,13 +144,17 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     locked = is_locked(ip_dir)
     hard_gate = require_locked or locked
     decision_issues, decision_counts, blockers = check_decisions(ip_dir, hard_gate=hard_gate)
+    req_quality_result = oag_req_quality_check.check(ip_dir, require_locked=hard_gate)
+    req_quality_issues = req_quality_result.get("issues", []) if isinstance(req_quality_result, dict) else []
     atom_result = oag_requirement_atom_check.check(ip_dir, require_locked=hard_gate)
     atom_issues = atom_result.get("issues", []) if isinstance(atom_result, dict) else []
-    issues = decision_issues + atom_issues
+    issues = decision_issues + req_quality_issues + atom_issues
 
     next_actions: list[str] = []
     if decision_counts["unresolved_lock_blockers"]:
         next_actions.append("Resolve or waive lock-required decisions in ontology/decision_matrix.yaml.")
+    if req_quality_issues:
+        next_actions.append("Resolve source claims, ambiguity register, or requirement quality issues.")
     if atom_issues:
         next_actions.append("Resolve requirement atom, shallow obligation, or assume/guarantee contract issues.")
     if not issues and not hard_gate:
@@ -165,6 +170,7 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         "counts": {
             **decision_counts,
             "decision_issues": len(decision_issues),
+            "requirement_quality_issues": len(req_quality_issues),
             "atom_issues": len(atom_issues),
             "issues": len(issues),
         },

@@ -28,6 +28,9 @@ Allowed first actions for a short IP request:
 - attempt bounded spec/source discovery;
 - write `oag.draft` records with facts, assumptions, open questions, and
   proposed scope.
+- capture load-bearing source intent in `req/source_claims.yaml` and unresolved
+  questions in `req/ambiguity_register.yaml`; use `req/deep_semantic_intake/`
+  for detailed interview notes and layer worksheets.
 - derive candidate `ontology/requirement_atoms.yaml` entries for nontrivial
   requirements, keeping unknown trigger, condition, response, boundary,
   phenomena, assumption, timing, and proof-shape fields as draft ambiguity
@@ -94,13 +97,15 @@ withdraws approval.
 After lock and before implementation or closure, run the OAG V2 semantic gate:
 
 ```bash
+python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
 ```
 
-Resolve failures before relying on obligations or contracts. This check blocks
-locked scopes that still have unresolved requirement-atom ambiguity, prose-only
-obligations, or closure-grade contracts without explicit assume/guarantee.
+Resolve failures before relying on obligations or contracts. These checks block
+locked scopes that still have unresolved source ambiguity, weak requirement
+shape, unresolved requirement-atom ambiguity, prose-only obligations, or
+closure-grade contracts without explicit assume/guarantee.
 The lock-readiness check also blocks lock-required decision rows that are still
 unresolved, proposed, or blocked. Passing it is implementation readiness, not
 IP closure.
@@ -131,9 +136,10 @@ an append-only `knowledge/ledger.jsonl`, and a common
 also creates `ontology/modeling.yaml` for micro behavior/cycle oracle truth and
 `ontology/domain_intent.yaml` for clock/reset-domain intent. It also creates
 `ontology/tb_methodology.yaml` for framework-neutral verification methodology
-intent, `ontology/requirement_atoms.yaml` for semantic decomposition before
-obligations, and `ontology/decision_matrix.yaml` for decisions that must be
-resolved before lock-ready implementation.
+intent, `req/source_claims.yaml` and `req/ambiguity_register.yaml` for deep
+semantic intake, `ontology/requirement_atoms.yaml` for semantic decomposition
+before obligations, and `ontology/decision_matrix.yaml` for decisions that must
+be resolved before lock-ready implementation.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 

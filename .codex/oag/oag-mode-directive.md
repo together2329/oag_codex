@@ -34,6 +34,10 @@ Use the OAG principle layer before choosing artifacts:
 
 - `.codex/oag/principles.md` for design-truth preservation.
 - `.codex/oag/modeling-policy.md` for profile-based FL/CL and oracle depth.
+- `.codex/oag/deep-semantic-intake-policy.md` for source claims and ambiguity
+  capture from compressed user/spec intent.
+- `.codex/oag/requirements-quality-policy.md` for lock-ready requirement shape
+  and traceability.
 - `.codex/oag/requirement-decomposition-principles.md` for requirement atoms
   before obligations.
 - `.codex/oag/assume-guarantee-contracts.md` for environment assumptions
@@ -68,6 +72,8 @@ Use the OAG principle layer before choosing artifacts:
   repair.
 - `.codex/oag/agent-common-preamble.md` for the common OAG agent posture.
 - `.codex/rules/oag-invariants.rules.md` for hard invariants.
+- `.codex/rules/oag-requirements-quality.rules.md` for source-claim,
+  ambiguity, and requirement-quality gates.
 - `.codex/rules/oag-requirement-decomposition.rules.md` for post-lock
   semantic atom and assume/guarantee hard gates.
 - `.codex/rules/oag-lock-readiness.rules.md` for decision matrix and lock
@@ -140,6 +146,11 @@ Only when the user says `lock`, `lock this`, `lock scope`, or `lock
 requirements`, call `oag.lock` with `actor.kind=human` and a concise
 `confirmed_scope`. New requirement drafts after a lock make the scope draft
 again. No lock, no RTL. No lock, no TB. No lock, no closure.
+Before lock, preserve load-bearing source intent in `req/source_claims.yaml`
+and unresolved questions in `req/ambiguity_register.yaml`. Use
+`req/deep_semantic_intake/` for interview notes and layer worksheets. If a user
+phrase hides implementation choices, keep them as ambiguity rows instead of
+promoting them to truth.
 Before lock, derive candidate `ontology/requirement_atoms.yaml` entries for
 nontrivial requirements instead of jumping from prose to obligations. If atom
 trigger, condition, response, boundary, phenomena, assumption, timing, or
@@ -153,6 +164,7 @@ not locked truth.
 After lock, run:
 
 ```bash
+python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json
 python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json
 ```
@@ -288,13 +300,16 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   For prompts like "I need mctp rx ip", create at most a draft workspace and
   `oag.draft` notes; do not edit locked truth, canonical ontology, RTL, TB,
   tests, filelists, or signoff evidence until scope is confirmed.
-- Short-request drafts should produce candidate requirement atoms and open
-  questions plus `ontology/decision_matrix.yaml` rows. They must not silently
-  decide transport binding, reassembly depth, buffering, backpressure,
-  filtering, output interface, storage/commit, firmware ownership, or
-  error/drop policy.
+- Short-request drafts should produce `req/source_claims.yaml`,
+  `req/ambiguity_register.yaml`, candidate requirement atoms, open questions,
+  and `ontology/decision_matrix.yaml` rows. They must not silently decide
+  transport binding, reassembly depth, buffering, backpressure, filtering,
+  output interface, storage/commit, firmware ownership, or error/drop policy.
 - `ontology/scope_lock.json` must be `locked` before implementation,
   validation, gate review, or closure. `draft` means interview only.
+- Locked scopes must pass `oag_req_quality_check.py`; requirements without
+  source claims, verification method, or clear/waived ambiguity status are
+  blockers.
 - Locked scopes must pass `oag_requirement_atom_check.py`; prose-only
   obligations and closure-grade contracts without assume/guarantee are blockers.
 - Locked scopes must pass `oag_lock_readiness_check.py`; unresolved or proposed

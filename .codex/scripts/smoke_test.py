@@ -32,6 +32,7 @@ CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
+REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
@@ -53,6 +54,8 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_gate_decision.schema.json",
     ROOT / "schemas" / "oag_closure_report.schema.json",
     ROOT / "schemas" / "oag_scope_lock.schema.json",
+    ROOT / "schemas" / "oag_source_claims.schema.json",
+    ROOT / "schemas" / "oag_ambiguity_register.schema.json",
     ROOT / "schemas" / "oag_decision_matrix.schema.json",
 ]
 
@@ -327,6 +330,9 @@ def make_ip(root: Path) -> Path:
     scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
     assert scaffold["ok"] is True, scaffold
     assert scaffold["result"]["schema_version"] == "oag_scaffold_result.v1", scaffold
+    assert (ip / "req" / "deep_semantic_intake").is_dir()
+    assert (ip / "req" / "source_claims.yaml").is_file()
+    assert (ip / "req" / "ambiguity_register.yaml").is_file()
     assert (ip / "ontology" / "ip.yaml").is_file()
     assert (ip / "ontology" / "requirements.yaml").is_file()
     assert (ip / "ontology" / "requirement_atoms.yaml").is_file()
@@ -347,6 +353,7 @@ def make_ip(root: Path) -> Path:
     assert "hook_auto_continue_until: all" in policy_text, policy_text
     assert "graph_policy:" in policy_text, policy_text
     assert "compile_skip_when_fresh: true" in policy_text, policy_text
+    assert "requirement_quality_policy:" in policy_text, policy_text
     assert "modeling_policy:" in policy_text, policy_text
     assert "requirement_decomposition_policy:" in policy_text, policy_text
     assert "decision_matrix_policy:" in policy_text, policy_text
@@ -627,6 +634,7 @@ def main() -> int:
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
+        assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
@@ -671,6 +679,7 @@ def main() -> int:
         assert "python3 .codex/scripts/oag_cli.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_agent_catalog_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_closure_check.py" in skill_text, skill_text
+        assert "python3 .codex/scripts/oag_req_quality_check.py" in skill_text, skill_text
         assert "python3 .codex/scripts/oag_lock_readiness_check.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
@@ -687,6 +696,9 @@ def main() -> int:
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
         assert "scope_lock.json" in agents_text, agents_text
         assert "No lock, no RTL" in agents_text, agents_text
+        assert "oag_req_quality_check.py" in agents_text, agents_text
+        assert "req/source_claims.yaml" in agents_text, agents_text
+        assert "req/ambiguity_register.yaml" in agents_text, agents_text
         assert "oag_lock_readiness_check.py" in agents_text, agents_text
         assert "After user lock, main agent orchestrates" in agents_text, agents_text
         assert "oag_main_write_gate.py" in agents_text, agents_text
@@ -694,6 +706,9 @@ def main() -> int:
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
+        assert "oag_req_quality_check.py" in directive_text, directive_text
+        assert "req/source_claims.yaml" in directive_text, directive_text
+        assert "req/ambiguity_register.yaml" in directive_text, directive_text
         assert "oag_lock_readiness_check.py" in directive_text, directive_text
         assert "After user lock, main agent orchestrates" in directive_text, directive_text
         assert "oag_main_write_gate.py" in directive_text, directive_text

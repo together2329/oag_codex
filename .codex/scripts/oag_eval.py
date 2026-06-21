@@ -356,6 +356,9 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     hard = json.loads(hard_proc.stdout)
     hard_codes = {item["code"] for item in hard["issues"]}
     assert "DECISION_LOCK_BLOCKER" in hard_codes, hard
+    assert "AMBIGUITY_LOCK_BLOCKER" in hard_codes, hard
+    assert "REQ_STATUS_DRAFT" in hard_codes, hard
+    assert "REQ_AMBIGUITY_STATUS" in hard_codes, hard
     assert "ATOM_AMBIGUITY" in hard_codes, hard
 
     locked_ip = smoke_test.make_ip(root / "lock_readiness_locked")
@@ -370,6 +373,9 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     locked = json.loads(locked_proc.stdout)
     locked_codes = {item["code"] for item in locked["issues"]}
     assert "DECISION_LOCK_BLOCKER" in locked_codes, locked
+    assert "AMBIGUITY_LOCK_BLOCKER" in locked_codes, locked
+    assert "REQ_STATUS_DRAFT" in locked_codes, locked
+    assert "REQ_AMBIGUITY_STATUS" in locked_codes, locked
     assert "CONTRACT_ASSUME_MISSING" in locked_codes, locked
     assert "CONTRACT_GUARANTEE_MISSING" in locked_codes, locked
     return {
@@ -380,6 +386,55 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
         "locked_status": locked["status"],
         "hard_issue_codes": sorted(hard_codes),
         "locked_issue_codes": sorted(locked_codes),
+    }
+
+
+def case_requirement_quality_scaffold_seed(root: Path) -> dict[str, Any]:
+    draft_ip = root / "requirement_quality_draft" / "demo_counter_cx1"
+    scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(draft_ip), "owner": "eval"}})
+    assert scaffold["ok"] is True, scaffold
+    policies = _read_yaml(draft_ip / "ontology" / "policies.yaml")
+    source_claims = _read_yaml(draft_ip / "req" / "source_claims.yaml")
+    ambiguities = _read_yaml(draft_ip / "req" / "ambiguity_register.yaml")
+    quality_policy = policies.get("requirement_quality_policy") if isinstance(policies.get("requirement_quality_policy"), dict) else {}
+    assert quality_policy.get("canonical_source_claims_file") == "req/source_claims.yaml", policies
+    assert quality_policy.get("canonical_ambiguity_register_file") == "req/ambiguity_register.yaml", policies
+    assert source_claims.get("schema_version") == "oag_source_claims.v1", source_claims
+    assert ambiguities.get("schema_version") == "oag_ambiguity_register.v1", ambiguities
+    assert isinstance(source_claims.get("claims"), list) and source_claims["claims"], source_claims
+    assert isinstance(ambiguities.get("ambiguities"), list) and ambiguities["ambiguities"], ambiguities
+
+    draft_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_req_quality_check.py"), "--ip-dir", str(draft_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert draft_proc.returncode == 0, draft_proc.stdout + draft_proc.stderr
+    draft = json.loads(draft_proc.stdout)
+    assert draft["status"] == "pass", draft
+    assert draft["hard_gate"] is False, draft
+    assert draft["counts"]["unresolved_lock_ambiguities"] >= 1, draft
+
+    hard_proc = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / "oag_req_quality_check.py"), "--ip-dir", str(draft_ip), "--require-locked", "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+    )
+    assert hard_proc.returncode != 0, hard_proc.stdout + hard_proc.stderr
+    hard = json.loads(hard_proc.stdout)
+    hard_codes = {item["code"] for item in hard["issues"]}
+    assert "AMBIGUITY_LOCK_BLOCKER" in hard_codes, hard
+    assert "REQ_STATUS_DRAFT" in hard_codes, hard
+    assert "REQ_AMBIGUITY_STATUS" in hard_codes, hard
+    return {
+        "draft_ip": str(draft_ip),
+        "draft_status": draft["status"],
+        "hard_status": hard["status"],
+        "hard_issue_codes": sorted(hard_codes),
     }
 
 
@@ -1739,6 +1794,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
+    ("requirement_quality_scaffold_seed", case_requirement_quality_scaffold_seed),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),

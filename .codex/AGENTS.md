@@ -12,6 +12,8 @@ Primary assets:
 - `oag/agent-common-preamble.md`
 - `oag/principles.md`
 - `oag/modeling-policy.md`
+- `oag/deep-semantic-intake-policy.md`
+- `oag/requirements-quality-policy.md`
 - `oag/requirement-decomposition-principles.md`
 - `oag/assume-guarantee-contracts.md`
 - `oag/phenomena-boundary-model.md`
@@ -31,6 +33,7 @@ Primary assets:
 - `oag/scoreboard-evidence.md`
 - `oag/recovery-playbook.md`
 - `rules/oag-invariants.rules.md`
+- `rules/oag-requirements-quality.rules.md`
 - `rules/oag-requirement-decomposition.rules.md`
 - `rules/oag-lock-readiness.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
@@ -65,6 +68,7 @@ Primary assets:
 - `scripts/oag_dispatch.py`
 - `scripts/oag_ppa_check.py`
 - `scripts/oag_domain_crossing_check.py`
+- `scripts/oag_req_quality_check.py`
 - `scripts/oag_requirement_atom_check.py`
 - `scripts/oag_lock_readiness_check.py`
 - `scripts/oag_validate_json.py`
@@ -80,6 +84,9 @@ Evidence -> Validation IP work.
 Use the OAG principle documents as the reasoning layer, not as templates to
 fill. `oag/principles.md` defines design-truth preservation,
 `oag/modeling-policy.md` defines profile-based FL/CL and oracle depth,
+`oag/deep-semantic-intake-policy.md` defines source claims and ambiguity
+capture for compressed user/spec intent, `oag/requirements-quality-policy.md`
+defines lock-ready requirement shape and source traceability,
 `oag/requirement-decomposition-principles.md` defines the OAG V2 semantic atom
 layer before obligations, `oag/assume-guarantee-contracts.md` defines
 environment assumptions versus DUT guarantees,
@@ -124,6 +131,10 @@ PPA/dialect screen for generated RTL changes when RTL files are available.
 Use `.codex/scripts/oag_domain_crossing_check.py --ip-dir <ip> --json` as the
 lightweight CDC/RDC intent screen when domain intent or RTL crossings are in
 scope. It does not replace release CDC/RDC tools.
+Use `.codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json` as the
+lightweight requirement quality screen for `req/source_claims.yaml`,
+`req/ambiguity_register.yaml`, and lock-ready requirement shape. After scope
+lock it becomes a hard gate for implementation and closure claims.
 Use `.codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` as the
 lightweight OAG V2 semantic screen for requirement atoms, shallow obligations,
 and assume/guarantee contract strength. In draft it supports interview hygiene;
@@ -225,12 +236,14 @@ pass with `oag.check`, `oag.inspect`, an `oag_validation_report.v1` from
 current closure artifacts; evidence added or changed after gate PASS makes the
 gate decision stale and requires re-validation and re-gate.
 For post-lock implementation or closure, run
+`python3 .codex/scripts/oag_req_quality_check.py --ip-dir <ip> --json`,
 `python3 .codex/scripts/oag_requirement_atom_check.py --ip-dir <ip> --json` and
 `python3 .codex/scripts/oag_lock_readiness_check.py --ip-dir <ip> --json`, then
 resolve failures before relying on obligations or contracts. This prevents
-prose-only obligations such as "APB works", closure-grade contracts without
-explicit assume/guarantee sections, and implementation from unresolved
-lock-required product decisions.
+requirements without source claims or clear ambiguity status, prose-only
+obligations such as "APB works", closure-grade contracts without explicit
+assume/guarantee sections, and implementation from unresolved lock-required
+product decisions.
 
 Before releasing this pack to a team, run:
 
@@ -299,6 +312,9 @@ surface open questions for spec version, transport boundary, interfaces,
 single-packet versus multi-packet scope, buffering/backpressure,
 filtering/addressing, and error/drop/status policy.
 Before promoting a short request into locked requirements, derive
+`req/source_claims.yaml` and `req/ambiguity_register.yaml` from
+`.codex/oag/deep-semantic-intake-policy.md` and
+`.codex/oag/requirements-quality-policy.md`, then derive
 `ontology/requirement_atoms.yaml` from
 `.codex/oag/requirement-decomposition-principles.md`. If trigger, condition,
 response, boundary, phenomena, assumptions, timing, exception, or observable
@@ -321,6 +337,8 @@ fresh lock is required.
 After lock, `oag_lock_readiness_check.py` must pass before implementation
 dispatch. Lock readiness is not closure; it only says requirements are specific
 enough for bounded RTL/TB/verification subagents to start.
+It includes requirement quality, ambiguity, decision matrix, requirement atom,
+shallow-obligation, and assume/guarantee checks.
 
 Keep protected-field policy and ledger artifacts active. `ontology/protection.yaml`
 declares locked truth and policy fields that require human-approved decisions
