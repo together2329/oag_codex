@@ -50,6 +50,7 @@ REQUIRED_FILES = (
     SCRIPTS_DIR / "oag_dispatch.py",
     SCRIPTS_DIR / "oag_exec_auto_research.py",
     SCRIPTS_DIR / "oag_main_write_gate.py",
+    SCRIPTS_DIR / "oag_protected_receipt_audit.py",
     SCRIPTS_DIR / "oag_validate_json.py",
     SCRIPTS_DIR / "smoke_test.py",
     HOOKS_DIR / "codex_context_inject.py",

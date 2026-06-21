@@ -36,6 +36,7 @@ Primary assets:
 - `scripts/oag_closure_check.py`
 - `scripts/oag_dispatch.py`
 - `scripts/oag_validate_json.py`
+- `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
 - `scripts/oag_exec_auto_research.py`
 - `schemas/*.schema.json`
@@ -50,6 +51,9 @@ the pack. Use `.codex/scripts/oag_cli.py`, `.codex/scripts/oag_dispatch.py`,
 hooks, and the `oag-ip-workflow` skill as the primary runtime surface.
 Native subagents must not depend on MCP startup for APB/RTL/TB/lint/sim/gate
 execution.
+Use `.codex/scripts/oag_protected_receipt_audit.py` to audit protected
+post-lock IP artifacts in ignored/untracked product directories against
+dispatch-backed native subagent receipts.
 
 Use `.codex/agents/*.toml` as Codex custom agent definitions. Each TOML file
 must be a standalone Codex agent file with `name`, `description`, and
