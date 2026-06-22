@@ -403,6 +403,8 @@ def verify_invariants(graph: dict[str, Any], locks: dict[str, Any], barriers: di
             issues.append(issue("WRITE_OWNERSHIP", "write tasks require exclusive_file ownership", task_id))
         if kind == "integration" and ownership != "integration_owner":
             issues.append(issue("INTEGRATION_OWNERSHIP", "integration tasks require integration_owner ownership", task_id))
+        if normalize_list(task.get("shared_artifacts")) and ownership != "integration_owner":
+            issues.append(issue("SHARED_ARTIFACT_OWNERSHIP", "shared artifacts require integration_owner ownership", task_id))
         if kind in {"write", "integration"} and not task_write_paths(task):
             issues.append(issue("MISSING_WRITE_SCOPE", "write/integration task has no write paths", task_id))
         if kind == "read_only" and task_write_paths(task):

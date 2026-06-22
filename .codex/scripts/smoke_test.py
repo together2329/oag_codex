@@ -792,6 +792,45 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     assert claim_b.returncode != 0, claim_b.stdout
     assert any(item["code"] == "OWNERSHIP_CONFLICT" for item in json.loads(claim_b.stdout)["issues"]), claim_b.stdout
 
+    shared_scope_ip = project / "shared_scope_ip"
+    shared_scope_ip.mkdir()
+    shared_scope_template = project / "shared_scope_template.json"
+    shared_scope_template.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_wavefront_template.v1",
+                "tasks": [
+                    {
+                        "task_id": "BAD_SHARED_WRITER",
+                        "kind": "write",
+                        "phase": "sim",
+                        "depends_on": [],
+                        "shared_artifacts": ["sim/results.xml"],
+                        "ownership_mode": "exclusive_file",
+                        "may_claim_complete": False,
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    shared_scope_run = "RUN_SHARED_SCOPE_SMOKE"
+    shared_scope_plan = run_wavefront(
+        "plan",
+        "--ip-dir",
+        str(shared_scope_ip),
+        "--run-id",
+        shared_scope_run,
+        "--template",
+        str(shared_scope_template),
+        "--json",
+        project_root=project,
+    )
+    assert shared_scope_plan.returncode != 0, shared_scope_plan.stdout
+    shared_scope_issues = json.loads(shared_scope_plan.stdout)["issues"]
+    assert any(item["code"] == "SHARED_ARTIFACT_OWNERSHIP" for item in shared_scope_issues), shared_scope_plan.stdout
+
 
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
