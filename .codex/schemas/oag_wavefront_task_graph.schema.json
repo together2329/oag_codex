@@ -98,6 +98,18 @@
               "type": "string"
             }
           },
+          "stale_if_paths_changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pre_edit_hashes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
           "ownership_mode": {
             "enum": ["none", "exclusive_file", "integration_owner"]
           },

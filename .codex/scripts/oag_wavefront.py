@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import hashlib
 import sys
 import time
 from pathlib import Path
@@ -104,6 +105,18 @@ def write_json(path: Path, payload: Any) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(path)
+
+
+def path_fingerprint(path: Path) -> str:
+    if not path.exists():
+        return "missing"
+    if path.is_dir():
+        return "dir"
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
 
 
 def load_schema(name: str) -> dict[str, Any]:
@@ -242,6 +255,7 @@ def normalize_task(raw: dict[str, Any], ip_dir: Path) -> dict[str, Any]:
         raise ValueError(f"invalid ownership_mode for {task_id}: {ownership_mode}")
     allowed_write_paths = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("allowed_write_paths"))]
     shared_artifacts = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("shared_artifacts"))]
+    stale_if_paths_changed = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("stale_if_paths_changed"))]
     return {
         **raw,
         "task_id": task_id,
@@ -253,6 +267,7 @@ def normalize_task(raw: dict[str, Any], ip_dir: Path) -> dict[str, Any]:
         "barrier_outputs": normalize_list(raw.get("barrier_outputs")),
         "allowed_write_paths": sorted(set(allowed_write_paths)),
         "shared_artifacts": sorted(set(shared_artifacts)),
+        "stale_if_paths_changed": sorted(set(stale_if_paths_changed)),
         "ownership_mode": ownership_mode,
         "status": str(raw.get("status") or "pending"),
         "may_claim_complete": False,
@@ -358,6 +373,26 @@ def task_write_paths(task: dict[str, Any]) -> list[str]:
     return sorted(set(normalize_list(task.get("allowed_write_paths")) + normalize_list(task.get("shared_artifacts"))))
 
 
+def seed_pre_edit_hashes(task: dict[str, Any], ip_dir: Path) -> None:
+    hashes = {
+        path: path_fingerprint(ip_dir / path)
+        for path in normalize_list(task.get("stale_if_paths_changed"))
+    }
+    if hashes:
+        task["pre_edit_hashes"] = hashes
+
+
+def stale_path_issues(task: dict[str, Any], ip_dir: Path) -> list[dict[str, str]]:
+    hashes = task.get("pre_edit_hashes") if isinstance(task.get("pre_edit_hashes"), dict) else {}
+    issues: list[dict[str, str]] = []
+    for path in normalize_list(task.get("stale_if_paths_changed")):
+        expected = str(hashes.get(path) or "")
+        observed = path_fingerprint(ip_dir / path)
+        if expected and observed != expected:
+            issues.append(issue("STALE_PATH_CHANGED", f"path changed since wavefront plan: {path}", path))
+    return issues
+
+
 def ready_tasks(graph: dict[str, Any], barriers: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = task_map(graph)
     ready: list[dict[str, Any]] = []
@@ -437,6 +472,8 @@ def cmd_plan(args: argparse.Namespace) -> dict[str, Any]:
     run_id = args.run_id
     template = load_template(resolve_read_path(args.template))
     tasks = [normalize_task(task, ip_dir) for task in template["tasks"] if isinstance(task, dict)]
+    for task in tasks:
+        seed_pre_edit_hashes(task, ip_dir)
     if not tasks:
         raise ValueError("wavefront template produced no tasks")
     now = utc_now()
@@ -537,6 +574,7 @@ def cmd_claim(args: argparse.Namespace) -> dict[str, Any]:
     barriers_ok, barrier_blockers = barrier_ready(task, barriers)
     if not barriers_ok:
         issues.extend(issue("BARRIER_UNMET", f"missing barrier token: {token}", args.task_id) for token in barrier_blockers)
+    issues.extend(stale_path_issues(task, ip_dir))
 
     write_paths = task_write_paths(task)
     active = active_lock_paths(locks)

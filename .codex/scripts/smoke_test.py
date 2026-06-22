@@ -852,6 +852,61 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     shared_scope_issues = json.loads(shared_scope_plan.stdout)["issues"]
     assert any(item["code"] == "SHARED_ARTIFACT_OWNERSHIP" for item in shared_scope_issues), shared_scope_plan.stdout
 
+    stale_ip = project / "stale_guard_ip"
+    stale_ip.mkdir()
+    (stale_ip / "rtl").mkdir()
+    watched_path = stale_ip / "rtl" / "watched.sv"
+    watched_path.write_text("module watched; endmodule\n", encoding="utf-8")
+    stale_template = project / "stale_template.json"
+    stale_template.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_wavefront_template.v1",
+                "tasks": [
+                    {
+                        "task_id": "STALE_GUARDED_WRITE",
+                        "kind": "write",
+                        "phase": "rtl",
+                        "depends_on": [],
+                        "allowed_write_paths": ["rtl/output.sv"],
+                        "stale_if_paths_changed": ["rtl/watched.sv"],
+                        "ownership_mode": "exclusive_file",
+                        "may_claim_complete": False,
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    stale_run = "RUN_STALE_SMOKE"
+    stale_plan = run_wavefront(
+        "plan",
+        "--ip-dir",
+        str(stale_ip),
+        "--run-id",
+        stale_run,
+        "--template",
+        str(stale_template),
+        "--json",
+        project_root=project,
+    )
+    assert stale_plan.returncode == 0, stale_plan.stderr or stale_plan.stdout
+    watched_path.write_text("module watched; wire changed; endmodule\n", encoding="utf-8")
+    stale_claim = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(stale_ip),
+        "--run-id",
+        stale_run,
+        "--task-id",
+        "STALE_GUARDED_WRITE",
+        "--json",
+        project_root=project,
+    )
+    assert stale_claim.returncode != 0, stale_claim.stdout
+    assert any(item["code"] == "STALE_PATH_CHANGED" for item in json.loads(stale_claim.stdout)["issues"]), stale_claim.stdout
+
 
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
