@@ -1134,6 +1134,8 @@ def main() -> int:
         dispatch = dispatch_result["dispatch"]
         assert dispatch["schema_version"] == "oag_dispatch.v1", dispatch
         assert "prompt_contract" in dispatch and "dispatch_id" in dispatch["prompt_contract"], dispatch
+        dispatch_nonce = dispatch["dispatch_id"].rsplit("_", 1)[-1]
+        assert len(dispatch_nonce) == 8 and all(char in "0123456789ABCDEF" for char in dispatch_nonce), dispatch
         (hook_ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
         receipt = hook_ip / "knowledge" / "subagents" / "smoke.json"
         receipt.parent.mkdir(parents=True, exist_ok=True)

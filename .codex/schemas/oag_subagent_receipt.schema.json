@@ -45,7 +45,7 @@
     },
     "dispatch_id": {
       "type": "string",
-      "pattern": "^DISPATCH_[A-Z0-9_]+_[0-9]{8}T[0-9]{6}Z$"
+      "pattern": "^DISPATCH_[A-Z0-9_]+_[0-9]{8}T[0-9]{6}Z(_[A-F0-9]{8})?$"
     },
     "dispatch_path": {
       "type": "string",

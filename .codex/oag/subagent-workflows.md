@@ -173,6 +173,8 @@ through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
 `git status --short -uall -- <ip>` delta against the dispatch baseline. Any
 path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
+Dispatch IDs include a short nonce after the timestamp so same-second fan-out
+does not rely on sleeps for uniqueness.
 
 At parent Stop, `python3 .codex/scripts/oag_main_write_gate.py` checks the
 locked IP's git delta. Locked implementation/verification artifacts without a

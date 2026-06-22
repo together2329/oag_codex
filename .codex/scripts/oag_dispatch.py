@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -213,7 +214,8 @@ def safe_dispatch_id(ip_id: str, agent_type: str, *, sequence: int = 0) -> str:
     stem = SAFE_RE.sub("_", f"{ip_id}_{agent_tail}").strip("_").upper()
     if sequence:
         stem = f"{stem}_{sequence:02d}"
-    return f"DISPATCH_{stem}_{compact_timestamp()}"
+    nonce = uuid.uuid4().hex[:8].upper()
+    return f"DISPATCH_{stem}_{compact_timestamp()}_{nonce}"
 
 
 def build_prompt_contract(dispatch: dict[str, Any]) -> str:
@@ -272,45 +274,52 @@ def create_dispatch(args: argparse.Namespace) -> dict[str, Any]:
                 "ask the user to confirm scope and run oag.lock"
             )
 
+    status_raw, status_paths = git_status_paths(ip_rel)
+    dispatch_path = ip_dir / "knowledge" / "dispatches" / "unused.json"
+    dispatch_path.parent.mkdir(parents=True, exist_ok=True)
+    dispatch: dict[str, Any] | None = None
     for sequence in range(0, 100):
         dispatch_id = safe_dispatch_id(ip_dir.name, args.agent_type, sequence=sequence)
-        dispatch_path = ip_dir / "knowledge" / "dispatches" / f"{dispatch_id}.json"
-        if not dispatch_path.exists():
-            break
-    else:
-        raise ValueError("could not allocate a unique dispatch id")
-    dispatch_rel = project_rel(dispatch_path)
-    status_raw, status_paths = git_status_paths(ip_rel)
-    dispatch = {
-        "schema_version": "oag_dispatch.v1",
-        "product_name": "IP Dev Agent",
-        "internal_gateway": "Ontology Agent Gateway",
-        "dispatch_id": dispatch_id,
-        "dispatch_path": dispatch_rel,
-        "agent_type": args.agent_type,
-        "role_name": role_name,
-        "role_kind": role_kind,
-        "registered_id": args.registered_id or role_name,
-        "ip_id": ip_dir.name,
-        "ip_dir": ip_rel,
-        "stage": args.stage,
-        "owned_obligations": args.owned_obligation or [],
-        "contracts": args.contract or [],
-        "allowed_write_paths": sorted(set(allowed_write_paths)),
-        "allowed_tool_side_effects": sorted(set(allowed_tool_side_effects)),
-        "receipt_path": receipt_path,
-        "may_claim_complete": False,
-        "baseline": {
+        candidate_path = ip_dir / "knowledge" / "dispatches" / f"{dispatch_id}.json"
+        dispatch_rel = project_rel(candidate_path)
+        candidate = {
+            "schema_version": "oag_dispatch.v1",
+            "product_name": "IP Dev Agent",
+            "internal_gateway": "Ontology Agent Gateway",
+            "dispatch_id": dispatch_id,
+            "dispatch_path": dispatch_rel,
+            "agent_type": args.agent_type,
+            "role_name": role_name,
+            "role_kind": role_kind,
+            "registered_id": args.registered_id or role_name,
+            "ip_id": ip_dir.name,
+            "ip_dir": ip_rel,
+            "stage": args.stage,
+            "owned_obligations": args.owned_obligation or [],
+            "contracts": args.contract or [],
+            "allowed_write_paths": sorted(set(allowed_write_paths)),
+            "allowed_tool_side_effects": sorted(set(allowed_tool_side_effects)),
+            "receipt_path": receipt_path,
+            "may_claim_complete": False,
+            "baseline": {
+                "created_at": utc_now(),
+                "git_status_raw": status_raw,
+                "git_status_paths": status_paths,
+                "file_hashes": hash_known_paths([ip_rel]),
+            },
             "created_at": utc_now(),
-            "git_status_raw": status_raw,
-            "git_status_paths": status_paths,
-            "file_hashes": hash_known_paths([ip_rel]),
-        },
-        "created_at": utc_now(),
-    }
-    dispatch["prompt_contract"] = build_prompt_contract(dispatch)
-    dispatch_path.parent.mkdir(parents=True, exist_ok=True)
-    dispatch_path.write_text(json.dumps(dispatch, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        }
+        candidate["prompt_contract"] = build_prompt_contract(candidate)
+        try:
+            with candidate_path.open("x", encoding="utf-8") as fh:
+                fh.write(json.dumps(candidate, indent=2, sort_keys=True) + "\n")
+        except FileExistsError:
+            continue
+        dispatch_path = candidate_path
+        dispatch = candidate
+        break
+    if dispatch is None:
+        raise ValueError("could not allocate a unique dispatch id")
     dispatch["path"] = dispatch_rel
     return {
         "schema_version": "oag_dispatch_create_result.v1",
