@@ -36,6 +36,8 @@ tasks:
       - tb_common_import_clean
       - helper_api_manifest
       - scoreboard_schema_frozen
+    barrier_outputs:
+      - scenario_import_clean
     allowed_write_paths:
       - tb/cocotb/test_scenario_a.py
     ownership_mode: exclusive_file

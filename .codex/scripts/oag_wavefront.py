@@ -592,6 +592,18 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
     status = args.status
     if status not in VALID_STATUSES:
         return result("fail", "oag_wavefront_record_result.v1", issues=[issue("TASK_STATUS", f"invalid status: {status}")])
+    requested_outputs = normalize_list(args.barrier_output)
+    declared_outputs = set(normalize_list(task.get("barrier_outputs")))
+    undeclared_outputs = [token for token in requested_outputs if token not in declared_outputs]
+    if undeclared_outputs:
+        return result(
+            "fail",
+            "oag_wavefront_record_result.v1",
+            issues=[
+                issue("BARRIER_OUTPUT_UNDECLARED", f"task did not declare barrier output: {token}", args.task_id)
+                for token in undeclared_outputs
+            ],
+        )
     task["status"] = status
     task["recorded_at"] = utc_now()
     if args.receipt:
@@ -602,7 +614,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         if claim_file.is_file():
             claim_file.unlink()
     tokens = set(str(item) for item in barriers.get("tokens", []))
-    tokens.update(normalize_list(args.barrier_output))
+    tokens.update(requested_outputs)
     barriers["tokens"] = sorted(tokens)
     write_graph(ip_dir, args.run_id, graph)
     write_locks(ip_dir, args.run_id, locks)
@@ -613,7 +625,7 @@ def cmd_record(args: argparse.Namespace) -> dict[str, Any]:
         "recorded",
         task_id=args.task_id,
         status=status,
-        details={"barrier_outputs": normalize_list(args.barrier_output), "receipt": args.receipt or ""},
+        details={"barrier_outputs": requested_outputs, "receipt": args.receipt or ""},
     )
     return result(
         "pass",

@@ -638,6 +638,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     assert active_close.returncode != 0, active_close.stdout
     assert any(item["code"] == "ACTIVE_LOCKS" for item in json.loads(active_close.stdout)["issues"]), active_close.stdout
 
+    bad_barrier_record = run_wavefront(
+        "record",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_COMMON_API",
+        "--status",
+        "handoff_pass",
+        "--barrier-output",
+        "scoreboard_schema_frozen",
+        "--json",
+        project_root=project,
+    )
+    assert bad_barrier_record.returncode != 0, bad_barrier_record.stdout
+    assert any(
+        item["code"] == "BARRIER_OUTPUT_UNDECLARED"
+        for item in json.loads(bad_barrier_record.stdout)["issues"]
+    ), bad_barrier_record.stdout
+
     record_common = run_wavefront(
         "record",
         "--ip-dir",
