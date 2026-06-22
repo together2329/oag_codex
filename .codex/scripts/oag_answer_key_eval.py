@@ -96,7 +96,13 @@ def _compile_fresh_skip_case(case: dict[str, Any], root: Path) -> dict[str, Any]
     }
 
 
-def _score_case(case: dict[str, Any], observed: dict[str, Any], duration_s: float) -> tuple[float, list[str]]:
+def _score_case(
+    case: dict[str, Any],
+    observed: dict[str, Any],
+    duration_s: float,
+    *,
+    speed_scale: float = 1.0,
+) -> tuple[float, list[str]]:
     expected = case.get("expected") if isinstance(case.get("expected"), dict) else {}
     mismatches: list[str] = []
     correct = 0
@@ -113,16 +119,19 @@ def _score_case(case: dict[str, Any], observed: dict[str, Any], duration_s: floa
     if max_duration is not None:
         total += 1
         try:
-            if duration_s <= float(max_duration):
+            effective_max_duration = float(max_duration) * speed_scale
+            if duration_s <= effective_max_duration:
                 correct += 1
             else:
-                mismatches.append(f"duration_s: expected <= {float(max_duration):.3f}, observed {duration_s:.3f}")
+                mismatches.append(
+                    f"duration_s: expected <= {effective_max_duration:.3f}, observed {duration_s:.3f}"
+                )
         except Exception:
             mismatches.append(f"duration_s: invalid max_duration_s {max_duration!r}")
     return (correct / total if total else 1.0), mismatches
 
 
-def _run_case(case: dict[str, Any], root: Path) -> dict[str, Any]:
+def _run_case(case: dict[str, Any], root: Path, *, speed_scale: float = 1.0) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         kind = str(case.get("kind") or "")
@@ -133,7 +142,7 @@ def _run_case(case: dict[str, Any], root: Path) -> dict[str, Any]:
         else:
             raise ValueError(f"unknown case kind: {kind}")
         duration_s = round(time.perf_counter() - started, 4)
-        score, mismatches = _score_case(case, observed, duration_s)
+        score, mismatches = _score_case(case, observed, duration_s, speed_scale=speed_scale)
         return {
             "id": str(case.get("id") or ""),
             "kind": kind,
@@ -176,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--suite", default=str(DEFAULT_SUITE), help="answer-key suite JSON path")
     parser.add_argument("--json", action="store_true", help="print JSON report")
     parser.add_argument("--keep-temp", action="store_true", help="keep temporary IP fixtures")
+    parser.add_argument(
+        "--speed-scale",
+        type=float,
+        default=1.0,
+        help="multiply per-case max_duration_s thresholds; useful for full smoke runs on loaded hosts",
+    )
     args = parser.parse_args(argv)
 
     suite = _load_suite(Path(args.suite))
@@ -187,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         temp_dir = cleanup.name
 
     root = Path(temp_dir)
-    cases = [_run_case(case, root) for case in suite["cases"]]
+    cases = [_run_case(case, root, speed_scale=max(0.0, args.speed_scale)) for case in suite["cases"]]
     passed = sum(1 for case in cases if case["ok"])
     score = sum(float(case["score"]) for case in cases) / len(cases) if cases else 1.0
     report = {

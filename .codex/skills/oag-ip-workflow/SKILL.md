@@ -21,13 +21,16 @@ task enters one of these lanes:
   contracts, behavior/cycle refs, and proof projection.
 - `oag-authoring-packet`: post-lock `oag.compile`, role-specific `rtl__*.json`
   and `tb__*.json` packet checks, and native subagent packet handoff.
+- `oag-wavefront`: dependency-aware parallel work planning, ownership locks,
+  barrier tokens, read-only triage, disjoint write shards, and single
+  integration owners.
 - `oag-evidence-closure`: scoreboard, coverage, validation, trace graph,
   freshness, gate, and `claim_complete` readiness.
 
 Do not let this umbrella skill hide ownership. Intake and decisions are draft
 workflow. Contract projection prepares implementation truth. Authoring packets
-feed RTL/TB subagents. Evidence closure audits proof strength and decision
-freshness.
+feed RTL/TB subagents. Wavefront scheduling opens only safe parallel work
+boundaries. Evidence closure audits proof strength and decision freshness.
 
 ## Start
 
@@ -149,6 +152,21 @@ python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-pac
 The generated `ontology/generated/authoring_packets/rtl__*.json` and
 `tb__*.json` files are the role-specific implementation and proof inputs.
 RTL/TB agents should not reinterpret original prose once these packets exist.
+
+When multiple RTL/TB/sim tasks should run in parallel, use wavefront scheduling
+instead of unconstrained fan-out:
+
+```bash
+python3 .codex/scripts/oag_wavefront.py plan --ip-dir <ip> --run-id <run> --template .codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml --json
+python3 .codex/scripts/oag_wavefront.py ready --ip-dir <ip> --run-id <run> --json
+python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --json
+```
+
+Read-only triage can fan out aggressively. Write tasks require disjoint
+`allowed_write_paths`. Shared artifacts such as filelists, run scripts,
+aggregate results, coverage JSON, and closure packages require a single
+integration owner. Simulation failures should be classified by read-only
+triage before repair agents are opened.
 
 After user lock, main agent orchestrates; subagents implement and verify. The
 main agent must not directly create or substantially edit RTL, TB, sim, lint,

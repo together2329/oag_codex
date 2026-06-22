@@ -25,6 +25,7 @@ DEV_VALIDATOR = ROOT / "scripts" / "oag_dev_validator.py"
 SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
 EXEC_AUTO_RESEARCH = ROOT / "scripts" / "oag_exec_auto_research.py"
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
+WAVEFRONT = ROOT / "scripts" / "oag_wavefront.py"
 MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
@@ -50,6 +51,8 @@ OAG_DECISION_MATRIX_SKILL = ROOT / "skills" / "oag-decision-matrix" / "SKILL.md"
 OAG_CONTRACT_PROJECTION_SKILL = ROOT / "skills" / "oag-contract-projection" / "SKILL.md"
 OAG_AUTHORING_PACKET_SKILL = ROOT / "skills" / "oag-authoring-packet" / "SKILL.md"
 OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.md"
+OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
+OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -74,6 +77,9 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_contract_v2.schema.json",
     ROOT / "schemas" / "oag_rtl_authoring_packet.schema.json",
     ROOT / "schemas" / "oag_tb_authoring_packet.schema.json",
+    ROOT / "schemas" / "oag_wavefront_task_graph.schema.json",
+    ROOT / "schemas" / "oag_ownership_locks.schema.json",
+    ROOT / "schemas" / "oag_wavefront_event.schema.json",
 ]
 
 
@@ -160,6 +166,20 @@ def run_dispatch(*args: str, project_root: Path | None = None) -> subprocess.Com
         env["OAG_PROJECT_ROOT"] = str(project_root)
     return subprocess.run(
         [sys.executable, str(DISPATCH), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_wavefront(*args: str, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(WAVEFRONT), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -532,6 +552,247 @@ def test_pyslang_lint_runner() -> None:
         assert result["files"] == ["rtl/demo.sv"], result
 
 
+def test_wavefront_scheduler(tmp_root: Path) -> None:
+    project = tmp_root / "wavefront_project"
+    project.mkdir(parents=True)
+    ip = project / "wave_ip"
+    ip.mkdir()
+    run_id = "RUN_WAVE_SMOKE"
+
+    plan = run_wavefront(
+        "plan",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--template",
+        str(OAG_WAVEFRONT_TEMPLATE),
+        "--json",
+        project_root=project,
+    )
+    assert plan.returncode == 0, plan.stderr or plan.stdout
+    plan_result = json.loads(plan.stdout)
+    assert plan_result["status"] == "pass", plan_result
+    assert sorted(plan_result["ready_tasks"]) == ["TB_COMMON_API", "TB_SCOREBOARD_SCHEMA"], plan_result
+
+    ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert ready.returncode == 0, ready.stderr or ready.stdout
+    ready_ids = sorted(task["task_id"] for task in json.loads(ready.stdout)["ready_tasks"])
+    assert ready_ids == ["TB_COMMON_API", "TB_SCOREBOARD_SCHEMA"], ready.stdout
+
+    early_scenario = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_SCENARIO_A",
+        "--json",
+        project_root=project,
+    )
+    assert early_scenario.returncode != 0, early_scenario.stdout
+    early_result = json.loads(early_scenario.stdout)
+    early_codes = {item["code"] for item in early_result["issues"]}
+    assert "DEPENDENCY_UNMET" in early_codes and "BARRIER_UNMET" in early_codes, early_result
+
+    claim_common = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_COMMON_API",
+        "--claimed-by",
+        "smoke-common",
+        "--json",
+        project_root=project,
+    )
+    assert claim_common.returncode == 0, claim_common.stderr or claim_common.stdout
+    claim_scoreboard = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_SCOREBOARD_SCHEMA",
+        "--claimed-by",
+        "smoke-scoreboard",
+        "--json",
+        project_root=project,
+    )
+    assert claim_scoreboard.returncode == 0, claim_scoreboard.stderr or claim_scoreboard.stdout
+
+    active_close = run_wavefront(
+        "close",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--allow-open",
+        "--json",
+        project_root=project,
+    )
+    assert active_close.returncode != 0, active_close.stdout
+    assert any(item["code"] == "ACTIVE_LOCKS" for item in json.loads(active_close.stdout)["issues"]), active_close.stdout
+
+    record_common = run_wavefront(
+        "record",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_COMMON_API",
+        "--status",
+        "handoff_pass",
+        "--barrier-output",
+        "tb_common_import_clean",
+        "--barrier-output",
+        "helper_api_manifest",
+        "--json",
+        project_root=project,
+    )
+    assert record_common.returncode == 0, record_common.stderr or record_common.stdout
+    record_scoreboard = run_wavefront(
+        "record",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_SCOREBOARD_SCHEMA",
+        "--status",
+        "handoff_pass",
+        "--barrier-output",
+        "scoreboard_schema_frozen",
+        "--json",
+        project_root=project,
+    )
+    assert record_scoreboard.returncode == 0, record_scoreboard.stderr or record_scoreboard.stdout
+
+    scenario_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert scenario_ready.returncode == 0, scenario_ready.stderr or scenario_ready.stdout
+    scenario_ready_ids = [task["task_id"] for task in json.loads(scenario_ready.stdout)["ready_tasks"]]
+    assert scenario_ready_ids == ["TB_SCENARIO_A"], scenario_ready.stdout
+
+    claim_scenario = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_SCENARIO_A",
+        "--json",
+        project_root=project,
+    )
+    assert claim_scenario.returncode == 0, claim_scenario.stderr or claim_scenario.stdout
+    record_scenario = run_wavefront(
+        "record",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "TB_SCENARIO_A",
+        "--status",
+        "handoff_pass",
+        "--barrier-output",
+        "scenario_import_clean",
+        "--json",
+        project_root=project,
+    )
+    assert record_scenario.returncode == 0, record_scenario.stderr or record_scenario.stdout
+    verify = run_wavefront("verify", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert verify.returncode == 0, verify.stderr or verify.stdout
+
+    close = run_wavefront(
+        "close",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--allow-open",
+        "--json",
+        project_root=project,
+    )
+    assert close.returncode == 0, close.stderr or close.stdout
+
+    conflict_ip = project / "conflict_ip"
+    conflict_ip.mkdir()
+    conflict_template = project / "conflict_template.json"
+    conflict_template.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_wavefront_template.v1",
+                "tasks": [
+                    {
+                        "task_id": "WRITE_A",
+                        "kind": "write",
+                        "phase": "rtl",
+                        "depends_on": [],
+                        "allowed_write_paths": ["rtl/shared.sv"],
+                        "ownership_mode": "exclusive_file",
+                        "may_claim_complete": False,
+                    },
+                    {
+                        "task_id": "WRITE_B",
+                        "kind": "write",
+                        "phase": "rtl",
+                        "depends_on": [],
+                        "allowed_write_paths": ["rtl/shared.sv"],
+                        "ownership_mode": "exclusive_file",
+                        "may_claim_complete": False,
+                    },
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    conflict_run = "RUN_CONFLICT_SMOKE"
+    conflict_plan = run_wavefront(
+        "plan",
+        "--ip-dir",
+        str(conflict_ip),
+        "--run-id",
+        conflict_run,
+        "--template",
+        str(conflict_template),
+        "--json",
+        project_root=project,
+    )
+    assert conflict_plan.returncode == 0, conflict_plan.stderr or conflict_plan.stdout
+    claim_a = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(conflict_ip),
+        "--run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_A",
+        "--json",
+        project_root=project,
+    )
+    assert claim_a.returncode == 0, claim_a.stderr or claim_a.stdout
+    claim_b = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(conflict_ip),
+        "--run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_B",
+        "--json",
+        project_root=project,
+    )
+    assert claim_b.returncode != 0, claim_b.stdout
+    assert any(item["code"] == "OWNERSHIP_CONFLICT" for item in json.loads(claim_b.stdout)["issues"]), claim_b.stdout
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -697,7 +958,9 @@ def main() -> int:
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         test_pyslang_lint_runner()
+        test_wavefront_scheduler(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
+        assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
         assert VALIDATE_JSON.is_file(), VALIDATE_JSON
         assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
@@ -723,6 +986,8 @@ def main() -> int:
         assert OAG_CONTRACT_PROJECTION_SKILL.is_file(), OAG_CONTRACT_PROJECTION_SKILL
         assert OAG_AUTHORING_PACKET_SKILL.is_file(), OAG_AUTHORING_PACKET_SKILL
         assert OAG_EVIDENCE_CLOSURE_SKILL.is_file(), OAG_EVIDENCE_CLOSURE_SKILL
+        assert OAG_WAVEFRONT_SKILL.is_file(), OAG_WAVEFRONT_SKILL
+        assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -778,6 +1043,8 @@ def main() -> int:
         assert "oag-decision-matrix" in skill_text, skill_text
         assert "oag-contract-projection" in skill_text, skill_text
         assert "oag-authoring-packet" in skill_text, skill_text
+        assert "oag-wavefront" in skill_text, skill_text
+        assert "oag_wavefront.py" in skill_text, skill_text
         assert "oag-evidence-closure" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
@@ -796,9 +1063,11 @@ def main() -> int:
         assert "RULE-CONTRACT-AG-001" in rule_index_text, rule_index_text
         assert "RULE-PACKET-ROLE-001" in rule_index_text, rule_index_text
         assert "RULE-TRACE-001" in rule_index_text, rule_index_text
+        assert "RULE-WAVE-001" in rule_index_text, rule_index_text
         decision_skill_text = OAG_DECISION_MATRIX_SKILL.read_text(encoding="utf-8")
         contract_skill_text = OAG_CONTRACT_PROJECTION_SKILL.read_text(encoding="utf-8")
         packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
+        wavefront_skill_text = OAG_WAVEFRONT_SKILL.read_text(encoding="utf-8")
         closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
         assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
         assert "lock_required: true" in decision_skill_text, decision_skill_text
@@ -806,6 +1075,8 @@ def main() -> int:
         assert "oag_contract_strength_check.py" in contract_skill_text, contract_skill_text
         assert "rtl__*.json" in packet_skill_text and "tb__*.json" in packet_skill_text, packet_skill_text
         assert "oag_authoring_packet_check.py" in packet_skill_text, packet_skill_text
+        assert "dependency" in wavefront_skill_text and "ownership" in wavefront_skill_text, wavefront_skill_text
+        assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
         assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
         assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
@@ -817,6 +1088,7 @@ def main() -> int:
         assert "oag_lock_readiness_check.py" in agents_text, agents_text
         assert "oag_contract_strength_check.py" in agents_text, agents_text
         assert "oag_authoring_packet_check.py" in agents_text, agents_text
+        assert "oag_wavefront.py" in agents_text, agents_text
         assert "oag_trace_graph_check.py" in agents_text, agents_text
         assert "oag_deep_semantic_intake.py" in agents_text, agents_text
         assert "oag_decision_matrix_generate.py" in agents_text, agents_text
@@ -1126,6 +1398,12 @@ def main() -> int:
             str(hook_ip / "ontology" / "generated"),
             "--receipt-path",
             str(hook_ip / "knowledge" / "subagents" / "smoke.json"),
+            "--wavefront-run-id",
+            "RUN_DISPATCH_SMOKE",
+            "--task-id",
+            "RTL_SMOKE_TASK",
+            "--ownership-mode",
+            "exclusive_file",
             "--json",
             project_root=hook_cwd,
         )
@@ -1134,6 +1412,9 @@ def main() -> int:
         dispatch = dispatch_result["dispatch"]
         assert dispatch["schema_version"] == "oag_dispatch.v1", dispatch
         assert "prompt_contract" in dispatch and "dispatch_id" in dispatch["prompt_contract"], dispatch
+        assert dispatch["wavefront_run_id"] == "RUN_DISPATCH_SMOKE", dispatch
+        assert dispatch["task_id"] == "RTL_SMOKE_TASK", dispatch
+        assert "wavefront_run_id" in dispatch["prompt_contract"], dispatch
         dispatch_nonce = dispatch["dispatch_id"].rsplit("_", 1)[-1]
         assert len(dispatch_nonce) == 8 and all(char in "0123456789ABCDEF" for char in dispatch_nonce), dispatch
         (hook_ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
@@ -1147,6 +1428,9 @@ def main() -> int:
                     "internal_gateway": "Ontology Agent Gateway",
                     "dispatch_id": dispatch["dispatch_id"],
                     "dispatch_path": dispatch["dispatch_path"],
+                    "wavefront_run_id": "RUN_DISPATCH_SMOKE",
+                    "task_id": "RTL_SMOKE_TASK",
+                    "ownership_mode": "exclusive_file",
                     "role_name": "oag-custom-worker",
                     "shard_scope": "smoke",
                     "stage": "rtl",
@@ -2214,7 +2498,7 @@ def main() -> int:
         assert eval_report["passed"] == eval_report["total"], eval_report
         assert eval_report["total"] >= 14, eval_report
         answer_key_proc = subprocess.run(
-            [sys.executable, str(ANSWER_KEY_EVAL), "--json"],
+            [sys.executable, str(ANSWER_KEY_EVAL), "--json", "--speed-scale", "5"],
             text=True,
             capture_output=True,
             check=False,

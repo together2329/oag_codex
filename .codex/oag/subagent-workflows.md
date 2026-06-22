@@ -116,6 +116,10 @@ Use subagents when the work is naturally parallel and bounded:
 
 Avoid subagents when a single edit surface needs tight sequential reasoning.
 Write-heavy subagents must be assigned non-overlapping files or modules.
+For larger fan-out, use `python3 .codex/scripts/oag_wavefront.py` first. The
+wavefront graph records dependency barriers, ownership locks, and the single
+integration owner for shared artifacts. A task that has unmet dependencies or a
+conflicting ownership lock must not be dispatched.
 
 After user lock, main agent orchestrates; subagents implement and verify. Locked
 RTL, TB, sim, lint, coverage, formal, SDC, signoff, and implementation filelist
@@ -175,6 +179,11 @@ path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
 Dispatch IDs include a short nonce after the timestamp so same-second fan-out
 does not rely on sleeps for uniqueness.
+When a dispatch belongs to a wavefront task, include `--wavefront-run-id`,
+`--task-id`, and `--ownership-mode`. The child receipt should echo
+`wavefront_run_id`, `task_id`, and `ownership_mode` so parent-side verification
+can connect the handoff to the wavefront task graph. Barrier tokens stay in the
+wavefront task graph and are recorded with `oag_wavefront.py record`.
 
 At parent Stop, `python3 .codex/scripts/oag_main_write_gate.py` checks the
 locked IP's git delta. Locked implementation/verification artifacts without a

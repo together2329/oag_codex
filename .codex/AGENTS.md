@@ -21,6 +21,8 @@ Primary assets:
 - `oag/decision-matrix-policy.md`
 - `oag/authoring-packet-policy.md`
 - `oag/traceability-policy.md`
+- `oag/wavefront-policy.md`
+- `oag/wavefront-task-graph.md`
 - `oag/contract-projection.md`
 - `oag/rtl-implementation.md`
 - `oag/rtl-dialect-policy.md`
@@ -44,6 +46,7 @@ Primary assets:
 - `rules/oag-contract-strength.rules.md`
 - `rules/oag-authoring-packet.rules.md`
 - `rules/oag-traceability.rules.md`
+- `rules/oag-wavefront.rules.md`
 - `rules/oag-verification-strategy.rules.md`
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
@@ -54,6 +57,7 @@ Primary assets:
 - `skills/oag-contract-projection/SKILL.md`
 - `skills/oag-authoring-packet/SKILL.md`
 - `skills/oag-evidence-closure/SKILL.md`
+- `skills/oag-wavefront/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
 - `oag/agent-catalog.toml`
@@ -89,6 +93,7 @@ Primary assets:
 - `scripts/oag_contract_strength_check.py`
 - `scripts/oag_authoring_packet_check.py`
 - `scripts/oag_trace_graph_check.py`
+- `scripts/oag_wavefront.py`
 - `scripts/oag_deep_semantic_intake.py`
 - `scripts/oag_decision_matrix_generate.py`
 - `scripts/oag_verification_plan_check.py`
@@ -156,8 +161,10 @@ their specific lanes: `oag-deep-semantic-intake` for source claims and
 ambiguity, `oag-decision-matrix` for lock-blocking decisions,
 `oag-contract-projection` for requirement atom to assume/guarantee contract
 projection, `oag-authoring-packet` for role-specific `rtl__*.json` and
-`tb__*.json` packet handoff, and `oag-evidence-closure` for trace, scoreboard,
-coverage, validation, and gate readiness.
+`tb__*.json` packet handoff, `oag-wavefront` for dependency-aware parallel
+dispatch planning, ownership locks, barriers, and failure-triage fan-out, and
+`oag-evidence-closure` for trace, scoreboard, coverage, validation, and gate
+readiness.
 `oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
 from user config while preserving unrelated Codex MCP tools such as browser or
 editor helpers.
@@ -199,6 +206,13 @@ Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packet
 before RTL/TB native subagent dispatch to ensure `oag.compile` produced
 role-specific `rtl__*.json` and `tb__*.json` packets with independent truth
 sources.
+Use `.codex/scripts/oag_wavefront.py` when RTL/TB/sim work should be
+parallelized. It writes runtime state under `ontology/runs/<run_id>/` and
+`knowledge/wavefront/<run_id>/`; it consumes ontology truth and authoring
+packets but must not create locked requirements, contracts, or closure
+decisions. Read-only triage can fan out aggressively, write tasks need disjoint
+ownership locks, shared artifacts need a single integration owner, and workers
+must keep `may_claim_complete=false`.
 Use `.codex/scripts/oag_trace_graph_check.py --ip-dir <ip> --json` to audit the
 source claim -> requirement -> atom -> obligation -> contract -> scenario ->
 evidence trace graph.

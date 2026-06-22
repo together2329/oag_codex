@@ -90,6 +90,15 @@
       "type": "string",
       "minLength": 1
     },
+    "wavefront_run_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "ownership_mode": {
+      "type": "string"
+    },
     "may_claim_complete": {
       "const": false
     },

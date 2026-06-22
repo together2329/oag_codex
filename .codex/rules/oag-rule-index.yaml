@@ -81,3 +81,14 @@ rules:
       draft: warn
       post_lock: warn
       closure: block
+  - id: RULE-WAVE-001
+    text: Wavefront parallelism may only open dependency-satisfied tasks with safe ownership boundaries.
+    policy_refs:
+      - oag/wavefront-policy.md
+      - oag/wavefront-task-graph.md
+    checker_refs:
+      - scripts/oag_wavefront.py
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
