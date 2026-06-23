@@ -439,6 +439,45 @@ def test_dot_oag_layout_state_scripts(tmp_root: Path) -> None:
         assert not any(bad in issue.lower() for issue in post_issues), (bad, post_issues)
 
 
+def test_dot_oag_scaffold_layout(tmp_root: Path) -> None:
+    """Wave 3: oag.scaffold with layout=dot_oag creates ontology/ and knowledge/
+    under <ip>/.oag/ while human-facing dirs stay top-level, and IP-state scripts
+    operate on the freshly scaffolded hidden state via the resolver."""
+    ip = tmp_root / "dot_oag_scaffold"
+    res = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke", "layout": "dot_oag"}})
+    assert res["ok"] is True, res
+    assert res["result"].get("layout") == "dot_oag", res
+
+    # ontology/ + knowledge/ live under .oag/ ...
+    assert (ip / ".oag" / "ontology" / "ip.yaml").is_file(), res
+    assert (ip / ".oag" / "ontology" / "scope_lock.json").is_file(), res
+    assert (ip / ".oag" / "ontology" / "contracts.yaml").is_file(), res
+    assert (ip / ".oag" / "knowledge" / "ledger.jsonl").is_file(), res
+    assert (ip / ".oag" / "knowledge" / "_index.json").is_file(), res
+    # ... and not at the legacy top level.
+    assert not (ip / "ontology").exists(), "no top-level ontology/ under dot_oag scaffold"
+    assert not (ip / "knowledge").exists(), "no top-level knowledge/ under dot_oag scaffold"
+    # human-facing surfaces stay top-level.
+    for top in ("req", "rtl", "tb", "list", "scripts", "doc", "sdc", "sim"):
+        assert (ip / top).is_dir(), f"{top}/ should stay top-level"
+
+    # resolver reports a clean dot_oag layout (no mixed-layout warning).
+    layout = json.loads(
+        subprocess.run(
+            [sys.executable, str(OAG_PATHS), "--ip-dir", str(ip), "--json"],
+            text=True, capture_output=True, check=False, cwd=ROOT,
+        ).stdout
+    )
+    assert layout["layout"] == "dot_oag", layout
+    assert layout["warnings"] == [], layout
+
+    # IP-state scripts operate on the freshly scaffolded .oag IP via the resolver.
+    chk = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"]
+    assert not any("missing knowledge directory" in i for i in chk.get("issues", [])), chk
+    assert not any("missing ontology" in i for i in chk.get("issues", [])), chk
+    assert _req_quality_json(ip)["rc"] == 0, "req_quality runs on the .oag-scaffolded IP"
+
+
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
@@ -2015,6 +2054,7 @@ def main() -> int:
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
         test_oag_paths_resolver(Path(tmp))
         test_dot_oag_layout_state_scripts(Path(tmp))
+        test_dot_oag_scaffold_layout(Path(tmp))
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK

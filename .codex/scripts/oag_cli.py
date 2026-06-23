@@ -6075,11 +6075,13 @@ def _scaffold(arguments: dict[str, Any]) -> dict[str, Any]:
         ip,
         force=bool(arguments.get("force")),
         owner=str(arguments.get("owner") or "unassigned"),
+        layout=str(arguments.get("layout") or "legacy"),
     )
     return {
         "schema_version": "oag_scaffold_result.v1",
         "ip": manifest["ip"],
         "path": manifest["path"],
+        "layout": manifest.get("layout", "legacy"),
         "directories": manifest["directories"],
         "written_files": manifest["written_files"],
         "skipped_files": manifest["skipped_files"],
