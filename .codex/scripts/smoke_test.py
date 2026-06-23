@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT.parent
 OAG = ROOT / "scripts" / "oag_cli.py"
 GRAPH = ROOT / "scripts" / "oag_graph.py"
+MIGRATE_LAYOUT = ROOT / "scripts" / "oag_migrate_layout.py"
 PORTABLE_DB = ROOT / "scripts" / "oag_portable_db.py"
 OKF = ROOT / "scripts" / "oag_okf.py"
 EVAL = ROOT / "scripts" / "oag_eval.py"
@@ -476,6 +477,65 @@ def test_dot_oag_scaffold_layout(tmp_root: Path) -> None:
     assert not any("missing knowledge directory" in i for i in chk.get("issues", [])), chk
     assert not any("missing ontology" in i for i in chk.get("issues", [])), chk
     assert _req_quality_json(ip)["rc"] == 0, "req_quality runs on the .oag-scaffolded IP"
+
+
+def _hash_tree(root: Path) -> dict:
+    import hashlib
+
+    return {
+        p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def _run_migrate(*args: str) -> tuple[int, dict]:
+    proc = subprocess.run(
+        [sys.executable, str(MIGRATE_LAYOUT), *args, "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+    )
+    return proc.returncode, (json.loads(proc.stdout) if proc.stdout.strip() else {"_stderr": proc.stderr[-300:]})
+
+
+def test_dot_oag_migration_tool(tmp_root: Path) -> None:
+    """Wave 4: oag_migrate_layout.py moves ontology/ and knowledge/ into <ip>/.oag/
+    (dry-run by default), preserves file hashes, writes a receipt, keeps IP-state
+    scripts working, and rolls back losslessly."""
+    ip = tmp_root / "mig_ip"
+    sc = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
+    assert sc["ok"] is True, sc
+    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "legacy scaffold expected"
+    pre = {"ontology": _hash_tree(ip / "ontology"), "knowledge": _hash_tree(ip / "knowledge")}
+
+    # dry-run must change nothing.
+    rc, dry = _run_migrate("--ip-dir", str(ip), "--to-dot-oag")
+    assert rc == 0 and dry.get("applied") is False, dry
+    assert (ip / "ontology").is_dir() and not (ip / ".oag").exists(), "dry-run must not move"
+
+    # apply moves into .oag, preserves hashes, writes a receipt.
+    rc, ap = _run_migrate("--ip-dir", str(ip), "--to-dot-oag", "--apply")
+    assert rc == 0 and ap.get("applied") is True, ap
+    assert (ip / ".oag" / "ontology").is_dir() and (ip / ".oag" / "knowledge").is_dir(), ap
+    assert not (ip / "ontology").exists() and not (ip / "knowledge").exists(), "top-level cleared"
+    assert _hash_tree(ip / ".oag" / "ontology") == pre["ontology"], "ontology hashes preserved"
+    assert _hash_tree(ip / ".oag" / "knowledge") == pre["knowledge"], "knowledge hashes preserved"
+    receipt = ip / ap["receipt"]
+    assert receipt.is_file(), ap
+
+    # migrated IP still resolves via the resolver.
+    chk = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"]
+    assert not any(("missing knowledge" in i) or ("missing ontology" in i) for i in chk.get("issues", [])), chk
+
+    # rollback restores the legacy layout losslessly.
+    rc, rb = _run_migrate("--rollback", str(receipt))
+    assert rc == 0, rb
+    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "rollback restores top-level"
+    assert not (ip / ".oag" / "ontology").exists(), "rollback clears .oag ontology"
+    assert _hash_tree(ip / "ontology") == pre["ontology"], "rollback preserves ontology hashes"
 
 
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
@@ -2055,6 +2115,7 @@ def main() -> int:
         test_oag_paths_resolver(Path(tmp))
         test_dot_oag_layout_state_scripts(Path(tmp))
         test_dot_oag_scaffold_layout(Path(tmp))
+        test_dot_oag_migration_tool(Path(tmp))
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
