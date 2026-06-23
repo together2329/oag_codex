@@ -142,7 +142,53 @@
     "external_artifacts": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "kind",
+          "uri",
+          "sha256",
+          "required_for",
+          "retention"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uri": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "minLength": 1
+          },
+          "required_for": {
+            "enum": [
+              "audit",
+              "reproduce",
+              "debug_only",
+              "optional"
+            ]
+          },
+          "retention": {
+            "enum": [
+              "required",
+              "time_bound",
+              "optional",
+              "ephemeral"
+            ]
+          },
+          "size_bytes": {
+            "type": "integer"
+          }
+        }
       }
     }
   }

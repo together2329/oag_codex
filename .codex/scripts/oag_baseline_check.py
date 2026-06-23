@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import sys
@@ -23,6 +24,24 @@ def issue(code: str, message: str, path: str = "") -> dict[str, str]:
     if path:
         payload["path"] = path
     return payload
+
+
+FORBIDDEN_TRACKED_PATTERNS = (
+    "*.vcd",
+    "*.fst",
+    "*.fsdb",
+    "*.vpd",
+    "*.wlf",
+    "*.ucdb",
+    "*.vdb",
+    "*.log",
+    "sim/build/**",
+    "work/**",
+    ".cache/**",
+)
+
+EXTERNAL_REQUIRED_FOR = {"audit", "reproduce", "debug_only", "optional"}
+EXTERNAL_RETENTION = {"required", "time_bound", "optional", "ephemeral"}
 
 
 def read_document(path: Path) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
@@ -74,6 +93,11 @@ def file_hash(path: Path) -> tuple[str, int]:
     return f"sha256:{digest.hexdigest()}", size
 
 
+def is_forbidden_tracked_path(rel: str) -> bool:
+    normalized = rel.replace("\\", "/")
+    return any(fnmatch.fnmatch(normalized, pattern) for pattern in FORBIDDEN_TRACKED_PATTERNS)
+
+
 def tracked_paths(payload: dict[str, Any]) -> tuple[list[str], list[dict[str, str]]]:
     tracked = payload.get("tracked_artifacts")
     issues: list[dict[str, str]] = []
@@ -88,7 +112,10 @@ def tracked_paths(payload: dict[str, Any]) -> tuple[list[str], list[dict[str, st
             if not isinstance(item, str) or not item.strip():
                 issues.append(issue("BASELINE_TRACKED_PATH", f"tracked_artifacts.{group} contains a non-string path.", str(group)))
                 continue
-            paths.append(item.strip())
+            rel = item.strip()
+            if is_forbidden_tracked_path(rel):
+                issues.append(issue("BASELINE_TRACKED_FORBIDDEN", "Large/transient artifact must be external_artifacts, not tracked_artifacts.", rel))
+            paths.append(rel)
     return paths, issues
 
 
@@ -157,6 +184,42 @@ def check_hashes(payload: dict[str, Any], ip_dir: Path) -> list[dict[str, str]]:
     return issues
 
 
+def check_external_artifacts(payload: dict[str, Any]) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    external = payload.get("external_artifacts") or []
+    if not isinstance(external, list):
+        return [issue("BASELINE_EXTERNAL_SHAPE", "external_artifacts must be a list.")]
+    for index, item in enumerate(external):
+        path = f"external_artifacts[{index}]"
+        if not isinstance(item, dict):
+            issues.append(issue("BASELINE_EXTERNAL_SHAPE", "External artifact entry must be an object.", path))
+            continue
+        artifact_id = str(item.get("id") or path)
+        for field, code in (
+            ("id", "BASELINE_EXTERNAL_ID"),
+            ("kind", "BASELINE_EXTERNAL_KIND"),
+            ("uri", "BASELINE_EXTERNAL_URI"),
+            ("sha256", "BASELINE_EXTERNAL_SHA"),
+            ("required_for", "BASELINE_EXTERNAL_REQUIRED_FOR"),
+            ("retention", "BASELINE_EXTERNAL_RETENTION"),
+        ):
+            if not str(item.get(field) or "").strip():
+                issues.append(issue(code, f"External artifact {artifact_id} requires {field}.", path))
+        uri = str(item.get("uri") or "")
+        if uri and "://" not in uri:
+            issues.append(issue("BASELINE_EXTERNAL_URI", "External artifact URI must include a scheme.", path))
+        sha = str(item.get("sha256") or "")
+        if sha and not (sha.startswith("sha256:") and len(sha) == len("sha256:") + 64):
+            issues.append(issue("BASELINE_EXTERNAL_SHA", "External artifact sha256 must use sha256:<64 hex>.", path))
+        required_for = str(item.get("required_for") or "")
+        if required_for and required_for not in EXTERNAL_REQUIRED_FOR:
+            issues.append(issue("BASELINE_EXTERNAL_REQUIRED_FOR", f"required_for must be one of {sorted(EXTERNAL_REQUIRED_FOR)}.", path))
+        retention = str(item.get("retention") or "")
+        if retention and retention not in EXTERNAL_RETENTION:
+            issues.append(issue("BASELINE_EXTERNAL_RETENTION", f"retention must be one of {sorted(EXTERNAL_RETENTION)}.", path))
+    return issues
+
+
 def check_manifest(manifest_path: Path, *, ip_dir: Path | None = None) -> dict[str, Any]:
     manifest_path = manifest_path.resolve()
     ip_root = (ip_dir or infer_ip_dir(manifest_path)).resolve()
@@ -168,6 +231,7 @@ def check_manifest(manifest_path: Path, *, ip_dir: Path | None = None) -> dict[s
         issues.extend(check_git_policy(payload))
         issues.extend(check_gate_refs(payload, ip_root))
         issues.extend(check_hashes(payload, ip_root))
+        issues.extend(check_external_artifacts(payload))
 
     paths, _ = tracked_paths(payload) if payload else ([], [])
     return {

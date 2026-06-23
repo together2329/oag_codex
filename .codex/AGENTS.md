@@ -22,6 +22,7 @@ Primary assets:
 - `oag/authoring-packet-policy.md`
 - `oag/traceability-policy.md`
 - `oag/data-lifecycle-policy.md`
+- `oag/baseline-git-policy.md`
 - `oag/wavefront-policy.md`
 - `oag/wavefront-task-graph.md`
 - `oag/contract-projection.md`
@@ -129,7 +130,9 @@ implementation, `oag/authoring-packet-policy.md` defines role-specific
 source-to-contract-to-evidence ID governance, `oag/data-lifecycle-policy.md`
 defines processing stage, approval state, validity state, and consumer
 firewall rules for deciding whether artifacts may feed RTL/TB/evidence
-packets, `oag/contract-projection.md`
+packets, `oag/baseline-git-policy.md` defines how git commits, annotated tags,
+baseline manifests, and external artifacts form auditable baseline trust
+boundaries, `oag/contract-projection.md`
 defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines

@@ -56,6 +56,7 @@ OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.m
 OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
 OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
 OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
+OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -1090,6 +1091,38 @@ def test_baseline_manifest_checker(tmp_root: Path) -> None:
     assert "BASELINE_SELF_COMMIT" in bad_codes
     assert "BASELINE_TRACKED_FILE_MISSING" in bad_codes
 
+    (ip / "sim" / "waves.fst").write_text("waveform bytes\n", encoding="utf-8")
+    forbidden = manifest.copy()
+    forbidden["tracked_artifacts"] = {"evidence_summary": ["sim/waves.fst"]}
+    forbidden["hashes"] = {"sim/waves.fst": hash_entry("sim/waves.fst")}
+    forbidden_path = ip / "ontology" / "baselines" / "forbidden.yaml"
+    forbidden_path.write_text(yaml.safe_dump(forbidden, sort_keys=False), encoding="utf-8")
+    forbidden_result = run_baseline_check("--manifest", str(forbidden_path), "--json")
+    assert forbidden_result.returncode != 0, forbidden_result.stdout
+    assert any(
+        item["code"] == "BASELINE_TRACKED_FORBIDDEN"
+        for item in json.loads(forbidden_result.stdout)["issues"]
+    ), forbidden_result.stdout
+
+    external_bad = manifest.copy()
+    external_bad["external_artifacts"] = [
+        {
+            "id": "WAVES",
+            "kind": "waveform",
+            "uri": "artifacts://baseline_ip/v0.1.0/waves.fst",
+            "required_for": "debug_only",
+            "retention": "optional",
+        }
+    ]
+    external_path = ip / "ontology" / "baselines" / "external_bad.yaml"
+    external_path.write_text(yaml.safe_dump(external_bad, sort_keys=False), encoding="utf-8")
+    external_result = run_baseline_check("--manifest", str(external_path), "--json")
+    assert external_result.returncode != 0, external_result.stdout
+    assert any(
+        item["code"] == "BASELINE_EXTERNAL_SHA"
+        for item in json.loads(external_result.stdout)["issues"]
+    ), external_result.stdout
+
 
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
@@ -1291,6 +1324,7 @@ def main() -> int:
         assert OAG_WAVEFRONT_SKILL.is_file(), OAG_WAVEFRONT_SKILL
         assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
         assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
+        assert OAG_BASELINE_GIT_POLICY.is_file(), OAG_BASELINE_GIT_POLICY
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
