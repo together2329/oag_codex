@@ -16,6 +16,7 @@ CODEX_ROOT = SCRIPTS_DIR.parent
 SCHEMAS_DIR = CODEX_ROOT / "schemas"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
+import oag_paths  # noqa: E402
 from oag_validate_json import validate_document  # pylint: disable=wrong-import-position
 
 
@@ -95,7 +96,10 @@ def changed_by_hash(ip_dir: Path, item: dict[str, Any]) -> tuple[bool, list[dict
     if not expected:
         return False, []
     rel = str(item.get("path") or artifact_id(item))
-    path = ip_dir / rel
+    try:
+        path = oag_paths.legacy_or_hidden(ip_dir, rel)
+    except ValueError:
+        path = ip_dir / rel
     if not path.is_file():
         return True, [issue("STALE_HASH_FILE_MISSING", "Lifecycle hash target file is missing.", rel)]
     actual = content_sha256(path)
@@ -149,7 +153,7 @@ def reverse_dependency_closure(items: list[dict[str, Any]], changed_items: set[s
 
 
 def check(ip_dir: Path, *, require: bool = False) -> dict[str, Any]:
-    path = ip_dir / LIFECYCLE_PATH
+    path = oag_paths.legacy_or_hidden(ip_dir, LIFECYCLE_PATH)
     issues: list[dict[str, str]] = []
     if not path.is_file():
         if require:

@@ -307,6 +307,138 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
     assert dot_result["legacy_state"] == ["ontology"], dot_result
 
 
+def migrate_ip_to_dot_oag(ip: Path) -> None:
+    """Relocate ontology/ and knowledge/ under <ip>/.oag/ to emulate a migrated layout."""
+    hidden = ip / ".oag"
+    hidden.mkdir(exist_ok=True)
+    for sub in ("ontology", "knowledge"):
+        src = ip / sub
+        if src.exists():
+            src.rename(hidden / sub)
+
+
+def _req_quality_json(ip: Path) -> dict:
+    proc = subprocess.run(
+        [sys.executable, str(REQ_QUALITY_CHECK), "--ip-dir", str(ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+    )
+    return {"rc": proc.returncode, "data": json.loads(proc.stdout) if proc.stdout.strip() else {}}
+
+
+def _run_check_script(script: Path, ip: Path, *extra: str) -> tuple[int, str]:
+    proc = subprocess.run(
+        [sys.executable, str(script), "--ip-dir", str(ip), *extra, "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+    )
+    try:
+        status = str(json.loads(proc.stdout).get("status", ""))
+    except Exception:
+        status = ""
+    return proc.returncode, status
+
+
+def _graph_build_rc(ip: Path, out: Path) -> int:
+    return subprocess.run(
+        [sys.executable, str(GRAPH), "build", "--ip-dir", str(ip), "--json-out", str(out)],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+    ).returncode
+
+
+def test_dot_oag_layout_state_scripts(tmp_root: Path) -> None:
+    """Wave 2 layout transparency: IP-state scripts must behave identically whether
+    ontology/ and knowledge/ live at the legacy top level or under <ip>/.oag/.
+
+    Builds a full locked IP (legacy), captures baseline behavior, relocates
+    ontology/ + knowledge/ under .oag/, and asserts resolver-routed scripts read
+    and write the hidden state with no behavior change. Before Wave 2 conversion
+    this fails because scripts hard-code <ip>/ontology and <ip>/knowledge.
+    """
+    ip = make_ip(tmp_root / "dot_oag_state")
+
+    # Baseline on the legacy layout (assert layout transparency, not closure completeness).
+    legacy_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"]
+    legacy_ok = legacy_check["ok"]
+    legacy_issue_set = sorted(legacy_check.get("issues", []))
+    legacy_rq = _req_quality_json(ip)
+    legacy_checks = {
+        "lock_readiness": _run_check_script(LOCK_READINESS_CHECK, ip),
+        "stale": _run_check_script(STALE_CHECK, ip),
+    }
+    legacy_graph_rc = _graph_build_rc(ip, tmp_root / "graph_legacy.json")
+
+    # Relocate ontology/ + knowledge/ under .oag/.
+    migrate_ip_to_dot_oag(ip)
+    assert not (ip / "ontology").exists(), "legacy ontology/ should be relocated"
+    assert not (ip / "knowledge").exists(), "legacy knowledge/ should be relocated"
+    assert (ip / ".oag" / "ontology" / "scope_lock.json").is_file(), "ontology under .oag"
+    assert (ip / ".oag" / "knowledge" / "ledger.jsonl").is_file(), "knowledge under .oag"
+
+    # oag.check must produce the SAME verdict + issues under .oag; no missing-state issues (the Wave 2 RED gap).
+    dot_check = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"]
+    dot_issues = dot_check.get("issues", [])
+    assert dot_check["ok"] == legacy_ok, (legacy_check, dot_check)
+    assert sorted(dot_issues) == legacy_issue_set, (legacy_issue_set, dot_issues)
+    for needle in ("missing knowledge directory", "missing records directory", "missing index", "missing ontology"):
+        assert not any(needle in issue for issue in dot_issues), (needle, dot_issues)
+
+    # req_quality must match legacy status and requirement count across layouts.
+    dot_rq = _req_quality_json(ip)
+    assert dot_rq["rc"] == legacy_rq["rc"], (legacy_rq, dot_rq)
+    assert dot_rq["data"].get("status") == legacy_rq["data"].get("status"), (legacy_rq, dot_rq)
+    assert dot_rq["data"].get("counts", {}).get("requirements") == legacy_rq["data"].get("counts", {}).get("requirements"), (legacy_rq, dot_rq)
+
+    # Standalone checkers (incl. requirement_atom + verification_plan via lock_readiness) match across layouts.
+    for name, const in (("lock_readiness", LOCK_READINESS_CHECK), ("stale", STALE_CHECK)):
+        assert _run_check_script(const, ip) == legacy_checks[name], (name, legacy_checks[name], _run_check_script(const, ip))
+
+    # graph build must read ontology/knowledge under .oag with the same outcome as legacy.
+    dot_graph_rc = _graph_build_rc(ip, tmp_root / "graph_dot.json")
+    assert dot_graph_rc == legacy_graph_rc, (legacy_graph_rc, dot_graph_rc)
+
+    # oag.inspect must read hidden ontology state.
+    inspected = call({"tool": "oag.inspect", "arguments": {"ip_dir": str(ip), "stage": "rtl", "intent": "dot-oag layout inspect"}})
+    assert inspected.get("result"), inspected
+
+    # A new ROCEV record must append into .oag/knowledge and keep the ledger chain valid.
+    recorded = call(
+        {
+            "tool": "oag.record",
+            "arguments": {
+                "ip_dir": str(ip),
+                "stage": "sim",
+                "claim": "dot-oag layout ledger append",
+                "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                "rocev": {
+                    "obligation": {"id": "OBL_DOT_OAG_LEDGER", "text": "ledger append under .oag", "status": "open"},
+                    "contract": {"id": "CONTRACT_DOT_OAG_LEDGER", "method": "scoreboard"},
+                    "evidence": {"files": ["sim/results.xml"], "tests": [], "commit": ""},
+                    "validation": {"status": "open", "verdict": "pending", "rationale": "layout transparency"},
+                },
+            },
+        }
+    )
+    assert recorded["result"].get("ledger_event"), recorded
+    assert (ip / ".oag" / "knowledge" / "ledger.jsonl").is_file(), recorded
+    assert not (ip / "knowledge").exists(), "record must not recreate legacy knowledge/"
+
+    # Ledger integrity (hash chain + protected snapshot) must hold under .oag.
+    post_issues = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"].get("issues", [])
+    for bad in ("mismatch", "missing knowledge", "missing records", "missing ontology", "missing index", "protected fields changed"):
+        assert not any(bad in issue.lower() for issue in post_issues), (bad, post_issues)
+
+
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
@@ -1882,6 +2014,7 @@ def main() -> int:
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
         test_oag_paths_resolver(Path(tmp))
+        test_dot_oag_layout_state_scripts(Path(tmp))
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK

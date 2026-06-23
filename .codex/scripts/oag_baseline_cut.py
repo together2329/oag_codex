@@ -11,6 +11,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+import oag_paths  # noqa: E402
+
 
 def issue(code: str, message: str, path: str = "") -> dict[str, str]:
     payload = {"code": code, "message": message}
@@ -151,7 +155,7 @@ def create_manifest(args: argparse.Namespace) -> dict[str, Any]:
         },
     }
 
-    output = Path(args.output).resolve() if args.output else ip_dir / "ontology" / "baselines" / f"{args.baseline_id}.yaml"
+    output = Path(args.output).resolve() if args.output else oag_paths.ontology_path(ip_dir, Path("baselines") / f"{args.baseline_id}.yaml")
     if issues:
         return {
             "schema_version": "oag_baseline_cut.v1",

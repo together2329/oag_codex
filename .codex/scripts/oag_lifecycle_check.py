@@ -14,6 +14,7 @@ CODEX_ROOT = SCRIPTS_DIR.parent
 SCHEMAS_DIR = CODEX_ROOT / "schemas"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
+import oag_paths  # noqa: E402
 from oag_validate_json import validate_document  # pylint: disable=wrong-import-position
 
 
@@ -92,7 +93,7 @@ def check_artifact(item: dict[str, Any], *, consumer: str = "", selected: bool =
 
 
 def check(ip_dir: Path, *, require: bool = False, artifact_id: str = "", consumer: str = "") -> dict[str, Any]:
-    path = ip_dir / LIFECYCLE_PATH
+    path = oag_paths.legacy_or_hidden(ip_dir, str(LIFECYCLE_PATH))
     issues: list[dict[str, str]] = []
     if not path.is_file():
         if require:

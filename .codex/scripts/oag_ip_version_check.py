@@ -18,6 +18,7 @@ VERSION_LEDGER = Path("ontology/ip_version.yaml")
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 from oag_validate_json import validate_document  # pylint: disable=wrong-import-position
+import oag_paths  # noqa: E402
 
 
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
@@ -178,7 +179,7 @@ def check_entry_refs(entry: dict[str, Any], ip_dir: Path, *, active: bool, verif
 
 def check_ip_version(ip_dir: Path, *, require_ip_git: bool = False, verify_git_tag: bool = False) -> dict[str, Any]:
     ip_root = ip_dir.resolve()
-    path = ip_root / VERSION_LEDGER
+    path = oag_paths.legacy_or_hidden(ip_root, "ontology/ip_version.yaml")
     issues: list[dict[str, str]] = []
     if not path.is_file():
         issues.append(issue("IP_VERSION_LEDGER_MISSING", "Missing ontology/ip_version.yaml.", str(path)))

@@ -5,10 +5,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-from oag_lifecycle_check import check as lifecycle_check
+SCRIPTS_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPTS_DIR))
+import oag_paths  # noqa: E402
+from oag_lifecycle_check import check as lifecycle_check  # noqa: E402
 
 
 PACKET_DIR = Path("ontology/generated/authoring_packets")
@@ -44,7 +48,7 @@ def issue(code: str, message: str, path: str = "") -> dict[str, str]:
 
 
 def is_locked(ip_dir: Path) -> bool:
-    scope = read_json(ip_dir / "ontology" / "scope_lock.json")
+    scope = read_json(oag_paths.legacy_or_hidden(ip_dir, "ontology/scope_lock.json"))
     return scope.get("state") == "locked"
 
 
@@ -131,7 +135,7 @@ def check_tb_packet(path: Path, data: dict[str, Any], *, ip_dir: Path, hard_gate
 
 def check(ip_dir: Path, *, require_locked: bool = False, require_packets: bool = False, require_lifecycle: bool = False) -> dict[str, Any]:
     hard_gate = require_locked or require_packets or is_locked(ip_dir)
-    packets_dir = ip_dir / PACKET_DIR
+    packets_dir = oag_paths.legacy_or_hidden(ip_dir, PACKET_DIR)
     rtl_packets = sorted(packets_dir.glob("rtl__*.json")) if packets_dir.is_dir() else []
     tb_packets = sorted(packets_dir.glob("tb__*.json")) if packets_dir.is_dir() else []
     issues: list[dict[str, str]] = []
