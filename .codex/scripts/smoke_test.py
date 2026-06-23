@@ -44,6 +44,7 @@ DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
 BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
 STALE_CHECK = ROOT / "scripts" / "oag_stale_check.py"
+BASELINE_CUT = ROOT / "scripts" / "oag_baseline_cut.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -239,6 +240,18 @@ def run_stale_check(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
         cwd=ROOT,
+        env=env,
+    )
+
+
+def run_baseline_cut(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(BASELINE_CUT), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd or ROOT,
         env=env,
     )
 
@@ -1341,6 +1354,86 @@ def test_baseline_manifest_checker(tmp_root: Path) -> None:
     ), external_result.stdout
 
 
+def test_baseline_cut_helper(tmp_root: Path) -> None:
+    ip = tmp_root / "baseline_cut_ip"
+    (ip / "ontology" / "baselines").mkdir(parents=True)
+    (ip / "ontology" / "gates").mkdir(parents=True)
+    (ip / "ontology" / "validations").mkdir(parents=True)
+    (ip / "rtl").mkdir()
+    (ip / "sim").mkdir()
+    (ip / "ontology" / "requirements.yaml").write_text("requirements: []\n", encoding="utf-8")
+    (ip / "rtl" / "top.sv").write_text("module top; endmodule\n", encoding="utf-8")
+    (ip / "sim" / "results.xml").write_text("<testsuite tests=\"1\" failures=\"0\"/>\n", encoding="utf-8")
+    (ip / "ontology" / "gates" / "closure_gate.json").write_text("{\"decision\":\"pass\"}\n", encoding="utf-8")
+    (ip / "ontology" / "validations" / "validation.json").write_text("{\"status\":\"pass\"}\n", encoding="utf-8")
+    manifest = ip / "ontology" / "baselines" / "baseline_cut.yaml"
+    cut = run_baseline_cut(
+        "--ip-dir",
+        str(ip),
+        "--baseline-id",
+        "baseline_cut_ip.candidate.v0.1.0",
+        "--version",
+        "0.1.0",
+        "--approval-ref",
+        "ontology/validations/validation.json",
+        "--gate-ref",
+        "ontology/gates/closure_gate.json",
+        "--validation-ref",
+        "ontology/validations/validation.json",
+        "--tracked-artifact",
+        "truth:ontology/requirements.yaml",
+        "--tracked-artifact",
+        "implementation:rtl/top.sv",
+        "--tracked-artifact",
+        "evidence_summary:sim/results.xml",
+        "--tracked-artifact",
+        "gate:ontology/gates/closure_gate.json",
+        "--output",
+        str(manifest),
+        "--allow-dirty",
+        "--json",
+    )
+    assert cut.returncode == 0, cut.stderr or cut.stdout
+    assert json.loads(cut.stdout)["status"] == "pass", cut.stdout
+    assert manifest.is_file(), manifest
+
+    generated = run_baseline_check("--manifest", str(manifest), "--json")
+    assert generated.returncode == 0, generated.stderr or generated.stdout
+    assert json.loads(generated.stdout)["status"] == "pass", generated.stdout
+
+    repo = tmp_root / "dirty_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, text=True, capture_output=True, check=True)
+    dirty_ip = repo / "dirty_ip"
+    (dirty_ip / "ontology" / "baselines").mkdir(parents=True)
+    (dirty_ip / "ontology" / "requirements.yaml").write_text("requirements: []\n", encoding="utf-8")
+    dirty = run_baseline_cut(
+        "--ip-dir",
+        str(dirty_ip),
+        "--baseline-id",
+        "dirty_ip.candidate.v0.1.0",
+        "--version",
+        "0.1.0",
+        "--approval-ref",
+        "ontology/validations/validation.json",
+        "--gate-ref",
+        "ontology/gates/closure_gate.json",
+        "--validation-ref",
+        "ontology/validations/validation.json",
+        "--tracked-artifact",
+        "truth:ontology/requirements.yaml",
+        "--output",
+        str(dirty_ip / "ontology" / "baselines" / "dirty.yaml"),
+        "--json",
+        cwd=repo,
+    )
+    assert dirty.returncode != 0, dirty.stdout
+    assert any(
+        item["code"] == "BASELINE_CUT_DIRTY_TREE"
+        for item in json.loads(dirty.stdout)["issues"]
+    ), dirty.stdout
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -1511,6 +1604,7 @@ def main() -> int:
         test_authoring_packet_lifecycle_firewall(Path(tmp))
         test_stale_propagation_checker(Path(tmp))
         test_baseline_manifest_checker(Path(tmp))
+        test_baseline_cut_helper(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -1531,6 +1625,7 @@ def main() -> int:
         assert LIFECYCLE_CHECK.is_file(), LIFECYCLE_CHECK
         assert BASELINE_CHECK.is_file(), BASELINE_CHECK
         assert STALE_CHECK.is_file(), STALE_CHECK
+        assert BASELINE_CUT.is_file(), BASELINE_CUT
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
