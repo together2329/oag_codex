@@ -33,6 +33,7 @@ CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
+PPA_CHECK = ROOT / "scripts" / "oag_ppa_check.py"
 PYSLANG_LINT = ROOT / "scripts" / "oag_pyslang_lint.py"
 REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
@@ -64,8 +65,6 @@ OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
 OAG_IP_VERSIONING_POLICY = ROOT / "oag" / "ip-versioning-policy.md"
 OAG_IP_VERSIONING_SKILL = ROOT / "skills" / "oag-ip-versioning" / "SKILL.md"
 OAG_IP_VERSIONING_RULES = ROOT / "rules" / "oag-ip-versioning.rules.md"
-OAG_DOC_TO_MARKDOWN_SKILL = ROOT / "skills" / "oag-doc-to-markdown" / "SKILL.md"
-DOC_TO_MARKDOWN = ROOT / "skills" / "oag-doc-to-markdown" / "scripts" / "doc_to_markdown.py"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -284,18 +283,6 @@ def run_ip_version_check(*args: str, cwd: Path | None = None) -> subprocess.Comp
         capture_output=True,
         check=False,
         cwd=cwd or ROOT,
-        env=env,
-    )
-
-
-def run_doc_to_markdown(*args: str) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
-    return subprocess.run(
-        [sys.executable, str(DOC_TO_MARKDOWN), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-        cwd=ROOT,
         env=env,
     )
 
@@ -662,33 +649,6 @@ def test_pyslang_lint_runner() -> None:
         assert result["status"] == "pass", result
         assert result["tool"] == "pyslang", result
         assert result["files"] == ["rtl/demo.sv"], result
-
-
-def test_doc_to_markdown_skill_script(tmp_root: Path) -> None:
-    source = tmp_root / "source_spec.txt"
-    source.write_text("# Source Spec\n\nA plain text spec.\n", encoding="utf-8")
-    out_dir = tmp_root / "markdown"
-
-    converted = run_doc_to_markdown("--input", str(source), "--out-dir", str(out_dir), "--json")
-    assert converted.returncode == 0, converted.stderr or converted.stdout
-    result = json.loads(converted.stdout)
-    assert result["status"] == "pass", result
-    assert result["backend"] == "passthrough", result
-    assert result["input_format"] == ".txt", result
-    output_path = Path(result["output"])
-    assert output_path.is_file(), result
-    assert output_path.name == "source_spec.md", output_path
-    assert "A plain text spec." in output_path.read_text(encoding="utf-8")
-
-    markdown_source = tmp_root / "already_markdown.md"
-    markdown_source.write_text("Already **Markdown**.\n", encoding="utf-8")
-    stdout_result = run_doc_to_markdown("--input", str(markdown_source), "--stdout")
-    assert stdout_result.returncode == 0, stdout_result.stderr or stdout_result.stdout
-    assert stdout_result.stdout == "Already **Markdown**.\n", stdout_result.stdout
-
-    bad_mix = run_doc_to_markdown("--input", str(markdown_source), "--stdout", "--json")
-    assert bad_mix.returncode != 0, bad_mix.stdout
-    assert any(item["code"] == "DOC_TO_MD_ARG_CONFLICT" for item in json.loads(bad_mix.stdout)["issues"]), bad_mix.stdout
 
 
 def test_wavefront_scheduler(tmp_root: Path) -> None:
@@ -1783,7 +1743,10 @@ def main() -> int:
         assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
         assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
-        assert stop_hooks[0]["command"] == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        stop_command = stop_hooks[0]["command"]
+        assert "codex_stop_gate.py" in stop_command, hooks
+        assert "PYTHONDONTWRITEBYTECODE=1" in stop_command, hooks
+        assert "|| exit 0" in stop_command, hooks
         subagent_start_hooks = hooks["hooks"]["SubagentStart"][0]
         assert subagent_start_hooks["matcher"] == "^oag-", hooks
         assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks
@@ -1809,7 +1772,6 @@ def main() -> int:
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         test_pyslang_lint_runner()
-        test_doc_to_markdown_skill_script(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
@@ -1858,8 +1820,6 @@ def main() -> int:
         assert OAG_IP_VERSIONING_POLICY.is_file(), OAG_IP_VERSIONING_POLICY
         assert OAG_IP_VERSIONING_SKILL.is_file(), OAG_IP_VERSIONING_SKILL
         assert OAG_IP_VERSIONING_RULES.is_file(), OAG_IP_VERSIONING_RULES
-        assert OAG_DOC_TO_MARKDOWN_SKILL.is_file(), OAG_DOC_TO_MARKDOWN_SKILL
-        assert DOC_TO_MARKDOWN.is_file(), DOC_TO_MARKDOWN
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -1879,6 +1839,69 @@ def main() -> int:
         assert pack_release_result["status"] == "pass", pack_release_result
         assert pack_release_result["counts"]["agent_tomls"] == 18, pack_release_result
         assert pack_release_result["counts"]["schemas"] >= 4, pack_release_result
+        ppa_bad_ip = Path(tmp) / "ppa_bad_function"
+        (ppa_bad_ip / "rtl").mkdir(parents=True)
+        (ppa_bad_ip / "list").mkdir(parents=True)
+        (ppa_bad_ip / "list" / "rtl.f").write_text("rtl/bad_function.sv\n", encoding="utf-8")
+        (ppa_bad_ip / "rtl" / "bad_function.sv").write_text(
+            "\n".join(
+                [
+                    "module bad_function(input logic a, output logic y);",
+                    "  function logic helper;",
+                    "    input logic in;",
+                    "    begin",
+                    "      helper = in;",
+                    "    end",
+                    "  endfunction",
+                    "  assign y = helper(a);",
+                    "endmodule",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        ppa_bad = subprocess.run(
+            [sys.executable, str(PPA_CHECK), "--ip-dir", str(ppa_bad_ip), "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert ppa_bad.returncode == 1, ppa_bad.stderr or ppa_bad.stdout
+        ppa_bad_result = json.loads(ppa_bad.stdout)
+        assert ppa_bad_result["status"] == "fail", ppa_bad_result
+        assert ppa_bad_result["scanned_files"] == ["rtl/bad_function.sv"], ppa_bad_result
+        assert any(issue["code"] == "FUNCTION" for issue in ppa_bad_result["issues"]), ppa_bad_result
+        ppa_good_ip = Path(tmp) / "ppa_good_generate"
+        (ppa_good_ip / "rtl").mkdir(parents=True)
+        (ppa_good_ip / "list").mkdir(parents=True)
+        (ppa_good_ip / "list" / "rtl.f").write_text("rtl/good_generate.sv\n", encoding="utf-8")
+        (ppa_good_ip / "rtl" / "good_generate.sv").write_text(
+            "\n".join(
+                [
+                    "module good_generate(input logic [1:0] a, output logic [1:0] y);",
+                    "  genvar gi;",
+                    "  generate",
+                    "    for (gi = 0; gi < 2; gi = gi + 1) begin : gen_bits",
+                    "      assign y[gi] = a[gi];",
+                    "    end",
+                    "  endgenerate",
+                    "endmodule",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        ppa_good = subprocess.run(
+            [sys.executable, str(PPA_CHECK), "--ip-dir", str(ppa_good_ip), "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert ppa_good.returncode == 0, ppa_good.stderr or ppa_good.stdout
+        ppa_good_result = json.loads(ppa_good.stdout)
+        assert ppa_good_result["status"] == "pass", ppa_good_result
         subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
         assert "agent_type" in subagent_workflows, subagent_workflows
@@ -1918,8 +1941,6 @@ def main() -> int:
         assert "oag-wavefront" in skill_text, skill_text
         assert "oag_wavefront.py" in skill_text, skill_text
         assert "oag-evidence-closure" in skill_text, skill_text
-        assert "oag-doc-to-markdown" in skill_text, skill_text
-        assert "doc_to_markdown.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
@@ -1944,7 +1965,6 @@ def main() -> int:
         packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
         wavefront_skill_text = OAG_WAVEFRONT_SKILL.read_text(encoding="utf-8")
         ip_versioning_skill_text = OAG_IP_VERSIONING_SKILL.read_text(encoding="utf-8")
-        doc_to_markdown_skill_text = OAG_DOC_TO_MARKDOWN_SKILL.read_text(encoding="utf-8")
         closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
         assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
         assert "lock_required: true" in decision_skill_text, decision_skill_text
@@ -1956,11 +1976,6 @@ def main() -> int:
         assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
         assert "oag_ip_version_check.py" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "IP-local" in ip_versioning_skill_text, ip_versioning_skill_text
-        assert "doc_to_markdown.py" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
-        assert "markitdown" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
-        assert ".pdf" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
-        assert ".pptx" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
-        assert ".docx" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
         assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
         assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
@@ -1974,8 +1989,6 @@ def main() -> int:
         assert "oag_authoring_packet_check.py" in agents_text, agents_text
         assert "oag_wavefront.py" in agents_text, agents_text
         assert "oag_ip_version_check.py" in agents_text, agents_text
-        assert "oag-doc-to-markdown" in agents_text, agents_text
-        assert "doc_to_markdown.py" in agents_text, agents_text
         assert "oag_trace_graph_check.py" in agents_text, agents_text
         assert "oag_deep_semantic_intake.py" in agents_text, agents_text
         assert "oag_decision_matrix_generate.py" in agents_text, agents_text
@@ -1994,8 +2007,6 @@ def main() -> int:
         assert "oag_contract_strength_check.py" in directive_text, directive_text
         assert "oag_authoring_packet_check.py" in directive_text, directive_text
         assert "oag_ip_version_check.py" in directive_text, directive_text
-        assert "oag-doc-to-markdown" in directive_text, directive_text
-        assert "doc_to_markdown.py" in directive_text, directive_text
         assert "oag_trace_graph_check.py" in directive_text, directive_text
         assert "oag_deep_semantic_intake.py" in directive_text, directive_text
         assert "oag_decision_matrix_generate.py" in directive_text, directive_text
@@ -2056,8 +2067,10 @@ def main() -> int:
         assert "built-in explorer-style native subagent" in prompt_text, prompt_text
         assert "not an OAG custom/write-capable role" in prompt_text, prompt_text
         assert "FINAL_AUTO_RESEARCH_SUMMARY" in prompt_text, prompt_text
-        gitignore_text = (PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8")
-        assert ".codex/runs/" in gitignore_text, gitignore_text
+        gitignore_path = PROJECT_ROOT / ".gitignore"
+        if gitignore_path.is_file():
+            gitignore_text = gitignore_path.read_text(encoding="utf-8")
+            assert ".codex/runs/" in gitignore_text, gitignore_text
 
         codex_home = Path(tmp) / "codex_home"
         codex_home.mkdir(parents=True, exist_ok=True)
@@ -2379,6 +2392,37 @@ def main() -> int:
         bad_verify_result = json.loads(bad_verify.stdout)
         assert any(item["code"] == "RECEIPT_PATH_MISMATCH" for item in bad_verify_result["issues"]), bad_verify_result
         assert any(item["code"] == "OWNED_PATH_OUT_OF_SCOPE" for item in bad_verify_result["issues"]), bad_verify_result
+        (hook_ip / "rtl" / "unrelated_concurrent.sv").write_text("module unrelated_concurrent; endmodule\n", encoding="utf-8")
+        concurrent_blocked_payload = json.loads(receipt.read_text(encoding="utf-8"))
+        concurrent_blocked_payload["status"] = "BLOCKED"
+        concurrent_blocked_payload["blockers"] = [
+            "oag_dispatch.py verify reports only ACTUAL_PATH_OUT_OF_SCOPE deltas from unrelated concurrent workspace edits."
+        ]
+        receipt.write_text(json.dumps(concurrent_blocked_payload, sort_keys=True) + "\n", encoding="utf-8")
+        concurrent_verify = run_dispatch(
+            "verify",
+            "--dispatch",
+            str(hook_cwd / dispatch["dispatch_path"]),
+            "--receipt",
+            str(receipt),
+            "--json",
+            project_root=hook_cwd,
+        )
+        assert concurrent_verify.returncode != 0, concurrent_verify.stdout
+        concurrent_verify_result = json.loads(concurrent_verify.stdout)
+        concurrent_codes = {item["code"] for item in concurrent_verify_result["issues"]}
+        assert concurrent_codes == {"ACTUAL_PATH_OUT_OF_SCOPE"}, concurrent_verify_result
+        concurrent_gate = subagent_gate(valid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_concurrent.json")})
+        assert concurrent_gate.returncode == 0, concurrent_gate.stderr or concurrent_gate.stdout
+        assert concurrent_gate.stdout == "", concurrent_gate.stdout
+        concurrent_unblocked_payload = {**concurrent_blocked_payload, "status": "RTL_HANDOFF_PASS"}
+        concurrent_unblocked_payload.pop("blockers", None)
+        receipt.write_text(json.dumps(concurrent_unblocked_payload, sort_keys=True) + "\n", encoding="utf-8")
+        unblocked_status_gate = subagent_gate(valid_payload, {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_concurrent_bad_status.json")})
+        assert unblocked_status_gate.returncode == 0, unblocked_status_gate.stderr or unblocked_status_gate.stdout
+        unblocked_status_payload = json.loads(unblocked_status_gate.stdout)
+        assert unblocked_status_payload["decision"] == "block", unblocked_status_payload
+        assert "BLOCKED, INCONCLUSIVE, or FAIL" in unblocked_status_payload["reason"], unblocked_status_payload
 
         closure_ip = make_ip(Path(tmp) / "closure_check")
         close_demo_counter(closure_ip, claim="closure check smoke counter closed")
@@ -3650,7 +3694,7 @@ def main() -> int:
             1,
         )
         bad_lang_rules = bad_lang_rules.replace(
-            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, always_ff, always_comb, always_latch, package, import, interface, modport, typedef, enum, struct, class, assertions, covergroups]",
+            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, function, task, always_ff, always_comb, always_latch, package, import, interface, modport, typedef, enum, struct, class, program, clocking, bind, dpi, randomization, constraints, unique_priority, assertions, covergroups]",
             "    forbidden_constructs: [procedural_for, procedural_while, generate_for]",
             1,
         )
@@ -3665,6 +3709,12 @@ def main() -> int:
             "\n".join(
                 [
                     "module demo_counter_cx1(input logic clk);",
+                    "  function logic bad_helper;",
+                    "    input logic in;",
+                    "    begin",
+                    "      bad_helper = in;",
+                    "    end",
+                    "  endfunction",
                     "  always_ff @(posedge clk) begin",
                     "  end",
                     "endmodule",
@@ -3699,7 +3749,7 @@ def main() -> int:
                 "    language_policy: smoke_negative_subset",
                 "    rtl_compile_report: rtl/rtl_compile.json",
                 "    rtl_sources: [rtl/demo_counter_cx1.sv]",
-                "    forbidden_constructs_absent: [always_ff]",
+                "    forbidden_constructs_absent: [always_ff, function]",
                 "    evidence_refs:",
                 "      - rtl/demo_counter_cx1.sv",
                 "      - rtl/rtl_compile.json",
@@ -3710,6 +3760,7 @@ def main() -> int:
         bad_subset_compile = call({"tool": "oag.compile", "arguments": {"ip_dir": str(bad_subset_ip)}})
         assert bad_subset_compile["result"]["status"] == "fail", bad_subset_compile
         assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv: forbidden RTL construct present: always_ff" in bad_subset_compile["result"]["issues"], bad_subset_compile
+        assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv: forbidden RTL construct present: function" in bad_subset_compile["result"]["issues"], bad_subset_compile
         bad_protocol_ip = make_ip(Path(tmp) / "bad_protocol_report")
         (bad_protocol_ip / "signoff").mkdir(exist_ok=True)
         (bad_protocol_ip / "signoff" / "protocol_compliance_report.json").write_text(

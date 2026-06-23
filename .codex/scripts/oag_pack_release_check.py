@@ -102,8 +102,6 @@ REQUIRED_FILES = (
     CODEX_ROOT / "skills" / "oag-evidence-closure" / "SKILL.md",
     CODEX_ROOT / "skills" / "oag-wavefront" / "SKILL.md",
     CODEX_ROOT / "skills" / "oag-ip-versioning" / "SKILL.md",
-    CODEX_ROOT / "skills" / "oag-doc-to-markdown" / "SKILL.md",
-    CODEX_ROOT / "skills" / "oag-doc-to-markdown" / "scripts" / "doc_to_markdown.py",
     CODEX_ROOT / "skills" / "oag-ip-workflow" / "SKILL.md",
     SCRIPTS_DIR / "oag_agent_catalog_check.py",
     SCRIPTS_DIR / "oag_codex_config_doctor.py",
@@ -264,8 +262,6 @@ REQUIRED_DOC_SNIPPETS = {
         "oag-authoring-packet",
         "oag-wavefront",
         "oag-ip-versioning",
-        "oag-doc-to-markdown",
-        "doc_to_markdown.py",
         "oag-evidence-closure",
         "oag-rule-index.yaml",
         "RULE-LOCK-003",
@@ -327,8 +323,6 @@ REQUIRED_DOC_SNIPPETS = {
         "oag-authoring-packet",
         "oag-wavefront",
         "oag-ip-versioning",
-        "oag-doc-to-markdown",
-        "doc_to_markdown.py",
         "oag-evidence-closure",
         "oag_lock_readiness_check.py",
         "oag_verification_plan_check.py",
@@ -405,8 +399,6 @@ REQUIRED_DOC_SNIPPETS = {
         "oag-authoring-packet",
         "oag-wavefront",
         "oag-ip-versioning",
-        "oag-doc-to-markdown",
-        "doc_to_markdown.py",
         "oag-evidence-closure",
         "oag_wavefront.py",
         "oag_ip_version_check.py",
@@ -497,8 +489,7 @@ def check_toml_files(issues: list[dict[str, str]]) -> None:
 def check_python_compile(issues: list[dict[str, str]]) -> None:
     with tempfile.TemporaryDirectory(prefix="oag-pack-pycompile-") as tmp:
         tmp_dir = Path(tmp)
-        skill_scripts = sorted((CODEX_ROOT / "skills").glob("*/scripts/*.py"))
-        for path in [*sorted(SCRIPTS_DIR.glob("*.py")), *sorted(HOOKS_DIR.glob("*.py")), *skill_scripts]:
+        for path in [*sorted(SCRIPTS_DIR.glob("*.py")), *sorted(HOOKS_DIR.glob("*.py"))]:
             try:
                 py_compile.compile(str(path), cfile=str(tmp_dir / f"{path.stem}.pyc"), doraise=True)
             except py_compile.PyCompileError as exc:

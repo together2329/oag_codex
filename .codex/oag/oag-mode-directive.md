@@ -47,9 +47,6 @@ When the task enters a narrow lane, apply the matching skill:
 - `oag-ip-versioning` for IP-local functional semantic versions, golden
   baseline lineage, manifest/tag readiness, and patch/minor/major bump
   recommendations.
-- `oag-doc-to-markdown` for converting `.pdf`, `.pptx`, `.docx`, `.xlsx`,
-  `.html`, and text-like source documents into Markdown with
-  `doc_to_markdown.py` before source-claim capture or deep semantic intake.
 - `oag-evidence-closure` for trace graph, scoreboard, coverage, validation,
   freshness, gate, and completion decision audits.
 
@@ -82,11 +79,6 @@ Use the OAG principle layer before choosing artifacts:
   readiness, and patch/minor/major eligibility. Use
   `python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json`
   before promoting or consuming a functional baseline.
-- `.codex/skills/oag-doc-to-markdown/SKILL.md` for converting source documents
-  into Markdown before OAG intake. Generated Markdown is raw or parsed source
-  material; it is not canonical requirements, locked truth, or evidence until
-  promoted through source claims, ambiguity handling, requirements, contracts,
-  validation, and decision records.
 - `.codex/oag/wavefront-policy.md` and
   `.codex/oag/wavefront-task-graph.md` for dependency-aware parallel
   execution over existing ontology truth. Use
@@ -157,8 +149,11 @@ Generated RTL is implementation, not truth. RTL agents may choose internal
 structure, names, and code organization, but must not invent or change
 behavior, timing, reset values, address maps, priorities, or protocol semantics.
 Default RTL targets OAG SV-lite: Verilog-2001 plus `logic` and static
-`generate` constructs; `always_ff`, `always_comb`, and procedural loops outside
-generate are forbidden by default.
+`generate` constructs; `function`, `task`, `always_ff`, `always_comb`,
+`always_latch`, typedef/enum/struct, interface/modport/package/import/program,
+clocking/bind, class, assertions, covergroups, DPI, randomization,
+constraints, unique/priority case/if, and procedural loops outside generate are
+forbidden by default.
 PPA-aware RTL is expected: optimize only after preserving correctness, identify
 likely timing paths, reduce unnecessary switching, avoid accidental mux/register
 growth, and record PPA notes for nontrivial RTL handoffs.
@@ -363,6 +358,12 @@ After a child reports, run a bounded path audit such as
 <receipt> --json`; it compares the receipt and actual
 `git status --short -uall -- <ip>` delta with the dispatch baseline. Reject,
 route, or explicitly explain any out-of-scope path before integration.
+In parallel waves, `ACTUAL_PATH_OUT_OF_SCOPE` can be caused by other workers'
+legitimate post-dispatch edits. Subagents must not repair that by changing the
+dispatch baseline, widening ownership, or claiming those files. They should
+record `BLOCKED`, `INCONCLUSIVE`, or `FAIL` with the external delta blocker and
+leave routing/reconciliation to the parent. `HANDOFF_PASS`,
+`STATIC_HANDOFF_PASS`, and `RTL_HANDOFF_PASS` still require verifier pass.
 
 Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 `RTL_HANDOFF_PASS` for bounded handoffs. Do not use `PASS`, `COMPLETE`, `DONE`,

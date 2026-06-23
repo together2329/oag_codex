@@ -177,6 +177,16 @@ through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
 `git status --short -uall -- <ip>` delta against the dispatch baseline. Any
 path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
+
+The realistic stop boundary is receipt validity, not forced integration
+success. In a parallel wave, another worker can legitimately change files under
+the same IP after a dispatch baseline is captured. If `verify` fails only with
+`ACTUAL_PATH_OUT_OF_SCOPE`, the child must not mutate the dispatch baseline,
+widen its own allowed paths, or absorb those files into its receipt. It should
+write `BLOCKED`, `INCONCLUSIVE`, or `FAIL` with blockers naming the external
+delta and end with `OAG_EVIDENCE_RECORDED`. The `SubagentStop` hook may accept
+that bounded blocked receipt so the parent can route or reconcile integration.
+Successful handoff statuses still require a verifier pass.
 Dispatch IDs include a short nonce after the timestamp so same-second fan-out
 does not rely on sleeps for uniqueness.
 When a dispatch belongs to a wavefront task, include `--wavefront-run-id`,
@@ -243,10 +253,11 @@ Spawn:
   static risks after the write agents report.
 
 The RTL implementation agent must implement assigned behavior/cycle refs, stay
-within OAG SV-lite by default, identify likely critical paths, high-toggle
-state/datapath, and area-risk structures before nontrivial RTL edits, run or
-assign `oag_ppa_check.py` when applicable, read `ontology/domain_intent.yaml`
-when crossings, async inputs, clocks, or resets are in scope, use approved
+within OAG SV-lite by default, avoid RTL `function`/`task` helper constructs,
+identify likely critical paths, high-toggle state/datapath, and area-risk
+structures before nontrivial RTL edits, run or assign
+`python3 .codex/scripts/oag_ppa_check.py --ip-dir <ip> --json` when applicable,
+read `ontology/domain_intent.yaml` when crossings, async inputs, clocks, or resets are in scope, use approved
 CDC/RDC patterns only, run or assign `oag_domain_crossing_check.py` when
 applicable, and report `rtl_dialect`,
 `implemented_contracts`, `behavior_refs_implemented`,

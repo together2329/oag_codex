@@ -799,8 +799,9 @@ def case_failed_scoreboard_row_with_coverage_ref_fails(root: Path) -> dict[str, 
     )
     _record_closed_validation(ip)
     issues = _check_issues(ip)
-    assert any("TB_CHECK_FAILED_ROWS_NOT_COUNTED_FOR_COVERAGE" in issue for issue in issues), issues
-    return {"ip": str(ip), "matched_issue": "TB_CHECK_FAILED_ROWS_NOT_COUNTED_FOR_COVERAGE"}
+    matched = "weak closure evidence: scoreboard evidence has failing rows"
+    assert any(matched in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": matched}
 
 
 def case_unresolved_scoreboard_coverage_ref_fails(root: Path) -> dict[str, Any]:
@@ -1029,8 +1030,9 @@ def case_manual_spec_expected_source_blocks_closure(root: Path) -> dict[str, Any
     )
     _record_closed_validation(ip)
     issues = _check_issues(ip)
-    assert any("CHECK_MANUAL_SPEC_DOWNGRADED_FOR_CLOSURE" in issue for issue in issues), issues
-    return {"ip": str(ip), "matched_issue": "CHECK_MANUAL_SPEC_DOWNGRADED_FOR_CLOSURE"}
+    matched = "weak closure evidence: 2 scoreboard row(s) use manual_spec expected_source"
+    assert any(matched in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issue": matched}
 
 
 def case_scenario_mapping_required_after_tb_closure(root: Path) -> dict[str, Any]:
@@ -1303,13 +1305,14 @@ def case_evidence_supersession_clears_stale_record(root: Path) -> dict[str, Any]
     fresh_check = smoke_test.call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
     stale_issues = [issue for issue in fresh_check["result"]["issues"] if "evidence file stale: sim/results.xml" in issue]
     assert not stale_issues, fresh_check
-    assert fresh_check["result"]["ok"] is True, fresh_check
+    assert any("weak closure evidence: closed validation requires behavioral scoreboard or formal evidence" in issue for issue in fresh_check["result"]["issues"]), fresh_check
     return {
         "ip": str(ip),
         "baseline": baseline["result"]["id"],
         "superseder": superseder["result"]["id"],
         "stale_before": True,
         "stale_after": False,
+        "remaining_closure_blocked": True,
     }
 
 
@@ -1999,7 +2002,7 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
     ]
     assert "python3 .codex/hooks/codex_context_inject.py" in user_commands, hooks
     assert "python3 .codex/hooks/codex_draft_pressure.py" in user_commands, hooks
-    assert "python3 .codex/hooks/codex_stop_gate.py" in stop_commands, hooks
+    assert any("codex_stop_gate.py" in command for command in stop_commands), hooks
     assert "python3 .codex/hooks/codex_context_inject.py" in post_compact_commands, hooks
     return {
         "hooks_json": str(smoke_test.ROOT / "hooks.json"),
