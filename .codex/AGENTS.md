@@ -97,6 +97,7 @@ Primary assets:
 - `scripts/oag_lifecycle_check.py`
 - `scripts/oag_baseline_check.py`
 - `scripts/oag_baseline_cut.py`
+- `scripts/oag_baseline_verify.py`
 - `scripts/oag_stale_check.py`
 - `scripts/oag_trace_graph_check.py`
 - `scripts/oag_wavefront.py`
@@ -234,6 +235,10 @@ Use `.codex/scripts/oag_baseline_cut.py --ip-dir <ip> --baseline-id <id> --versi
 to generate a draft baseline manifest with raw-byte hashes. The helper does not
 create git tags automatically and refuses dirty IP trees unless `--allow-dirty`
 is explicitly used for draft review.
+Use `.codex/scripts/oag_baseline_verify.py --manifest <ip>/ontology/baselines/<baseline>.yaml --verify-git-tag --json`
+after committing a baseline and creating its annotated tag. Verification checks
+the manifest with `oag_baseline_check.py`, confirms the tag is annotated, and
+compares current manifest bytes with the manifest stored in the tag commit.
 Use `.codex/scripts/oag_wavefront.py` when RTL/TB/sim work should be
 parallelized. It writes runtime state under `ontology/runs/<run_id>/` and
 `knowledge/wavefront/<run_id>/`; it consumes ontology truth and authoring

@@ -45,6 +45,7 @@ LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
 BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
 STALE_CHECK = ROOT / "scripts" / "oag_stale_check.py"
 BASELINE_CUT = ROOT / "scripts" / "oag_baseline_cut.py"
+BASELINE_VERIFY = ROOT / "scripts" / "oag_baseline_verify.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -248,6 +249,18 @@ def run_baseline_cut(*args: str, cwd: Path | None = None) -> subprocess.Complete
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(BASELINE_CUT), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd or ROOT,
+        env=env,
+    )
+
+
+def run_baseline_verify(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(BASELINE_VERIFY), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -1434,6 +1447,83 @@ def test_baseline_cut_helper(tmp_root: Path) -> None:
     ), dirty.stdout
 
 
+def test_baseline_verify_git_tag(tmp_root: Path) -> None:
+    repo = tmp_root / "verify_repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, text=True, capture_output=True, check=True)
+    ip = repo / "verify_ip"
+    (ip / "ontology" / "baselines").mkdir(parents=True)
+    (ip / "ontology" / "gates").mkdir(parents=True)
+    (ip / "ontology" / "validations").mkdir(parents=True)
+    (ip / "rtl").mkdir()
+    (ip / "sim").mkdir()
+    (ip / "ontology" / "requirements.yaml").write_text("requirements: []\n", encoding="utf-8")
+    (ip / "rtl" / "top.sv").write_text("module top; endmodule\n", encoding="utf-8")
+    (ip / "sim" / "results.xml").write_text("<testsuite tests=\"1\" failures=\"0\"/>\n", encoding="utf-8")
+    (ip / "ontology" / "gates" / "closure_gate.json").write_text("{\"decision\":\"pass\"}\n", encoding="utf-8")
+    (ip / "ontology" / "validations" / "validation.json").write_text("{\"status\":\"pass\"}\n", encoding="utf-8")
+    tag = "oag/verify_ip/v0.1.0"
+    manifest = ip / "ontology" / "baselines" / "verify.yaml"
+    cut = run_baseline_cut(
+        "--ip-dir",
+        str(ip),
+        "--baseline-id",
+        "verify_ip.golden.v0.1.0",
+        "--version",
+        "0.1.0",
+        "--baseline-class",
+        "golden",
+        "--baseline-state",
+        "active",
+        "--approval-state",
+        "approved",
+        "--approval-ref",
+        "ontology/validations/validation.json",
+        "--gate-ref",
+        "ontology/gates/closure_gate.json",
+        "--validation-ref",
+        "ontology/validations/validation.json",
+        "--tag",
+        tag,
+        "--tracked-artifact",
+        "truth:ontology/requirements.yaml",
+        "--tracked-artifact",
+        "implementation:rtl/top.sv",
+        "--tracked-artifact",
+        "evidence_summary:sim/results.xml",
+        "--tracked-artifact",
+        "gate:ontology/gates/closure_gate.json",
+        "--tracked-artifact",
+        "gate:ontology/validations/validation.json",
+        "--output",
+        str(manifest),
+        "--allow-dirty",
+        "--json",
+        cwd=repo,
+    )
+    assert cut.returncode == 0, cut.stderr or cut.stdout
+    subprocess.run(["git", "add", "."], cwd=repo, text=True, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Smoke", "-c", "user.email=smoke@example.com", "commit", "-m", "baseline"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    manifest_sha = "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
+    subprocess.run(["git", "tag", "-a", tag, "-m", f"manifest_sha256: {manifest_sha}"], cwd=repo, text=True, capture_output=True, check=True)
+
+    good = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
+    assert good.returncode == 0, good.stderr or good.stdout
+    assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    manifest.write_text(manifest.read_text(encoding="utf-8") + "# local edit after tag\n", encoding="utf-8")
+    stale = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
+    assert stale.returncode != 0, stale.stdout
+    codes = {item["code"] for item in json.loads(stale.stdout)["issues"]}
+    assert "BASELINE_VERIFY_MANIFEST_TREE_MISMATCH" in codes
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -1605,6 +1695,7 @@ def main() -> int:
         test_stale_propagation_checker(Path(tmp))
         test_baseline_manifest_checker(Path(tmp))
         test_baseline_cut_helper(Path(tmp))
+        test_baseline_verify_git_tag(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -1626,6 +1717,7 @@ def main() -> int:
         assert BASELINE_CHECK.is_file(), BASELINE_CHECK
         assert STALE_CHECK.is_file(), STALE_CHECK
         assert BASELINE_CUT.is_file(), BASELINE_CUT
+        assert BASELINE_VERIFY.is_file(), BASELINE_VERIFY
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
