@@ -41,6 +41,7 @@ AUTHORING_PACKET_CHECK = ROOT / "scripts" / "oag_authoring_packet_check.py"
 TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
 DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
 DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
+LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -186,6 +187,18 @@ def run_wavefront(*args: str, project_root: Path | None = None) -> subprocess.Co
         capture_output=True,
         check=False,
         cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_lifecycle_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(LIFECYCLE_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
         env=env,
     )
 
@@ -910,6 +923,83 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     assert any(item["code"] == "STALE_PATH_CHANGED" for item in json.loads(stale_claim.stdout)["issues"]), stale_claim.stdout
 
 
+def test_artifact_lifecycle_checker(tmp_root: Path) -> None:
+    ip = tmp_root / "lifecycle_ip"
+    (ip / "ontology").mkdir(parents=True)
+
+    missing = run_lifecycle_check("--ip-dir", str(ip), "--require", "--json")
+    assert missing.returncode != 0, missing.stdout
+    assert any(item["code"] == "LIFECYCLE_MISSING" for item in json.loads(missing.stdout)["issues"]), missing.stdout
+
+    lifecycle = {
+        "schema_version": "oag_artifact_lifecycle.v1",
+        "artifacts": [
+            {
+                "id": "ontology/contracts.yaml",
+                "path": "ontology/contracts.yaml",
+                "granularity": "file",
+                "processing_stage": "canonical",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/contracts_review.json",
+                "derived_from": ["ontology/requirements.yaml"],
+                "allowed_consumers": ["rtl_authoring_packet", "tb_authoring_packet"],
+            },
+            {
+                "id": "ontology/decision_matrix.yaml:D001",
+                "path": "ontology/decision_matrix.yaml",
+                "object_id": "D001",
+                "granularity": "object",
+                "processing_stage": "canonical",
+                "approval_state": "candidate",
+                "validity_state": "current",
+                "derived_from": ["req/source_claims.yaml:SRC001"],
+                "allowed_consumers": ["clarification_agent"],
+            },
+        ],
+    }
+    path = ip / "ontology" / "artifact_lifecycle.json"
+    path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    valid = run_lifecycle_check("--ip-dir", str(ip), "--consumer", "rtl_authoring_packet", "--json")
+    assert valid.returncode == 0, valid.stderr or valid.stdout
+    valid_result = json.loads(valid.stdout)
+    assert valid_result["status"] == "pass", valid_result
+
+    denied = run_lifecycle_check(
+        "--ip-dir",
+        str(ip),
+        "--artifact-id",
+        "ontology/decision_matrix.yaml:D001",
+        "--consumer",
+        "rtl_authoring_packet",
+        "--json",
+    )
+    assert denied.returncode != 0, denied.stdout
+    denied_codes = {item["code"] for item in json.loads(denied.stdout)["issues"]}
+    assert "LIFECYCLE_CONSUMER_FORBIDDEN" in denied_codes
+    assert "LIFECYCLE_APPROVAL_STATE" in denied_codes
+
+    bad = lifecycle.copy()
+    bad["artifacts"] = [
+        {
+            "id": "ontology/generated/authoring_packets/rtl__demo.json",
+            "path": "ontology/generated/authoring_packets/rtl__demo.json",
+            "granularity": "file",
+            "processing_stage": "serving",
+            "approval_state": "approved",
+            "validity_state": "current",
+            "allowed_consumers": ["rtl_agent"],
+        }
+    ]
+    path.write_text(json.dumps(bad, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    bad_result = run_lifecycle_check("--ip-dir", str(ip), "--json")
+    assert bad_result.returncode != 0, bad_result.stdout
+    bad_codes = {item["code"] for item in json.loads(bad_result.stdout)["issues"]}
+    assert "LIFECYCLE_DERIVED_FROM" in bad_codes
+    assert "LIFECYCLE_APPROVAL_REF" in bad_codes
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -1076,6 +1166,7 @@ def main() -> int:
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
+        test_artifact_lifecycle_checker(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -1093,6 +1184,7 @@ def main() -> int:
         assert TRACE_GRAPH_CHECK.is_file(), TRACE_GRAPH_CHECK
         assert DEEP_SEMANTIC_INTAKE.is_file(), DEEP_SEMANTIC_INTAKE
         assert DECISION_MATRIX_GENERATE.is_file(), DECISION_MATRIX_GENERATE
+        assert LIFECYCLE_CHECK.is_file(), LIFECYCLE_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS

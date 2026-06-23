@@ -93,6 +93,7 @@ Primary assets:
 - `scripts/oag_lock_readiness_check.py`
 - `scripts/oag_contract_strength_check.py`
 - `scripts/oag_authoring_packet_check.py`
+- `scripts/oag_lifecycle_check.py`
 - `scripts/oag_trace_graph_check.py`
 - `scripts/oag_wavefront.py`
 - `scripts/oag_deep_semantic_intake.py`
@@ -210,6 +211,11 @@ Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packet
 before RTL/TB native subagent dispatch to ensure `oag.compile` produced
 role-specific `rtl__*.json` and `tb__*.json` packets with independent truth
 sources.
+Use `.codex/scripts/oag_lifecycle_check.py --ip-dir <ip> --consumer rtl_authoring_packet --json`
+or `--consumer tb_authoring_packet` before handing artifacts to RTL/TB workers.
+Lifecycle checks are fail-closed: draft/candidate/stale artifacts, missing
+approval references, missing derived-from links, or unlisted consumers cannot
+feed role-specific authoring packets.
 Use `.codex/scripts/oag_wavefront.py` when RTL/TB/sim work should be
 parallelized. It writes runtime state under `ontology/runs/<run_id>/` and
 `knowledge/wavefront/<run_id>/`; it consumes ontology truth and authoring
