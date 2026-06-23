@@ -234,6 +234,31 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
     assert module.legacy_or_hidden(legacy_ip, "ontology/contracts.yaml") == legacy_root / "ontology" / "contracts.yaml"
     assert module.generated_path(legacy_ip, "authoring_packets/rtl__demo.json") == legacy_root / "ontology" / "generated" / "authoring_packets" / "rtl__demo.json"
 
+    # anti-escape / normalization guard contract (the security core of the resolver).
+    def _expect_value_error(rel: str) -> None:
+        try:
+            module.state_path(legacy_ip, rel)
+        except ValueError:
+            return
+        raise AssertionError(f"expected ValueError for rel={rel!r}")
+
+    for bad in ("/abs/path", "../escape", "a/../b", "", ".", ".oag"):
+        _expect_value_error(bad)
+    # a single '.' is normalized away (not rejected) — pin the documented subtlety.
+    assert module.state_path(legacy_ip, "a/./b") == legacy_root / "a" / "b"
+
+    # oag_root() is public but otherwise only indirectly exercised via layout_status.
+    assert module.oag_root(legacy_ip) == legacy_root / ".oag"
+
+    # prefix-stripping idempotency: the with-prefix and without-prefix forms must agree.
+    assert module.ontology_path(legacy_ip, "ontology/scope_lock.json") == module.ontology_path(legacy_ip, "scope_lock.json")
+    assert module.evidence_path(legacy_ip, "evidence/sim/results.xml") == module.evidence_path(legacy_ip, "sim/results.xml")
+    assert module.generated_path(legacy_ip, "generated/x") == module.generated_path(legacy_ip, "x")
+    assert module.generated_path(legacy_ip, "ontology/generated/x") == module.generated_path(legacy_ip, "x")
+
+    # legacy_or_hidden write-base fallback when neither hidden nor legacy file exists (legacy layout).
+    assert module.legacy_or_hidden(legacy_ip, "knowledge/missing.txt") == legacy_root / "knowledge" / "missing.txt"
+
     dot_ip = tmp_root / "paths_dot_oag"
     dot_root = dot_ip.resolve()
     (dot_ip / ".oag" / "ontology" / "generated").mkdir(parents=True)
@@ -246,6 +271,8 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
     assert module.legacy_or_hidden(dot_ip, "ontology/contracts.yaml") == dot_root / ".oag" / "ontology" / "contracts.yaml"
     assert module.ontology_path(dot_ip, "scope_lock.json") == dot_root / ".oag" / "ontology" / "scope_lock.json"
     assert module.evidence_path(dot_ip, "sim/results.xml") == dot_root / ".oag" / "evidence" / "sim" / "results.xml"
+    # fallback for a not-yet-existing file must resolve under .oag in the dot layout.
+    assert module.legacy_or_hidden(dot_ip, "knowledge/missing.txt") == dot_root / ".oag" / "knowledge" / "missing.txt"
 
     legacy_cli = subprocess.run(
         [sys.executable, str(OAG_PATHS), "--ip-dir", str(legacy_ip), "--json"],
@@ -258,6 +285,10 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
     legacy_result = json.loads(legacy_cli.stdout)
     assert legacy_result["layout"] == "legacy", legacy_result
     assert legacy_result["warnings"] == [], legacy_result
+    # lock the layout_status output, not just the layout label.
+    assert legacy_result["write_base"] == str(legacy_root), legacy_result
+    assert legacy_result["hidden_state"] == [], legacy_result
+    assert "knowledge" in legacy_result["legacy_state"] and "ontology" in legacy_result["legacy_state"], legacy_result
 
     dot_cli = subprocess.run(
         [sys.executable, str(OAG_PATHS), "--ip-dir", str(dot_ip), "--json"],
@@ -270,6 +301,10 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
     dot_result = json.loads(dot_cli.stdout)
     assert dot_result["layout"] == "dot_oag", dot_result
     assert dot_result["warnings"] == ["mixed_layout: .oag exists with legacy top-level OAG state"], dot_result
+    # the dot layout must report .oag as the write base and surface hidden state.
+    assert dot_result["write_base"] == str(dot_root / ".oag"), dot_result
+    assert "knowledge" in dot_result["hidden_state"] and "ontology" in dot_result["hidden_state"], dot_result
+    assert dot_result["legacy_state"] == ["ontology"], dot_result
 
 
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
