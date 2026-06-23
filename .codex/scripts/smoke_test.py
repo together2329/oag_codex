@@ -46,6 +46,7 @@ BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
 STALE_CHECK = ROOT / "scripts" / "oag_stale_check.py"
 BASELINE_CUT = ROOT / "scripts" / "oag_baseline_cut.py"
 BASELINE_VERIFY = ROOT / "scripts" / "oag_baseline_verify.py"
+IP_VERSION_CHECK = ROOT / "scripts" / "oag_ip_version_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -60,6 +61,9 @@ OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
 OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
 OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
 OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
+OAG_IP_VERSIONING_POLICY = ROOT / "oag" / "ip-versioning-policy.md"
+OAG_IP_VERSIONING_SKILL = ROOT / "skills" / "oag-ip-versioning" / "SKILL.md"
+OAG_IP_VERSIONING_RULES = ROOT / "rules" / "oag-ip-versioning.rules.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -89,6 +93,7 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_wavefront_event.schema.json",
     ROOT / "schemas" / "oag_artifact_lifecycle.schema.json",
     ROOT / "schemas" / "oag_baseline_manifest.schema.json",
+    ROOT / "schemas" / "oag_ip_version.schema.json",
 ]
 
 
@@ -261,6 +266,18 @@ def run_baseline_verify(*args: str, cwd: Path | None = None) -> subprocess.Compl
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(BASELINE_VERIFY), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd or ROOT,
+        env=env,
+    )
+
+
+def run_ip_version_check(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(IP_VERSION_CHECK), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -1524,6 +1541,68 @@ def test_baseline_verify_git_tag(tmp_root: Path) -> None:
     assert "BASELINE_VERIFY_MANIFEST_TREE_MISMATCH" in codes
 
 
+def test_ip_version_policy_checker(tmp_root: Path) -> None:
+    ip = tmp_root / "version_ip"
+    (ip / "ontology").mkdir(parents=True)
+    (ip / "ontology" / "baselines").mkdir(parents=True)
+    (ip / "ontology" / "validations").mkdir(parents=True)
+    (ip / "ontology" / "baselines" / "version_ip_golden_v0.1.1.yaml").write_text(
+        "schema_version: oag_baseline_manifest.v1\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "validations" / "version_review.json").write_text("{\"status\":\"approved\"}\n", encoding="utf-8")
+    ledger = {
+        "schema_version": "oag_ip_version.v1",
+        "ip": "version_ip",
+        "current_version": "0.1.1",
+        "version_policy": {
+            "git_scope": "ip_local_repo",
+            "tag_prefix": "oag/version_ip/",
+        },
+        "versions": [
+            {
+                "version": "0.1.0",
+                "baseline_class": "golden",
+                "state": "superseded",
+                "change_class": "minor",
+                "functional_truth_changed": True,
+                "baseline_manifest": "ontology/baselines/version_ip_golden_v0.1.0.yaml",
+                "git_tag": "oag/version_ip/v0.1.0",
+                "approval_ref": "ontology/validations/version_review.json",
+            },
+            {
+                "version": "0.1.1",
+                "baseline_class": "golden",
+                "state": "active",
+                "change_class": "patch",
+                "functional_truth_changed": False,
+                "baseline_manifest": "ontology/baselines/version_ip_golden_v0.1.1.yaml",
+                "git_tag": "oag/version_ip/v0.1.1",
+                "approval_ref": "ontology/validations/version_review.json",
+            },
+        ],
+    }
+    version_path = ip / "ontology" / "ip_version.yaml"
+    import yaml  # type: ignore
+
+    version_path.write_text(yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8")
+
+    no_git = run_ip_version_check("--ip-dir", str(ip), "--require-ip-git", "--json")
+    assert no_git.returncode != 0, no_git.stdout
+    assert any(item["code"] == "IP_VERSION_LOCAL_GIT_MISSING" for item in json.loads(no_git.stdout)["issues"]), no_git.stdout
+
+    subprocess.run(["git", "init"], cwd=ip, text=True, capture_output=True, check=True)
+    good = run_ip_version_check("--ip-dir", str(ip), "--require-ip-git", "--json")
+    assert good.returncode == 0, good.stderr or good.stdout
+    assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    ledger["versions"][1]["functional_truth_changed"] = True
+    version_path.write_text(yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8")
+    bad_patch = run_ip_version_check("--ip-dir", str(ip), "--require-ip-git", "--json")
+    assert bad_patch.returncode != 0, bad_patch.stdout
+    assert any(item["code"] == "IP_VERSION_PATCH_TRUTH_CHANGE" for item in json.loads(bad_patch.stdout)["issues"]), bad_patch.stdout
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -1696,6 +1775,7 @@ def main() -> int:
         test_baseline_manifest_checker(Path(tmp))
         test_baseline_cut_helper(Path(tmp))
         test_baseline_verify_git_tag(Path(tmp))
+        test_ip_version_policy_checker(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -1718,6 +1798,7 @@ def main() -> int:
         assert STALE_CHECK.is_file(), STALE_CHECK
         assert BASELINE_CUT.is_file(), BASELINE_CUT
         assert BASELINE_VERIFY.is_file(), BASELINE_VERIFY
+        assert IP_VERSION_CHECK.is_file(), IP_VERSION_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
@@ -1732,6 +1813,9 @@ def main() -> int:
         assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
         assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
         assert OAG_BASELINE_GIT_POLICY.is_file(), OAG_BASELINE_GIT_POLICY
+        assert OAG_IP_VERSIONING_POLICY.is_file(), OAG_IP_VERSIONING_POLICY
+        assert OAG_IP_VERSIONING_SKILL.is_file(), OAG_IP_VERSIONING_SKILL
+        assert OAG_IP_VERSIONING_RULES.is_file(), OAG_IP_VERSIONING_RULES
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -1742,14 +1826,14 @@ def main() -> int:
         assert agent_catalog_check.returncode == 0, agent_catalog_check.stderr or agent_catalog_check.stdout
         agent_catalog_result = json.loads(agent_catalog_check.stdout)
         assert agent_catalog_result["status"] == "pass", agent_catalog_result
-        assert agent_catalog_result["counts"] == {"core": 14, "custom": 3, "total": 17, "toml_files": 17}, agent_catalog_result
+        assert agent_catalog_result["counts"] == {"core": 15, "custom": 3, "total": 18, "toml_files": 18}, agent_catalog_result
         assert agent_catalog_result["completion_authority"] == ["oag-gate-reviewer"], agent_catalog_result
         assert agent_catalog_result["final_decision_authority"] == ["oag-gate-reviewer"], agent_catalog_result
         pack_release_check = run_pack_release_check()
         assert pack_release_check.returncode == 0, pack_release_check.stderr or pack_release_check.stdout
         pack_release_result = json.loads(pack_release_check.stdout)
         assert pack_release_result["status"] == "pass", pack_release_result
-        assert pack_release_result["counts"]["agent_tomls"] == 17, pack_release_result
+        assert pack_release_result["counts"]["agent_tomls"] == 18, pack_release_result
         assert pack_release_result["counts"]["schemas"] >= 4, pack_release_result
         subagent_workflows = SUBAGENT_WORKFLOWS.read_text(encoding="utf-8")
         assert "multi_agent_v1.spawn_agent" in subagent_workflows, subagent_workflows
@@ -1808,10 +1892,12 @@ def main() -> int:
         assert "RULE-PACKET-ROLE-001" in rule_index_text, rule_index_text
         assert "RULE-TRACE-001" in rule_index_text, rule_index_text
         assert "RULE-WAVE-001" in rule_index_text, rule_index_text
+        assert "RULE-IPVER-001" in rule_index_text, rule_index_text
         decision_skill_text = OAG_DECISION_MATRIX_SKILL.read_text(encoding="utf-8")
         contract_skill_text = OAG_CONTRACT_PROJECTION_SKILL.read_text(encoding="utf-8")
         packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
         wavefront_skill_text = OAG_WAVEFRONT_SKILL.read_text(encoding="utf-8")
+        ip_versioning_skill_text = OAG_IP_VERSIONING_SKILL.read_text(encoding="utf-8")
         closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
         assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
         assert "lock_required: true" in decision_skill_text, decision_skill_text
@@ -1821,6 +1907,8 @@ def main() -> int:
         assert "oag_authoring_packet_check.py" in packet_skill_text, packet_skill_text
         assert "dependency" in wavefront_skill_text and "ownership" in wavefront_skill_text, wavefront_skill_text
         assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
+        assert "oag_ip_version_check.py" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "IP-local" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
         assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
@@ -1833,6 +1921,7 @@ def main() -> int:
         assert "oag_contract_strength_check.py" in agents_text, agents_text
         assert "oag_authoring_packet_check.py" in agents_text, agents_text
         assert "oag_wavefront.py" in agents_text, agents_text
+        assert "oag_ip_version_check.py" in agents_text, agents_text
         assert "oag_trace_graph_check.py" in agents_text, agents_text
         assert "oag_deep_semantic_intake.py" in agents_text, agents_text
         assert "oag_decision_matrix_generate.py" in agents_text, agents_text
@@ -1850,6 +1939,7 @@ def main() -> int:
         assert "oag_lock_readiness_check.py" in directive_text, directive_text
         assert "oag_contract_strength_check.py" in directive_text, directive_text
         assert "oag_authoring_packet_check.py" in directive_text, directive_text
+        assert "oag_ip_version_check.py" in directive_text, directive_text
         assert "oag_trace_graph_check.py" in directive_text, directive_text
         assert "oag_deep_semantic_intake.py" in directive_text, directive_text
         assert "oag_decision_matrix_generate.py" in directive_text, directive_text

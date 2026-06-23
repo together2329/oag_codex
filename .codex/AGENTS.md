@@ -23,6 +23,7 @@ Primary assets:
 - `oag/traceability-policy.md`
 - `oag/data-lifecycle-policy.md`
 - `oag/baseline-git-policy.md`
+- `oag/ip-versioning-policy.md`
 - `oag/wavefront-policy.md`
 - `oag/wavefront-task-graph.md`
 - `oag/contract-projection.md`
@@ -53,6 +54,7 @@ Primary assets:
 - `rules/oag-rtl-ppa.rules.md`
 - `rules/oag-cdc-rdc.rules.md`
 - `rules/oag-tb-methodology.rules.md`
+- `rules/oag-ip-versioning.rules.md`
 - `skills/oag-ip-workflow/SKILL.md`
 - `skills/oag-deep-semantic-intake/SKILL.md`
 - `skills/oag-decision-matrix/SKILL.md`
@@ -60,6 +62,7 @@ Primary assets:
 - `skills/oag-authoring-packet/SKILL.md`
 - `skills/oag-evidence-closure/SKILL.md`
 - `skills/oag-wavefront/SKILL.md`
+- `skills/oag-ip-versioning/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
 - `oag/agent-catalog.toml`
@@ -98,6 +101,7 @@ Primary assets:
 - `scripts/oag_baseline_check.py`
 - `scripts/oag_baseline_cut.py`
 - `scripts/oag_baseline_verify.py`
+- `scripts/oag_ip_version_check.py`
 - `scripts/oag_stale_check.py`
 - `scripts/oag_trace_graph_check.py`
 - `scripts/oag_wavefront.py`
@@ -135,7 +139,9 @@ defines processing stage, approval state, validity state, and consumer
 firewall rules for deciding whether artifacts may feed RTL/TB/evidence
 packets, `oag/baseline-git-policy.md` defines how git commits, annotated tags,
 baseline manifests, and external artifacts form auditable baseline trust
-boundaries, `oag/contract-projection.md`
+boundaries, `oag/ip-versioning-policy.md` defines IP-local `.git`, functional
+semantic version bumps, golden baseline lineage, and patch/minor/major
+eligibility, `oag/contract-projection.md`
 defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines
@@ -175,6 +181,8 @@ ambiguity, `oag-decision-matrix` for lock-blocking decisions,
 projection, `oag-authoring-packet` for role-specific `rtl__*.json` and
 `tb__*.json` packet handoff, `oag-wavefront` for dependency-aware parallel
 dispatch planning, ownership locks, barriers, and failure-triage fan-out, and
+`oag-ip-versioning` for IP-local functional semantic version, golden baseline,
+manifest/tag readiness, and patch/minor/major stewardship, and
 `oag-evidence-closure` for trace, scoreboard, coverage, validation, and gate
 readiness.
 `oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
@@ -239,6 +247,10 @@ Use `.codex/scripts/oag_baseline_verify.py --manifest <ip>/ontology/baselines/<b
 after committing a baseline and creating its annotated tag. Verification checks
 the manifest with `oag_baseline_check.py`, confirms the tag is annotated, and
 compares current manifest bytes with the manifest stored in the tag commit.
+Use `.codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json`
+before promoting or consuming an IP functional baseline. It validates
+`ontology/ip_version.yaml`, requires IP-local `.git` when requested, enforces
+one active version, and blocks patch bumps that mark functional truth changed.
 Use `.codex/scripts/oag_wavefront.py` when RTL/TB/sim work should be
 parallelized. It writes runtime state under `ontology/runs/<run_id>/` and
 `knowledge/wavefront/<run_id>/`; it consumes ontology truth and authoring

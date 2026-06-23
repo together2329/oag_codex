@@ -21,7 +21,7 @@ PROJECT_ROOT = CODEX_ROOT.parent
 AGENTS_DIR = CODEX_ROOT / "agents"
 CATALOG = CODEX_ROOT / "oag" / "agent-catalog.toml"
 
-EXPECTED_CORE = 14
+EXPECTED_CORE = 15
 EXPECTED_CUSTOM = 3
 
 REQUIRED_AGENT_FIELDS = {
@@ -80,6 +80,7 @@ XHIGH_REASONING_AGENTS = {
     "oag-legacy-ip-analyzer",
     "oag-ip-contract-agent",
     "oag-verification-strategy-agent",
+    "oag-ip-version-steward-agent",
     "oag-rtl-implementation-agent",
     "oag-tb-implementation-agent",
     "oag-evidence-validator",

@@ -24,6 +24,8 @@ task enters one of these lanes:
 - `oag-wavefront`: dependency-aware parallel work planning, ownership locks,
   barrier tokens, read-only triage, disjoint write shards, and single
   integration owners.
+- `oag-ip-versioning`: IP-local functional semantic versioning, golden baseline
+  lineage, manifest/tag readiness, and patch/minor/major stewardship.
 - `oag-evidence-closure`: scoreboard, coverage, validation, trace graph,
   freshness, gate, and `claim_complete` readiness.
 
@@ -31,6 +33,15 @@ Do not let this umbrella skill hide ownership. Intake and decisions are draft
 workflow. Contract projection prepares implementation truth. Authoring packets
 feed RTL/TB subagents. Wavefront scheduling opens only safe parallel work
 boundaries. Evidence closure audits proof strength and decision freshness.
+IP versioning governs whether an approved baseline lineage is safe to consume
+or promote; it does not create design truth.
+
+Use the version checker when an IP baseline or golden version is being promoted
+or consumed:
+
+```bash
+python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json
+```
 
 ## Start
 
