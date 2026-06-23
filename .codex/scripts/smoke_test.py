@@ -42,6 +42,7 @@ TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
 DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
 DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
+BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -83,6 +84,7 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_ownership_locks.schema.json",
     ROOT / "schemas" / "oag_wavefront_event.schema.json",
     ROOT / "schemas" / "oag_artifact_lifecycle.schema.json",
+    ROOT / "schemas" / "oag_baseline_manifest.schema.json",
 ]
 
 
@@ -195,6 +197,18 @@ def run_lifecycle_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(LIFECYCLE_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(BASELINE_CHECK), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -1000,6 +1014,83 @@ def test_artifact_lifecycle_checker(tmp_root: Path) -> None:
     assert "LIFECYCLE_APPROVAL_REF" in bad_codes
 
 
+def test_baseline_manifest_checker(tmp_root: Path) -> None:
+    import yaml  # type: ignore
+
+    ip = tmp_root / "baseline_ip"
+    for rel in (
+        "ontology/baselines",
+        "ontology/gates",
+        "ontology/validations",
+        "ontology",
+        "rtl",
+        "sim",
+    ):
+        (ip / rel).mkdir(parents=True, exist_ok=True)
+    files = {
+        "ontology/contracts.yaml": "schema_version: contracts.v1\ncontracts: []\n",
+        "rtl/top.sv": "module top; endmodule\n",
+        "sim/results.xml": "<testsuite tests=\"1\" failures=\"0\"/>\n",
+        "ontology/validations/validation.json": "{\"status\":\"pass\"}\n",
+        "ontology/gates/closure_gate.json": "{\"decision\":\"pass\"}\n",
+    }
+    for rel, text in files.items():
+        (ip / rel).write_text(text, encoding="utf-8")
+
+    def hash_entry(rel: str) -> dict[str, object]:
+        data = (ip / rel).read_bytes()
+        return {
+            "content_sha256": f"sha256:{hashlib.sha256(data).hexdigest()}",
+            "hash_mode": "raw_bytes",
+            "size_bytes": len(data),
+        }
+
+    manifest = {
+        "schema_version": "oag_baseline_manifest.v1",
+        "baseline_id": "baseline_ip.golden.v0.1.0",
+        "ip": "baseline_ip",
+        "baseline": {"class": "golden", "version": "0.1.0", "state": "active", "supersedes": None},
+        "approval": {"state": "approved", "approval_ref": "ontology/gates/closure_gate.json"},
+        "git": {"tag": "oag/baseline_ip/v0.1.0", "commit": "resolved_by_tag", "tag_type": "annotated"},
+        "tracked_artifacts": {
+            "truth": ["ontology/contracts.yaml"],
+            "implementation": ["rtl/top.sv"],
+            "evidence_summary": ["sim/results.xml"],
+            "gate": ["ontology/validations/validation.json", "ontology/gates/closure_gate.json"],
+        },
+        "hashes": {rel: hash_entry(rel) for rel in files},
+        "gate": {
+            "gate_ref": "ontology/gates/closure_gate.json",
+            "validation_ref": "ontology/validations/validation.json",
+            "decision": "pass",
+        },
+    }
+    manifest_path = ip / "ontology" / "baselines" / "baseline_ip_golden_v0.1.0.yaml"
+    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+
+    good = run_baseline_check("--manifest", str(manifest_path), "--json")
+    assert good.returncode == 0, good.stderr or good.stdout
+    assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    (ip / "sim/results.xml").write_text("<testsuite tests=\"1\" failures=\"1\"/>\n", encoding="utf-8")
+    mismatch = run_baseline_check("--manifest", str(manifest_path), "--json")
+    assert mismatch.returncode != 0, mismatch.stdout
+    assert any(item["code"] == "BASELINE_HASH_MISMATCH" for item in json.loads(mismatch.stdout)["issues"]), mismatch.stdout
+
+    broken = manifest.copy()
+    broken["git"] = {"tag": "", "commit": "abc123", "tag_type": "lightweight"}
+    broken["tracked_artifacts"] = {"truth": ["ontology/missing.yaml"]}
+    broken_path = ip / "ontology" / "baselines" / "broken.yaml"
+    broken_path.write_text(yaml.safe_dump(broken, sort_keys=False), encoding="utf-8")
+    bad = run_baseline_check("--manifest", str(broken_path), "--json")
+    assert bad.returncode != 0, bad.stdout
+    bad_codes = {item["code"] for item in json.loads(bad.stdout)["issues"]}
+    assert "BASELINE_GIT_TAG" in bad_codes
+    assert "BASELINE_TAG_TYPE" in bad_codes
+    assert "BASELINE_SELF_COMMIT" in bad_codes
+    assert "BASELINE_TRACKED_FILE_MISSING" in bad_codes
+
+
 def write_stage_receipt(ip: Path, stage: str) -> None:
     receipt = {
         "schema_version": "stage_run_receipt.v1",
@@ -1167,6 +1258,7 @@ def main() -> int:
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
+        test_baseline_manifest_checker(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -1185,6 +1277,7 @@ def main() -> int:
         assert DEEP_SEMANTIC_INTAKE.is_file(), DEEP_SEMANTIC_INTAKE
         assert DECISION_MATRIX_GENERATE.is_file(), DECISION_MATRIX_GENERATE
         assert LIFECYCLE_CHECK.is_file(), LIFECYCLE_CHECK
+        assert BASELINE_CHECK.is_file(), BASELINE_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
