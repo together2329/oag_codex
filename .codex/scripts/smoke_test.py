@@ -64,6 +64,8 @@ OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
 OAG_IP_VERSIONING_POLICY = ROOT / "oag" / "ip-versioning-policy.md"
 OAG_IP_VERSIONING_SKILL = ROOT / "skills" / "oag-ip-versioning" / "SKILL.md"
 OAG_IP_VERSIONING_RULES = ROOT / "rules" / "oag-ip-versioning.rules.md"
+OAG_DOC_TO_MARKDOWN_SKILL = ROOT / "skills" / "oag-doc-to-markdown" / "SKILL.md"
+DOC_TO_MARKDOWN = ROOT / "skills" / "oag-doc-to-markdown" / "scripts" / "doc_to_markdown.py"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -282,6 +284,18 @@ def run_ip_version_check(*args: str, cwd: Path | None = None) -> subprocess.Comp
         capture_output=True,
         check=False,
         cwd=cwd or ROOT,
+        env=env,
+    )
+
+
+def run_doc_to_markdown(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(DOC_TO_MARKDOWN), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
         env=env,
     )
 
@@ -648,6 +662,33 @@ def test_pyslang_lint_runner() -> None:
         assert result["status"] == "pass", result
         assert result["tool"] == "pyslang", result
         assert result["files"] == ["rtl/demo.sv"], result
+
+
+def test_doc_to_markdown_skill_script(tmp_root: Path) -> None:
+    source = tmp_root / "source_spec.txt"
+    source.write_text("# Source Spec\n\nA plain text spec.\n", encoding="utf-8")
+    out_dir = tmp_root / "markdown"
+
+    converted = run_doc_to_markdown("--input", str(source), "--out-dir", str(out_dir), "--json")
+    assert converted.returncode == 0, converted.stderr or converted.stdout
+    result = json.loads(converted.stdout)
+    assert result["status"] == "pass", result
+    assert result["backend"] == "passthrough", result
+    assert result["input_format"] == ".txt", result
+    output_path = Path(result["output"])
+    assert output_path.is_file(), result
+    assert output_path.name == "source_spec.md", output_path
+    assert "A plain text spec." in output_path.read_text(encoding="utf-8")
+
+    markdown_source = tmp_root / "already_markdown.md"
+    markdown_source.write_text("Already **Markdown**.\n", encoding="utf-8")
+    stdout_result = run_doc_to_markdown("--input", str(markdown_source), "--stdout")
+    assert stdout_result.returncode == 0, stdout_result.stderr or stdout_result.stdout
+    assert stdout_result.stdout == "Already **Markdown**.\n", stdout_result.stdout
+
+    bad_mix = run_doc_to_markdown("--input", str(markdown_source), "--stdout", "--json")
+    assert bad_mix.returncode != 0, bad_mix.stdout
+    assert any(item["code"] == "DOC_TO_MD_ARG_CONFLICT" for item in json.loads(bad_mix.stdout)["issues"]), bad_mix.stdout
 
 
 def test_wavefront_scheduler(tmp_root: Path) -> None:
@@ -1768,6 +1809,7 @@ def main() -> int:
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
         test_pyslang_lint_runner()
+        test_doc_to_markdown_skill_script(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
@@ -1816,6 +1858,8 @@ def main() -> int:
         assert OAG_IP_VERSIONING_POLICY.is_file(), OAG_IP_VERSIONING_POLICY
         assert OAG_IP_VERSIONING_SKILL.is_file(), OAG_IP_VERSIONING_SKILL
         assert OAG_IP_VERSIONING_RULES.is_file(), OAG_IP_VERSIONING_RULES
+        assert OAG_DOC_TO_MARKDOWN_SKILL.is_file(), OAG_DOC_TO_MARKDOWN_SKILL
+        assert DOC_TO_MARKDOWN.is_file(), DOC_TO_MARKDOWN
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
@@ -1874,6 +1918,8 @@ def main() -> int:
         assert "oag-wavefront" in skill_text, skill_text
         assert "oag_wavefront.py" in skill_text, skill_text
         assert "oag-evidence-closure" in skill_text, skill_text
+        assert "oag-doc-to-markdown" in skill_text, skill_text
+        assert "doc_to_markdown.py" in skill_text, skill_text
         assert "SubagentStart" in skill_text, skill_text
         assert "generated tool output" in skill_text, skill_text
         assert "STATIC_HANDOFF_PASS" in skill_text, skill_text
@@ -1898,6 +1944,7 @@ def main() -> int:
         packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
         wavefront_skill_text = OAG_WAVEFRONT_SKILL.read_text(encoding="utf-8")
         ip_versioning_skill_text = OAG_IP_VERSIONING_SKILL.read_text(encoding="utf-8")
+        doc_to_markdown_skill_text = OAG_DOC_TO_MARKDOWN_SKILL.read_text(encoding="utf-8")
         closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
         assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
         assert "lock_required: true" in decision_skill_text, decision_skill_text
@@ -1909,6 +1956,11 @@ def main() -> int:
         assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
         assert "oag_ip_version_check.py" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "IP-local" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "doc_to_markdown.py" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
+        assert "markitdown" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
+        assert ".pdf" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
+        assert ".pptx" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
+        assert ".docx" in doc_to_markdown_skill_text, doc_to_markdown_skill_text
         assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
         assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
@@ -1922,6 +1974,8 @@ def main() -> int:
         assert "oag_authoring_packet_check.py" in agents_text, agents_text
         assert "oag_wavefront.py" in agents_text, agents_text
         assert "oag_ip_version_check.py" in agents_text, agents_text
+        assert "oag-doc-to-markdown" in agents_text, agents_text
+        assert "doc_to_markdown.py" in agents_text, agents_text
         assert "oag_trace_graph_check.py" in agents_text, agents_text
         assert "oag_deep_semantic_intake.py" in agents_text, agents_text
         assert "oag_decision_matrix_generate.py" in agents_text, agents_text
@@ -1940,6 +1994,8 @@ def main() -> int:
         assert "oag_contract_strength_check.py" in directive_text, directive_text
         assert "oag_authoring_packet_check.py" in directive_text, directive_text
         assert "oag_ip_version_check.py" in directive_text, directive_text
+        assert "oag-doc-to-markdown" in directive_text, directive_text
+        assert "doc_to_markdown.py" in directive_text, directive_text
         assert "oag_trace_graph_check.py" in directive_text, directive_text
         assert "oag_deep_semantic_intake.py" in directive_text, directive_text
         assert "oag_decision_matrix_generate.py" in directive_text, directive_text

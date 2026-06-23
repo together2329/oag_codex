@@ -63,6 +63,8 @@ Primary assets:
 - `skills/oag-evidence-closure/SKILL.md`
 - `skills/oag-wavefront/SKILL.md`
 - `skills/oag-ip-versioning/SKILL.md`
+- `skills/oag-doc-to-markdown/SKILL.md`
+- `skills/oag-doc-to-markdown/scripts/doc_to_markdown.py`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
 - `oag/agent-catalog.toml`
@@ -182,7 +184,10 @@ projection, `oag-authoring-packet` for role-specific `rtl__*.json` and
 `tb__*.json` packet handoff, `oag-wavefront` for dependency-aware parallel
 dispatch planning, ownership locks, barriers, and failure-triage fan-out, and
 `oag-ip-versioning` for IP-local functional semantic version, golden baseline,
-manifest/tag readiness, and patch/minor/major stewardship, and
+manifest/tag readiness, and patch/minor/major stewardship,
+`oag-doc-to-markdown` for converting `.pdf`, `.pptx`, `.docx`, `.xlsx`,
+`.html`, and text-like source documents into Markdown with
+`doc_to_markdown.py` before source-claim or intake work, and
 `oag-evidence-closure` for trace, scoreboard, coverage, validation, and gate
 readiness.
 `oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
@@ -251,6 +256,10 @@ Use `.codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --jso
 before promoting or consuming an IP functional baseline. It validates
 `ontology/ip_version.yaml`, requires IP-local `.git` when requested, enforces
 one active version, and blocks patch bumps that mark functional truth changed.
+Use `.codex/skills/oag-doc-to-markdown/scripts/doc_to_markdown.py --input <file> --out-dir <dir> --json`
+to convert PDF, PPTX, DOCX, Excel, HTML, and text-like documents into Markdown
+before OAG intake. Generated Markdown is raw or parsed source material, not
+canonical requirement truth, locked assumptions, or closure evidence by itself.
 Use `.codex/scripts/oag_wavefront.py` when RTL/TB/sim work should be
 parallelized. It writes runtime state under `ontology/runs/<run_id>/` and
 `knowledge/wavefront/<run_id>/`; it consumes ontology truth and authoring

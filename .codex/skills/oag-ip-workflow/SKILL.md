@@ -26,6 +26,9 @@ task enters one of these lanes:
   integration owners.
 - `oag-ip-versioning`: IP-local functional semantic versioning, golden baseline
   lineage, manifest/tag readiness, and patch/minor/major stewardship.
+- `oag-doc-to-markdown`: PDF, PPTX, DOCX, Excel, HTML, and text-like source
+  document conversion to Markdown through `doc_to_markdown.py` before OAG
+  source-claim capture or deep semantic intake.
 - `oag-evidence-closure`: scoreboard, coverage, validation, trace graph,
   freshness, gate, and `claim_complete` readiness.
 
@@ -35,12 +38,22 @@ feed RTL/TB subagents. Wavefront scheduling opens only safe parallel work
 boundaries. Evidence closure audits proof strength and decision freshness.
 IP versioning governs whether an approved baseline lineage is safe to consume
 or promote; it does not create design truth.
+Document-to-Markdown conversion prepares raw or parsed source material. It
+does not create canonical requirements, locked assumptions, or closure
+evidence.
 
 Use the version checker when an IP baseline or golden version is being promoted
 or consumed:
 
 ```bash
 python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json
+```
+
+Use the document converter when a PDF, PPTX, DOCX, Excel, HTML, or text source
+must be made readable before intake:
+
+```bash
+python3 .codex/skills/oag-doc-to-markdown/scripts/doc_to_markdown.py --input <source-file> --out-dir <markdown-output-dir> --json
 ```
 
 ## Start

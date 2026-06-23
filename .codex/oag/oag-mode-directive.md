@@ -47,6 +47,9 @@ When the task enters a narrow lane, apply the matching skill:
 - `oag-ip-versioning` for IP-local functional semantic versions, golden
   baseline lineage, manifest/tag readiness, and patch/minor/major bump
   recommendations.
+- `oag-doc-to-markdown` for converting `.pdf`, `.pptx`, `.docx`, `.xlsx`,
+  `.html`, and text-like source documents into Markdown with
+  `doc_to_markdown.py` before source-claim capture or deep semantic intake.
 - `oag-evidence-closure` for trace graph, scoreboard, coverage, validation,
   freshness, gate, and completion decision audits.
 
@@ -79,6 +82,11 @@ Use the OAG principle layer before choosing artifacts:
   readiness, and patch/minor/major eligibility. Use
   `python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json`
   before promoting or consuming a functional baseline.
+- `.codex/skills/oag-doc-to-markdown/SKILL.md` for converting source documents
+  into Markdown before OAG intake. Generated Markdown is raw or parsed source
+  material; it is not canonical requirements, locked truth, or evidence until
+  promoted through source claims, ambiguity handling, requirements, contracts,
+  validation, and decision records.
 - `.codex/oag/wavefront-policy.md` and
   `.codex/oag/wavefront-task-graph.md` for dependency-aware parallel
   execution over existing ontology truth. Use
