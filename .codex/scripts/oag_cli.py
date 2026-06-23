@@ -6164,6 +6164,23 @@ def _slug(value: str) -> str:
     return (text or "RECORD")[:48].strip("_") or "RECORD"
 
 
+def _layout_issues(ip: Path) -> list[str]:
+    """Reject an unsafe mixed layout where ontology/ or knowledge/ exist BOTH at the
+    legacy top level and under <ip>/.oag/. The resolver reads .oag and silently
+    shadows the legacy copy, so the two diverge; migration via oag_migrate_layout.py
+    is atomic, so a mixed state is always a defect to be reconciled."""
+    if not oag_paths.oag_root(ip).is_dir():
+        return []
+    shadowed = [name for name in ("ontology", "knowledge") if (ip / name).is_dir()]
+    if not shadowed:
+        return []
+    return [
+        "mixed OAG layout: "
+        + ", ".join(sorted(shadowed))
+        + " exist both at the top level and under .oag/; finish the migration (oag_migrate_layout.py) so state is read from one location"
+    ]
+
+
 def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[str, Any]:
     ip = _ip_dir(arguments)
     issues: list[str] = []
@@ -6257,6 +6274,7 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
         issues.extend([f"scoreboard_rows.v1: {issue}" for issue in _as_list(scoreboard.get("issues"))])
     issues.extend(_stage_receipt_issues(ip))
     issues.extend(_scope_lock_issues(ip))
+    issues.extend(_layout_issues(ip))
     result = {
         "schema_version": "oag_check.v1",
         "ip": ip.name,

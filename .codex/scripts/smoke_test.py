@@ -538,6 +538,37 @@ def test_dot_oag_migration_tool(tmp_root: Path) -> None:
     assert _hash_tree(ip / "ontology") == pre["ontology"], "rollback preserves ontology hashes"
 
 
+def test_dot_oag_mixed_layout_rejected(tmp_root: Path) -> None:
+    """Wave 5 enforcement: oag.check fails on an unsafe mixed layout where
+    ontology/ or knowledge/ exist both at the top level and under .oag/. Clean
+    legacy and clean .oag layouts do not trip the gate."""
+    ip = tmp_root / "mixed_ip"
+    assert call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})["ok"] is True
+
+    # clean legacy layout: no mixed-layout issue.
+    issues = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"].get("issues", [])
+    assert not any("mixed OAG layout" in i for i in issues), issues
+
+    # migrate to a clean .oag layout: still no mixed-layout issue.
+    rc, ap = _run_migrate("--ip-dir", str(ip), "--to-dot-oag", "--apply")
+    assert rc == 0 and ap.get("applied") is True, ap
+    issues = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"].get("issues", [])
+    assert not any("mixed OAG layout" in i for i in issues), issues
+
+    # a stray legacy top-level ontology/ alongside .oag is an unsafe mixed state.
+    (ip / "ontology").mkdir(parents=True, exist_ok=True)
+    (ip / "ontology" / "stray.yaml").write_text("stray: true\n", encoding="utf-8")
+    res = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"]
+    assert res["ok"] is False, res
+    assert any(("mixed OAG layout" in i) and ("ontology" in i) for i in res.get("issues", [])), res
+
+    # removing the stray legacy dir clears the gate.
+    (ip / "ontology" / "stray.yaml").unlink()
+    (ip / "ontology").rmdir()
+    issues = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})["result"].get("issues", [])
+    assert not any("mixed OAG layout" in i for i in issues), issues
+
+
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
@@ -2116,6 +2147,7 @@ def main() -> int:
         test_dot_oag_layout_state_scripts(Path(tmp))
         test_dot_oag_scaffold_layout(Path(tmp))
         test_dot_oag_migration_tool(Path(tmp))
+        test_dot_oag_mixed_layout_rejected(Path(tmp))
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
