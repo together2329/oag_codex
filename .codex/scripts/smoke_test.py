@@ -34,6 +34,7 @@ CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
 PPA_CHECK = ROOT / "scripts" / "oag_ppa_check.py"
+OAG_PATHS = ROOT / "scripts" / "oag_paths.py"
 PYSLANG_LINT = ROOT / "scripts" / "oag_pyslang_lint.py"
 REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
@@ -213,6 +214,62 @@ def run_lifecycle_check(*args: str) -> subprocess.CompletedProcess[str]:
         cwd=ROOT,
         env=env,
     )
+
+
+def test_oag_paths_resolver(tmp_root: Path) -> None:
+    assert OAG_PATHS.is_file(), OAG_PATHS
+
+    spec = importlib.util.spec_from_file_location("oag_paths_smoke", OAG_PATHS)
+    assert spec and spec.loader, spec
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    legacy_ip = tmp_root / "paths_legacy"
+    legacy_root = legacy_ip.resolve()
+    (legacy_ip / "ontology" / "generated").mkdir(parents=True)
+    (legacy_ip / "knowledge").mkdir(parents=True)
+    (legacy_ip / "ontology" / "contracts.yaml").write_text("contracts: []\n", encoding="utf-8")
+
+    assert module.state_path(legacy_ip, "knowledge/ledger.jsonl") == legacy_root / "knowledge" / "ledger.jsonl"
+    assert module.legacy_or_hidden(legacy_ip, "ontology/contracts.yaml") == legacy_root / "ontology" / "contracts.yaml"
+    assert module.generated_path(legacy_ip, "authoring_packets/rtl__demo.json") == legacy_root / "ontology" / "generated" / "authoring_packets" / "rtl__demo.json"
+
+    dot_ip = tmp_root / "paths_dot_oag"
+    dot_root = dot_ip.resolve()
+    (dot_ip / ".oag" / "ontology" / "generated").mkdir(parents=True)
+    (dot_ip / ".oag" / "knowledge").mkdir(parents=True)
+    (dot_ip / "ontology").mkdir(parents=True)
+    (dot_ip / ".oag" / "ontology" / "contracts.yaml").write_text("contracts: hidden\n", encoding="utf-8")
+    (dot_ip / "ontology" / "contracts.yaml").write_text("contracts: legacy\n", encoding="utf-8")
+
+    assert module.state_path(dot_ip, "knowledge/ledger.jsonl") == dot_root / ".oag" / "knowledge" / "ledger.jsonl"
+    assert module.legacy_or_hidden(dot_ip, "ontology/contracts.yaml") == dot_root / ".oag" / "ontology" / "contracts.yaml"
+    assert module.ontology_path(dot_ip, "scope_lock.json") == dot_root / ".oag" / "ontology" / "scope_lock.json"
+    assert module.evidence_path(dot_ip, "sim/results.xml") == dot_root / ".oag" / "evidence" / "sim" / "results.xml"
+
+    legacy_cli = subprocess.run(
+        [sys.executable, str(OAG_PATHS), "--ip-dir", str(legacy_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+    assert legacy_cli.returncode == 0, legacy_cli.stderr or legacy_cli.stdout
+    legacy_result = json.loads(legacy_cli.stdout)
+    assert legacy_result["layout"] == "legacy", legacy_result
+    assert legacy_result["warnings"] == [], legacy_result
+
+    dot_cli = subprocess.run(
+        [sys.executable, str(OAG_PATHS), "--ip-dir", str(dot_ip), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+    assert dot_cli.returncode == 0, dot_cli.stderr or dot_cli.stdout
+    dot_result = json.loads(dot_cli.stdout)
+    assert dot_result["layout"] == "dot_oag", dot_result
+    assert dot_result["warnings"] == ["mixed_layout: .oag exists with legacy top-level OAG state"], dot_result
 
 
 def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
@@ -1789,6 +1846,7 @@ def main() -> int:
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
+        test_oag_paths_resolver(Path(tmp))
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
