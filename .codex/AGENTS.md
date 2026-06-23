@@ -21,6 +21,7 @@ Primary assets:
 - `oag/decision-matrix-policy.md`
 - `oag/authoring-packet-policy.md`
 - `oag/traceability-policy.md`
+- `oag/data-lifecycle-policy.md`
 - `oag/wavefront-policy.md`
 - `oag/wavefront-task-graph.md`
 - `oag/contract-projection.md`
@@ -123,7 +124,10 @@ DUT boundary ownership, `oag/decision-matrix-policy.md` defines unresolved,
 proposed, decided, waived, and blocked product decisions before lock-ready
 implementation, `oag/authoring-packet-policy.md` defines role-specific
 `rtl__*.json` and `tb__*.json` packets, `oag/traceability-policy.md` defines
-source-to-contract-to-evidence ID governance, `oag/contract-projection.md`
+source-to-contract-to-evidence ID governance, `oag/data-lifecycle-policy.md`
+defines processing stage, approval state, validity state, and consumer
+firewall rules for deciding whether artifacts may feed RTL/TB/evidence
+packets, `oag/contract-projection.md`
 defines ROCEV projection,
 `oag/rtl-implementation.md` defines how generated RTL implements locked
 contract truth without inventing semantics, `oag/rtl-dialect-policy.md` defines

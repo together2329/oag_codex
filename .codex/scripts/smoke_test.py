@@ -53,6 +53,7 @@ OAG_AUTHORING_PACKET_SKILL = ROOT / "skills" / "oag-authoring-packet" / "SKILL.m
 OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.md"
 OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
 OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
+OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
 SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
@@ -80,6 +81,7 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_wavefront_task_graph.schema.json",
     ROOT / "schemas" / "oag_ownership_locks.schema.json",
     ROOT / "schemas" / "oag_wavefront_event.schema.json",
+    ROOT / "schemas" / "oag_artifact_lifecycle.schema.json",
 ]
 
 
@@ -1103,6 +1105,7 @@ def main() -> int:
         assert OAG_EVIDENCE_CLOSURE_SKILL.is_file(), OAG_EVIDENCE_CLOSURE_SKILL
         assert OAG_WAVEFRONT_SKILL.is_file(), OAG_WAVEFRONT_SKILL
         assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
+        assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
         for schema_file in SCHEMA_FILES:
             assert schema_file.is_file(), schema_file
             schema_payload = json.loads(schema_file.read_text(encoding="utf-8"))
