@@ -43,6 +43,7 @@ DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
 DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
 BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
+STALE_CHECK = ROOT / "scripts" / "oag_stale_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -222,6 +223,18 @@ def run_authoring_packet_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(AUTHORING_PACKET_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_stale_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(STALE_CHECK), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -1127,6 +1140,98 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
     ), bad_tb.stdout
 
 
+def test_stale_propagation_checker(tmp_root: Path) -> None:
+    ip = tmp_root / "stale_ip"
+    (ip / "ontology" / "generated" / "authoring_packets").mkdir(parents=True)
+    (ip / "sim").mkdir(parents=True)
+    req_path = ip / "ontology" / "requirements.yaml"
+    contracts_path = ip / "ontology" / "contracts.yaml"
+    rtl_packet_path = ip / "ontology" / "generated" / "authoring_packets" / "rtl__demo.json"
+    evidence_path = ip / "sim" / "results.xml"
+    req_path.write_text("requirements:\n- id: REQ_DEMO\n  text: changed\n", encoding="utf-8")
+    contracts_path.write_text("contracts:\n- contract_id: CONTRACT_DEMO\n", encoding="utf-8")
+    rtl_packet_path.write_text("{}\n", encoding="utf-8")
+    evidence_path.write_text("<testsuite tests=\"1\" failures=\"0\"/>\n", encoding="utf-8")
+
+    lifecycle = {
+        "schema_version": "oag_artifact_lifecycle.v1",
+        "artifacts": [
+            {
+                "id": "ontology/requirements.yaml",
+                "path": "ontology/requirements.yaml",
+                "granularity": "file",
+                "processing_stage": "canonical",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/req_review.json",
+                "derived_from": ["req/source_claims.yaml"],
+                "allowed_consumers": ["contract_projection"],
+                "hash": {
+                    "content_sha256": "sha256:" + ("0" * 64),
+                    "hash_mode": "raw_bytes",
+                    "size_bytes": 1,
+                },
+            },
+            {
+                "id": "ontology/contracts.yaml",
+                "path": "ontology/contracts.yaml",
+                "granularity": "file",
+                "processing_stage": "canonical",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/contracts_review.json",
+                "derived_from": ["ontology/requirements.yaml"],
+                "allowed_consumers": ["rtl_authoring_packet", "tb_authoring_packet"],
+            },
+            {
+                "id": "ontology/generated/authoring_packets/rtl__demo.json",
+                "path": "ontology/generated/authoring_packets/rtl__demo.json",
+                "granularity": "file",
+                "processing_stage": "serving",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/rtl_packet_review.json",
+                "derived_from": ["ontology/contracts.yaml"],
+                "allowed_consumers": ["rtl_agent"],
+            },
+            {
+                "id": "sim/results.xml",
+                "path": "sim/results.xml",
+                "granularity": "file",
+                "processing_stage": "serving",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/sim_review.json",
+                "derived_from": ["ontology/generated/authoring_packets/rtl__demo.json"],
+                "allowed_consumers": ["gate"],
+            },
+        ],
+    }
+    lifecycle_path = ip / "ontology" / "artifact_lifecycle.json"
+    lifecycle_path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    stale = run_stale_check("--ip-dir", str(ip), "--json")
+    assert stale.returncode != 0, stale.stdout
+    result = json.loads(stale.stdout)
+    codes = {item["code"] for item in result["issues"]}
+    assert "STALE_HASH_MISMATCH_CURRENT" in codes
+    assert "STALE_DEPENDENT_CURRENT" in codes
+    stale_ids = set(result["stale_artifacts"])
+    assert "ontology/contracts.yaml" in stale_ids
+    assert "ontology/generated/authoring_packets/rtl__demo.json" in stale_ids
+    assert "sim/results.xml" in stale_ids
+
+    lifecycle["artifacts"][0]["hash"] = {
+        "content_sha256": "sha256:" + hashlib.sha256(req_path.read_bytes()).hexdigest(),
+        "hash_mode": "raw_bytes",
+        "size_bytes": req_path.stat().st_size,
+    }
+    lifecycle_path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    clean = run_stale_check("--ip-dir", str(ip), "--json")
+    assert clean.returncode == 0, clean.stderr or clean.stdout
+    assert json.loads(clean.stdout)["status"] == "pass", clean.stdout
+
+
 def test_baseline_manifest_checker(tmp_root: Path) -> None:
     import yaml  # type: ignore
 
@@ -1404,6 +1509,7 @@ def main() -> int:
         test_wavefront_scheduler(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
+        test_stale_propagation_checker(Path(tmp))
         test_baseline_manifest_checker(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
@@ -1424,6 +1530,7 @@ def main() -> int:
         assert DECISION_MATRIX_GENERATE.is_file(), DECISION_MATRIX_GENERATE
         assert LIFECYCLE_CHECK.is_file(), LIFECYCLE_CHECK
         assert BASELINE_CHECK.is_file(), BASELINE_CHECK
+        assert STALE_CHECK.is_file(), STALE_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS

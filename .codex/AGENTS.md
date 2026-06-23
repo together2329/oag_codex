@@ -96,6 +96,7 @@ Primary assets:
 - `scripts/oag_authoring_packet_check.py`
 - `scripts/oag_lifecycle_check.py`
 - `scripts/oag_baseline_check.py`
+- `scripts/oag_stale_check.py`
 - `scripts/oag_trace_graph_check.py`
 - `scripts/oag_wavefront.py`
 - `scripts/oag_deep_semantic_intake.py`
@@ -220,6 +221,10 @@ or `--consumer tb_authoring_packet` before handing artifacts to RTL/TB workers.
 Lifecycle checks are fail-closed: draft/candidate/stale artifacts, missing
 approval references, missing derived-from links, or unlisted consumers cannot
 feed role-specific authoring packets.
+Use `.codex/scripts/oag_stale_check.py --ip-dir <ip> --json` after lifecycle
+hashes or upstream truth artifacts change. It follows `derived_from` reverse
+dependencies and blocks approved/current downstream artifacts until they are
+recomputed, revalidated, or marked stale.
 Use `.codex/scripts/oag_baseline_check.py --manifest <ip>/ontology/baselines/<baseline>.yaml --json`
 before committing or tagging an OAG baseline. Baseline manifests must use
 annotated tags resolved by tag, not concrete self commit hashes; every tracked
