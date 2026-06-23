@@ -8,9 +8,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from oag_lifecycle_check import check as lifecycle_check
+
 
 PACKET_DIR = Path("ontology/generated/authoring_packets")
 DUT_DERIVED_TOKENS = {"dut_output", "rtl_expression", "post_hoc_simulation", "observed dut behavior", "observed_dut_output"}
+TB_FORBIDDEN_LIFECYCLE_PREFIXES = ("rtl/", "sim/", "waveform", "dut_output")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -45,7 +48,34 @@ def is_locked(ip_dir: Path) -> bool:
     return scope.get("state") == "locked"
 
 
-def check_rtl_packet(path: Path, data: dict[str, Any], *, hard_gate: bool) -> list[dict[str, str]]:
+def check_lifecycle_refs(
+    ip_dir: Path,
+    path: Path,
+    data: dict[str, Any],
+    *,
+    consumer: str,
+    require_lifecycle: bool,
+) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    rel = str(path)
+    if not require_lifecycle:
+        return issues
+    refs = str_items(data.get("lifecycle_input_refs"))
+    if not refs:
+        return [issue("PACKET_LIFECYCLE_REFS", "Packet needs lifecycle_input_refs when --require-lifecycle is set.", rel)]
+    for ref in refs:
+        lowered = ref.lower()
+        if consumer == "tb_authoring_packet" and lowered.startswith(TB_FORBIDDEN_LIFECYCLE_PREFIXES):
+            issues.append(issue("TB_PACKET_RTL_DERIVED_LIFECYCLE_INPUT", "TB expected-source lifecycle input must not derive from RTL, sim, waveform, or DUT output.", rel))
+            continue
+        result = lifecycle_check(ip_dir, require=True, artifact_id=ref, consumer=consumer)
+        if result.get("status") != "pass":
+            codes = ", ".join(str(item.get("code")) for item in result.get("issues", []) if isinstance(item, dict))
+            issues.append(issue("PACKET_LIFECYCLE_BLOCKED", f"Lifecycle input {ref} is not eligible for {consumer}: {codes}", rel))
+    return issues
+
+
+def check_rtl_packet(path: Path, data: dict[str, Any], *, ip_dir: Path, hard_gate: bool, require_lifecycle: bool) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     rel = str(path)
     if data.get("__load_error__"):
@@ -71,10 +101,11 @@ def check_rtl_packet(path: Path, data: dict[str, Any], *, hard_gate: bool) -> li
         issues.append(issue("RTL_PACKET_PPA_NOTES", "RTL packet should require PPA notes.", rel))
     if hard_gate and data.get("cdc_rdc_notes_required") is not True:
         issues.append(issue("RTL_PACKET_CDC_RDC_NOTES", "RTL packet should require CDC/RDC notes.", rel))
+    issues.extend(check_lifecycle_refs(ip_dir, path, data, consumer="rtl_authoring_packet", require_lifecycle=require_lifecycle))
     return issues
 
 
-def check_tb_packet(path: Path, data: dict[str, Any], *, hard_gate: bool) -> list[dict[str, str]]:
+def check_tb_packet(path: Path, data: dict[str, Any], *, ip_dir: Path, hard_gate: bool, require_lifecycle: bool) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     rel = str(path)
     if data.get("__load_error__"):
@@ -94,10 +125,11 @@ def check_tb_packet(path: Path, data: dict[str, Any], *, hard_gate: bool) -> lis
         issues.append(issue("TB_PACKET_SCENARIOS", "TB packet needs scenario_refs.", rel))
     if hard_gate and not str_items(data.get("scoreboard_row_refs")):
         issues.append(issue("TB_PACKET_SCOREBOARD_ROWS", "TB packet needs scoreboard_row_refs.", rel))
+    issues.extend(check_lifecycle_refs(ip_dir, path, data, consumer="tb_authoring_packet", require_lifecycle=require_lifecycle))
     return issues
 
 
-def check(ip_dir: Path, *, require_locked: bool = False, require_packets: bool = False) -> dict[str, Any]:
+def check(ip_dir: Path, *, require_locked: bool = False, require_packets: bool = False, require_lifecycle: bool = False) -> dict[str, Any]:
     hard_gate = require_locked or require_packets or is_locked(ip_dir)
     packets_dir = ip_dir / PACKET_DIR
     rtl_packets = sorted(packets_dir.glob("rtl__*.json")) if packets_dir.is_dir() else []
@@ -110,9 +142,9 @@ def check(ip_dir: Path, *, require_locked: bool = False, require_packets: bool =
         issues.append(issue("TB_PACKET_MISSING", "TB implementation dispatch needs generated tb__*.json authoring packet.", str(packets_dir)))
 
     for path in rtl_packets:
-        issues.extend(check_rtl_packet(path, read_json(path), hard_gate=hard_gate))
+        issues.extend(check_rtl_packet(path, read_json(path), ip_dir=ip_dir, hard_gate=hard_gate, require_lifecycle=require_lifecycle))
     for path in tb_packets:
-        issues.extend(check_tb_packet(path, read_json(path), hard_gate=hard_gate))
+        issues.extend(check_tb_packet(path, read_json(path), ip_dir=ip_dir, hard_gate=hard_gate, require_lifecycle=require_lifecycle))
 
     next_actions: list[str] = []
     if issues:
@@ -129,6 +161,7 @@ def check(ip_dir: Path, *, require_locked: bool = False, require_packets: bool =
         "scope_locked": is_locked(ip_dir),
         "require_locked": require_locked,
         "require_packets": require_packets,
+        "require_lifecycle": require_lifecycle,
         "hard_gate": hard_gate,
         "counts": {"rtl_packets": len(rtl_packets), "tb_packets": len(tb_packets), "issues": len(issues)},
         "issues": issues,
@@ -141,10 +174,16 @@ def main() -> int:
     parser.add_argument("--ip-dir", required=True)
     parser.add_argument("--require-locked", action="store_true")
     parser.add_argument("--require-packets", action="store_true", help="Require RTL and TB role packets even if scope is draft.")
+    parser.add_argument("--require-lifecycle", action="store_true", help="Require lifecycle_input_refs and approved/current lifecycle eligibility.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    result = check(Path(args.ip_dir), require_locked=args.require_locked, require_packets=args.require_packets)
+    result = check(
+        Path(args.ip_dir),
+        require_locked=args.require_locked,
+        require_packets=args.require_packets,
+        require_lifecycle=args.require_lifecycle,
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif result["status"] == "pass":

@@ -211,10 +211,10 @@ Use `.codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json` as the
 verification strategy screen for `ontology/verification_plan.yaml`. After lock,
 TB implementation should consume the verification plan rather than define the
 proof strategy it is trying to satisfy.
-Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json`
+Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --require-lifecycle --json`
 before RTL/TB native subagent dispatch to ensure `oag.compile` produced
 role-specific `rtl__*.json` and `tb__*.json` packets with independent truth
-sources.
+sources and approved/current lifecycle inputs.
 Use `.codex/scripts/oag_lifecycle_check.py --ip-dir <ip> --consumer rtl_authoring_packet --json`
 or `--consumer tb_authoring_packet` before handing artifacts to RTL/TB workers.
 Lifecycle checks are fail-closed: draft/candidate/stale artifacts, missing

@@ -218,6 +218,18 @@ def run_baseline_check(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_authoring_packet_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(AUTHORING_PACKET_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
 def run_main_write_gate(ip: Path, *, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     if project_root:
@@ -1015,6 +1027,106 @@ def test_artifact_lifecycle_checker(tmp_root: Path) -> None:
     assert "LIFECYCLE_APPROVAL_REF" in bad_codes
 
 
+def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
+    ip = tmp_root / "packet_lifecycle_ip"
+    packet_dir = ip / "ontology" / "generated" / "authoring_packets"
+    packet_dir.mkdir(parents=True)
+    (ip / "ontology").mkdir(exist_ok=True)
+    lifecycle = {
+        "schema_version": "oag_artifact_lifecycle.v1",
+        "artifacts": [
+            {
+                "id": "ontology/contracts.yaml",
+                "path": "ontology/contracts.yaml",
+                "granularity": "file",
+                "processing_stage": "canonical",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/contracts_review.json",
+                "derived_from": ["ontology/requirements.yaml"],
+                "allowed_consumers": ["rtl_authoring_packet", "tb_authoring_packet"],
+            },
+            {
+                "id": "ontology/decision_matrix.yaml:D001",
+                "path": "ontology/decision_matrix.yaml",
+                "object_id": "D001",
+                "granularity": "object",
+                "processing_stage": "canonical",
+                "approval_state": "candidate",
+                "validity_state": "current",
+                "derived_from": ["req/source_claims.yaml:SRC001"],
+                "allowed_consumers": ["clarification_agent"],
+            },
+            {
+                "id": "rtl/top.sv",
+                "path": "rtl/top.sv",
+                "granularity": "file",
+                "processing_stage": "serving",
+                "approval_state": "approved",
+                "validity_state": "current",
+                "approval_ref": "ontology/validations/rtl_review.json",
+                "derived_from": ["ontology/generated/authoring_packets/rtl__demo.json"],
+                "allowed_consumers": ["rtl_agent"],
+            },
+        ],
+    }
+    (ip / "ontology" / "artifact_lifecycle.json").write_text(
+        json.dumps(lifecycle, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    rtl_packet = {
+        "schema_version": "oag_rtl_authoring_packet.v1",
+        "packet_type": "rtl_authoring_packet",
+        "ip": "packet_lifecycle_ip",
+        "allowed_truth_sources": ["ontology/contracts.yaml"],
+        "forbidden_sources": ["tb", "sim", "dut_output"],
+        "contract_refs_to_implement": ["CONTRACT_DEMO"],
+        "behavior_refs_implemented_target": ["behavior_model.demo"],
+        "ppa_notes_required": True,
+        "cdc_rdc_notes_required": True,
+        "lifecycle_input_refs": ["ontology/contracts.yaml"],
+    }
+    tb_packet = {
+        "schema_version": "oag_tb_authoring_packet.v1",
+        "packet_type": "tb_authoring_packet",
+        "ip": "packet_lifecycle_ip",
+        "expected_source_policy": "contract_oracle_only",
+        "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation"],
+        "contract_refs": ["CONTRACT_DEMO"],
+        "scenario_refs": ["SCN_DEMO"],
+        "scoreboard_row_refs": ["EVT_DEMO"],
+        "lifecycle_input_refs": ["ontology/contracts.yaml"],
+    }
+    rtl_path = packet_dir / "rtl__demo.json"
+    tb_path = packet_dir / "tb__demo.json"
+    rtl_path.write_text(json.dumps(rtl_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tb_path.write_text(json.dumps(tb_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    good = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--require-lifecycle", "--json")
+    assert good.returncode == 0, good.stderr or good.stdout
+    assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    rtl_packet["lifecycle_input_refs"] = ["ontology/decision_matrix.yaml:D001"]
+    rtl_path.write_text(json.dumps(rtl_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    bad_rtl = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--require-lifecycle", "--json")
+    assert bad_rtl.returncode != 0, bad_rtl.stdout
+    assert any(
+        item["code"] == "PACKET_LIFECYCLE_BLOCKED"
+        for item in json.loads(bad_rtl.stdout)["issues"]
+    ), bad_rtl.stdout
+
+    rtl_packet["lifecycle_input_refs"] = ["ontology/contracts.yaml"]
+    rtl_path.write_text(json.dumps(rtl_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tb_packet["lifecycle_input_refs"] = ["rtl/top.sv"]
+    tb_path.write_text(json.dumps(tb_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    bad_tb = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--require-lifecycle", "--json")
+    assert bad_tb.returncode != 0, bad_tb.stdout
+    assert any(
+        item["code"] == "TB_PACKET_RTL_DERIVED_LIFECYCLE_INPUT"
+        for item in json.loads(bad_tb.stdout)["issues"]
+    ), bad_tb.stdout
+
+
 def test_baseline_manifest_checker(tmp_root: Path) -> None:
     import yaml  # type: ignore
 
@@ -1291,6 +1403,7 @@ def main() -> int:
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
+        test_authoring_packet_lifecycle_firewall(Path(tmp))
         test_baseline_manifest_checker(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
