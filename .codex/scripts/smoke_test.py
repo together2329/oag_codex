@@ -16,6 +16,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = ROOT.parent
 OAG = ROOT / "scripts" / "oag_cli.py"
+LOOP_HOOK = ROOT / "scripts" / "oag_loop_hook.py"
+LOOP_RUNNER = ROOT / "scripts" / "oag_loop_runner.py"
 GRAPH = ROOT / "scripts" / "oag_graph.py"
 MIGRATE_LAYOUT = ROOT / "scripts" / "oag_migrate_layout.py"
 PORTABLE_DB = ROOT / "scripts" / "oag_portable_db.py"
@@ -119,6 +121,30 @@ def call_process(payload: dict) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(OAG), "call", "--json", json.dumps(payload)],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_loop_hook(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(LOOP_HOOK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_loop_runner(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(LOOP_RUNNER), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -3179,6 +3205,85 @@ def main() -> int:
         assert sim_config["result"]["updates"]["hook_auto_continue_until"] == "sim", sim_config
         sim_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
         assert sim_stop["result"]["should_continue"] is True, sim_stop
+        bounded_rtl = call(
+            {
+                "tool": "oag.run.next",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "run_id": limit_run_id,
+                    "loop_policy": {"until": "rtl"},
+                },
+            }
+        )
+        assert bounded_rtl["result"]["next_batch"] is None, bounded_rtl
+        assert bounded_rtl["result"]["loop_stop_reason"] == "boundary_reached", bounded_rtl
+        hook_rtl = run_loop_hook("--ip-dir", str(limit_ip), "--run-id", limit_run_id, "--until", "rtl", "--json")
+        assert hook_rtl.returncode == 0, hook_rtl.stderr or hook_rtl.stdout
+        hook_rtl_json = json.loads(hook_rtl.stdout)
+        assert hook_rtl_json["decision"] == "stop", hook_rtl_json
+        assert hook_rtl_json["reason"] == "boundary_reached", hook_rtl_json
+        hook_tb = run_loop_hook(
+            "--ip-dir",
+            str(limit_ip),
+            "--run-id",
+            limit_run_id,
+            "--until",
+            "tb",
+            "--requirement",
+            "REQ_DEMO_COUNTER_CX1_001",
+            "--json",
+        )
+        assert hook_tb.returncode == 0, hook_tb.stderr or hook_tb.stdout
+        hook_tb_json = json.loads(hook_tb.stdout)
+        assert hook_tb_json["decision"] == "continue", hook_tb_json
+        tb_batch = hook_tb_json["recommended_batch"]
+        assert tb_batch["boundary_stage"] == "evidence", hook_tb_json
+        assert "REQ_DEMO_COUNTER_CX1_001" in tb_batch["requirements"], hook_tb_json
+        bad_req = run_loop_hook(
+            "--ip-dir",
+            str(limit_ip),
+            "--run-id",
+            limit_run_id,
+            "--until",
+            "tb",
+            "--requirement",
+            "REQ_DOES_NOT_EXIST",
+            "--json",
+        )
+        assert bad_req.returncode == 0, bad_req.stderr or bad_req.stdout
+        bad_req_json = json.loads(bad_req.stdout)
+        assert bad_req_json["decision"] == "stop", bad_req_json
+        assert bad_req_json["reason"] == "no_runnable_batch", bad_req_json
+        loop_stop = call(
+            {
+                "tool": "oag.stop_check",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "run_id": limit_run_id,
+                    "loop_policy": {"until": "rtl"},
+                },
+            }
+        )
+        assert loop_stop["result"]["should_continue"] is False, loop_stop
+        assert loop_stop["result"]["reason"] == "boundary_reached", loop_stop
+        runner = run_loop_runner(
+            "--ip-dir",
+            str(limit_ip),
+            "--run-id",
+            limit_run_id,
+            "--until",
+            "tb",
+            "--requirement",
+            "REQ_DEMO_COUNTER_CX1_001",
+            "--mode",
+            "plan_only",
+            "--json",
+        )
+        assert runner.returncode == 0, runner.stderr or runner.stdout
+        runner_json = json.loads(runner.stdout)
+        assert runner_json["decision"] == "continue", runner_json
+        assert runner_json["reason"] == "plan_available", runner_json
+        assert Path(runner_json["loop_decision_path"]).is_file(), runner_json
         none_config = call(
             {
                 "tool": "oag.configure",

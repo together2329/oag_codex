@@ -1,8 +1,9 @@
 # Bounded Loop Hook Integration Plan
 
 This plan connects the bounded open-item planner to the product OAG runtime
-surface under `.codex/`. It is an implementation plan, not a completed runtime
-contract.
+surface under `.codex/`. Phase 1 is implemented as a boundary-aware planning,
+hook-decision, and plan-only/dispatch-safe runner surface. It is not yet an
+automatic RTL/TB/ROCEV execution contract.
 
 ## Goal
 
@@ -17,6 +18,29 @@ python3 .codex/scripts/oag_loop_runner.py --ip-dir <ip> --until record --owner-m
 The loop must stop at the requested boundary even when broader open work exists.
 The planner remains the source of truth; hooks and runners only consume planner
 decisions.
+
+## Implementation Status
+
+Implemented in Phase 1:
+
+- `scripts/oag_loop_core.py` parses loop policy, projects graph-ready tasks into
+  bounded planner batches, and emits stable stop reasons.
+- `scripts/oag_loop_hook.py` emits `continue` or `stop` JSON by calling
+  `oag.run.next` with a loop policy.
+- `scripts/oag_loop_runner.py` supports `plan_only` and `dispatch` decisions and
+  writes `ontology/runs/<run_id>/loop_decision.json`.
+- `oag.run.next` returns `next_batch`, `loop_policy`, `loop_plan`, and
+  `loop_stop_reason` only when a loop policy is active.
+- `oag.stop_check` stops on loop boundaries before advancing beyond the selected
+  boundary.
+- `oag.configure` can persist or clear `execution_policy.loop_policy`.
+
+Deferred:
+
+- automatic RTL/TB/evidence execution;
+- automatic ROCEV record execution;
+- Codex stop-hook automatic invocation of `oag_loop_hook.py`;
+- wavefront materialization directly from `next_batch`.
 
 ## Existing Surfaces
 
@@ -245,13 +269,14 @@ policy."
 
 ## Implementation Order
 
-1. Add the loop policy parser and JSON schema coverage.
-2. Add `oag_loop_hook.py` in `plan_only` mode.
+1. Add the loop policy parser and JSON schema coverage. Phase 1 implements the
+   parser and runtime schema versions; standalone JSON schema coverage remains
+   deferred.
+2. Add `oag_loop_hook.py` in `plan_only` mode. Done.
 3. Add smoke tests for `--until rtl`, `--until tb`, requirement filtering,
    owner filtering, and `--limit`.
-4. Add `oag_loop_runner.py --mode plan_only` with `max_iterations` and stop
-   reason reporting.
-5. Teach `oag.run.next` to include `next_batch` when loop policy is active.
+4. Add `oag_loop_runner.py --mode plan_only` with stop reason reporting. Done.
+5. Teach `oag.run.next` to include `next_batch` when loop policy is active. Done.
 6. Add dispatch materialization for RTL/TB/evidence jobs.
 7. Allow `VALIDATION_RECORD_JOB` execute mode only after evidence freshness,
    graph dependency, and parent authority checks pass.
@@ -281,4 +306,3 @@ policy."
 - Do not auto-lock targets.
 - Do not auto-run independent reviewer or signoff gates.
 - Do not let main-agent writes bypass native subagent dispatch after lock.
-

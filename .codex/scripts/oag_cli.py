@@ -49,6 +49,11 @@ from oag_run_authority import (  # noqa: E402
     require_record_authority,
 )
 from oag_run_promotion import IntegrationPromotionContext, promote_integration_merge  # noqa: E402
+from oag_loop_core import (  # noqa: E402
+    build_bounded_plan,
+    loop_policy_storage,
+    resolve_loop_policy,
+)
 
 
 RESPONSE_SCHEMA = "oag_tool_response.v1"
@@ -7742,6 +7747,64 @@ def _policy_allows_action(ip: Path, action: dict[str, Any]) -> tuple[bool, dict[
     }
 
 
+def _loop_policy_for_arguments(ip: Path, arguments: dict[str, Any], *, force_active: bool = False) -> dict[str, Any]:
+    return resolve_loop_policy(ip, arguments, force_active=force_active)
+
+
+def _apply_loop_projection(ip: Path, arguments: dict[str, Any], action: dict[str, Any]) -> dict[str, Any] | None:
+    policy = _loop_policy_for_arguments(ip, arguments)
+    if not policy.get("active"):
+        return None
+    plan = build_bounded_plan(ip, action, policy)
+    batch = plan.get("recommended_batch") if isinstance(plan.get("recommended_batch"), dict) else None
+    action["loop_policy"] = plan.get("policy") if isinstance(plan.get("policy"), dict) else loop_policy_storage(policy)
+    action["loop_plan"] = plan
+    action["loop_stop_reason"] = "" if batch else str(plan.get("stop_reason") or "no_runnable_batch")
+    action["next_batch"] = batch
+    if not batch:
+        action["prompt_block"] = ""
+    return plan
+
+
+def _loop_fields_for_response(plan: dict[str, Any] | None, action: dict[str, Any]) -> dict[str, Any]:
+    if not plan and not isinstance(action.get("next_batch"), dict) and not isinstance(action.get("loop_policy"), dict):
+        return {}
+    return {
+        "next_batch": action.get("next_batch") if isinstance(action.get("next_batch"), dict) else None,
+        "loop_policy": action.get("loop_policy") if isinstance(action.get("loop_policy"), dict) else {},
+        "loop_stop_reason": str(action.get("loop_stop_reason") or ""),
+        "loop_plan": plan if isinstance(plan, dict) else action.get("loop_plan") if isinstance(action.get("loop_plan"), dict) else {},
+    }
+
+
+def _bounded_loop_stop_response(
+    ip: Path,
+    state: dict[str, Any],
+    action: dict[str, Any],
+    plan: dict[str, Any],
+    *,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    stop_reason = str(reason or plan.get("stop_reason") or "boundary_reached")
+    return {
+        "schema_version": "oag_stop_check.v1",
+        "ip": ip.name,
+        "run_id": state.get("run_id"),
+        "should_continue": False,
+        "reason": stop_reason,
+        "next_action": action,
+        "next_batch": None,
+        "prompt_block": "",
+        "policy": {
+            "hook_auto_continue_until": _hook_auto_continue_until(ip),
+            "stop_hook_max_repeats": _stop_hook_max_repeats(ip),
+            "loop_policy": plan.get("policy") if isinstance(plan.get("policy"), dict) else {},
+            "loop_stop_reason": stop_reason,
+        },
+        "loop_plan": plan,
+    }
+
+
 def _run_target_row(ip: Path, arguments: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any] | None:
     matrix = _closure_matrix(ip)
     rows = [row for row in matrix.get("rows", []) if isinstance(row, dict)]
@@ -7986,7 +8049,7 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             "parked": "run_parked",
             "needs_human": "needs_human_decision",
         }
-        return {
+        result = {
             "schema_version": "oag_run_next.v1",
             "ip": ip.name,
             "run_id": state["run_id"],
@@ -7998,6 +8061,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             "terminal": True,
             "reason": reason_by_status.get(status, "run_terminal"),
         }
+        result.update(_loop_fields_for_response(None, action))
+        return result
     if not _is_legacy_no_graph_run(state):
         if _run_graph_mode(state) != "graph_backed":
             graph_status = {
@@ -8016,6 +8081,7 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         else:
             action = _run_graph_action_from_state(ip, state)
         action["prompt_block"] = _format_run_prompt_block(action)
+        loop_plan = _apply_loop_projection(ip, arguments, action)
         state["iteration"] = int(state.get("iteration") or 0) + 1
         state["status"] = str(action.get("status") or "in_progress")
         state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8024,7 +8090,7 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         state["next_action"] = action
         _save_run_state(ip, state)
         _append_run_history(ip, str(state["run_id"]), {"event": "next", "status": state["status"], "next_action": action})
-        return {
+        result = {
             "schema_version": "oag_run_next.v1",
             "ip": ip.name,
             "run_id": state["run_id"],
@@ -8044,9 +8110,12 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             "next_action": action,
             "prompt_block": action["prompt_block"],
         }
+        result.update(_loop_fields_for_response(loop_plan, action))
+        return result
     action_args = {**state, **arguments, "run_id": state["run_id"]}
     action = _run_action_from_state(ip, action_args, state)
     action["prompt_block"] = _format_run_prompt_block(action)
+    loop_plan = _apply_loop_projection(ip, arguments, action)
     state["iteration"] = int(state.get("iteration") or 0) + 1
     state["status"] = str(action.get("status") or "in_progress")
     state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8055,7 +8124,7 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
     state["next_action"] = action
     _save_run_state(ip, state)
     _append_run_history(ip, str(state["run_id"]), {"event": "next", "status": state["status"], "next_action": action})
-    return {
+    result = {
         "schema_version": "oag_run_next.v1",
         "ip": ip.name,
         "run_id": state["run_id"],
@@ -8065,6 +8134,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         "next_action": action,
         "prompt_block": action["prompt_block"],
     }
+    result.update(_loop_fields_for_response(loop_plan, action))
+    return result
 
 
 def _run_record(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -8354,6 +8425,11 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
         }
     stored_action = state.get("next_action") if isinstance(state.get("next_action"), dict) else {}
     if stored_action:
+        loop_policy = _loop_policy_for_arguments(ip, arguments)
+        if loop_policy.get("active"):
+            loop_plan = build_bounded_plan(ip, stored_action, loop_policy)
+            if not isinstance(loop_plan.get("recommended_batch"), dict):
+                return _bounded_loop_stop_response(ip, state, stored_action, loop_plan)
         allowed, policy = _policy_allows_action(ip, stored_action)
         if not allowed:
             return {
@@ -8368,6 +8444,16 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
             }
     next_response = _run_next({**arguments, "ip_dir": str(ip), "run_id": str(state.get("run_id") or "")})
     next_action = next_response.get("next_action") if isinstance(next_response.get("next_action"), dict) else {}
+    if _loop_policy_for_arguments(ip, arguments).get("active") and not isinstance(next_response.get("next_batch"), dict):
+        loop_plan = next_response.get("loop_plan") if isinstance(next_response.get("loop_plan"), dict) else {}
+        if loop_plan:
+            return _bounded_loop_stop_response(
+                ip,
+                state,
+                next_action,
+                loop_plan,
+                reason=str(next_response.get("loop_stop_reason") or loop_plan.get("stop_reason") or "boundary_reached"),
+            )
     allowed, policy = _policy_allows_action(ip, next_action)
     if not allowed:
         return {
@@ -8387,8 +8473,14 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
         "should_continue": True,
         "reason": "run_incomplete",
         "next_action": next_action,
+        "next_batch": next_response.get("next_batch") if isinstance(next_response.get("next_batch"), dict) else None,
         "prompt_block": next_response.get("prompt_block") or "",
-        "policy": policy,
+        "policy": {
+            **policy,
+            "loop_policy": next_response.get("loop_policy") if isinstance(next_response.get("loop_policy"), dict) else {},
+            "loop_stop_reason": str(next_response.get("loop_stop_reason") or ""),
+        },
+        "loop_plan": next_response.get("loop_plan") if isinstance(next_response.get("loop_plan"), dict) else {},
     }
 
 
@@ -8427,8 +8519,40 @@ def _configure(arguments: dict[str, Any]) -> dict[str, Any]:
         updates["stop_hook_max_repeats"] = execution["stop_hook_max_repeats"]
         if old != execution["stop_hook_max_repeats"]:
             changed["stop_hook_max_repeats"] = execution["stop_hook_max_repeats"]
+    clear_loop_policy = _truthy_policy(arguments.get("clear_loop_policy") or arguments.get("loop_clear"), default=False)
+    loop_arg_names = {
+        "loop_policy",
+        "loop_until",
+        "loop_boundary",
+        "loop_requirement",
+        "loop_requirements",
+        "loop_obligation",
+        "loop_obligations",
+        "loop_owner",
+        "loop_owner_module",
+        "loop_owner_modules",
+        "loop_job_type",
+        "loop_job_types",
+        "loop_limit",
+        "loop_max_iterations",
+        "loop_mode",
+    }
+    if clear_loop_policy:
+        old = execution.pop("loop_policy", None)
+        updates["loop_policy"] = None
+        if old is not None:
+            changed["loop_policy"] = None
+    elif any(name in arguments for name in loop_arg_names):
+        old = execution.get("loop_policy")
+        policy = loop_policy_storage(_loop_policy_for_arguments(ip, arguments, force_active=True))
+        execution["loop_policy"] = policy
+        updates["loop_policy"] = policy
+        if old != policy:
+            changed["loop_policy"] = policy
     if execution:
         policies["execution_policy"] = execution
+    elif "execution_policy" in policies:
+        policies.pop("execution_policy", None)
 
     graph = policies.get("graph_policy") if isinstance(policies.get("graph_policy"), dict) else {}
     graph = dict(graph)

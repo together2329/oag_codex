@@ -81,6 +81,9 @@ Primary assets:
 - `hooks/codex_subagent_oag_gate.py`
 - `hooks.json`
 - `scripts/oag_cli.py`
+- `scripts/oag_loop_core.py`
+- `scripts/oag_loop_hook.py`
+- `scripts/oag_loop_runner.py`
 - `scripts/oag_scaffold_ip.py`
 - `scripts/oag_graph.py`
 - `scripts/oag_portable_db.py`
