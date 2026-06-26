@@ -1,8 +1,86 @@
-# IP Dev Agent OAG Architecture
+# IP Dev Agent OAG Pack
 
 This OAG pack supports ontology-first hardware IP development. OAG keeps design
 truth, generated work inputs, parallel execution, and closure evidence separated
 so agents can implement and verify IP without silently changing requirements.
+
+## What This Repository Is
+
+This repository maintains the project-local **OAG (Ontology Agent Gateway)** pack
+for Codex under `.codex/`. It is the workflow/control pack for hardware IP
+development, not a single IP implementation.
+
+The tracked source of truth is the pack itself:
+
+- Pack root: `.codex/`
+- Agent operating rules: `.codex/AGENTS.md`
+- Hooks and configuration: `.codex/hooks.json`, `.codex/config.toml`
+- OAG workflow scripts: `.codex/scripts/`
+- OAG skills, agents, policies, rules, and schemas: `.codex/skills/`,
+  `.codex/agents/`, `.codex/oag/`, `.codex/rules/`, `.codex/schemas/`
+
+Individual IP workspaces can exist on disk for development or testing, but the
+pack is the reusable machinery that controls intake, ontology, implementation
+handoff, evidence, and closure.
+
+## The Problem OAG Solves
+
+When an LLM implements hardware IP directly from prose, it can silently
+reinterpret the requirement: timing, reset behavior, address maps, protocol
+priority, CDC/RDC assumptions, or verification scope can drift without an
+explicit decision. OAG breaks that loop by separating **design truth** from
+**implementation** from **evidence**.
+
+The completion path is ROCEV:
+
+```text
+Requirement -> Obligation -> Contract -> Evidence -> Validation -> Decision
+```
+
+Green tests are not enough. A completion claim must trace back to locked
+requirements/contracts, fresh evidence, validation, and an explicit decision.
+Generated work packets are read-only inputs; if a packet is wrong, fix the
+authored ontology and compile again.
+
+## Repository Layout
+
+```text
+ip_dev/
+├── README.md
+└── .codex/
+    ├── AGENTS.md          # agent-facing OAG operating rules
+    ├── config.toml        # pack feature/configuration flags
+    ├── hooks.json         # Codex hook wiring
+    ├── agents/            # bounded OAG agent roles
+    ├── skills/            # invocable OAG workflows
+    ├── scripts/           # oag_cli.py, compilers, gates, validators
+    ├── hooks/             # context, stop, and subagent guard hooks
+    ├── rules/             # hard invariants and methodology rules
+    ├── oag/               # policy and reasoning documents
+    ├── schemas/           # JSON schemas for OAG contracts and receipts
+    └── evals/             # pack evaluation cases
+```
+
+## Codex Integration
+
+OAG is implemented through Codex-native surfaces rather than a single monolithic
+tool.
+
+| Surface | Where | Role |
+| --- | --- | --- |
+| Project rules | `.codex/AGENTS.md`, `.codex/rules/*.md` | OAG-mode behavior and hard invariants |
+| Skills | `.codex/skills/<name>/SKILL.md` | task-specific workflows such as intake, contract projection, authoring packets, wavefront, and evidence closure |
+| Agents | `.codex/agents/*.toml` | bounded roles for RTL, TB, simulation, coverage, evidence, gate review, and ontology work |
+| Hooks | `.codex/hooks/`, `.codex/hooks.json` | context injection, draft-pressure checks, stop gates, and subagent guards |
+| Scripts | `.codex/scripts/*.py` | `oag_cli.py` tools, compilers, checkers, dispatch, release checks, and validators |
+| Schemas | `.codex/schemas/*.json` | machine-checkable contracts for OAG inputs, packets, receipts, evidence, and decisions |
+| Policy docs | `.codex/oag/*.md` | methodology, modeling, contract strength, CDC/RDC, PPA, wavefront, and closure rationale |
+
+Use this README to understand the pack shape, then use `.codex/AGENTS.md` for
+agent behavior rules and `.codex/scripts/oag_cli.py` plus the checkers for
+actual workflow execution.
+
+## Architecture Summary
 
 The short version:
 
