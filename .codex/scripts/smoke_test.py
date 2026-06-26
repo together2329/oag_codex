@@ -29,6 +29,7 @@ SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
 EXEC_AUTO_RESEARCH = ROOT / "scripts" / "oag_exec_auto_research.py"
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
 WAVEFRONT = ROOT / "scripts" / "oag_wavefront.py"
+DECISION_HARNESS = ROOT / "scripts" / "oag_decision_harness.py"
 MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
@@ -223,6 +224,20 @@ def run_wavefront(*args: str, project_root: Path | None = None) -> subprocess.Co
         env["OAG_PROJECT_ROOT"] = str(project_root)
     return subprocess.run(
         [sys.executable, str(WAVEFRONT), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_decision_harness(*args: str, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(DECISION_HARNESS), *args],
         text=True,
         capture_output=True,
         check=False,
@@ -1269,6 +1284,70 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     ip.mkdir()
     run_id = "RUN_WAVE_SMOKE"
 
+    def approve_wavefront_task(task_id: str, *barrier_outputs: str) -> None:
+        review_pending = run_wavefront(
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "review_pending",
+            "--receipt",
+            str(ip / "knowledge" / "subagents" / f"{task_id.lower()}_receipt.json"),
+            "--json",
+            project_root=project,
+        )
+        assert review_pending.returncode == 0, review_pending.stderr or review_pending.stdout
+        decision_id = f"DEC_{task_id}_SMOKE"
+        decision_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--decision-id",
+            decision_id,
+            "--decision-type",
+            "custom_review",
+            "--verdict",
+            "approved",
+            "--summary",
+            f"{task_id} handoff reviewed by smoke test.",
+            "--checked-against",
+            f"{ip}/ontology/runs/{run_id}/wavefront_task_graph.json#{task_id}",
+            "--preserved",
+            "declared wavefront barrier semantics",
+            "--json",
+        ]
+        for token in barrier_outputs:
+            decision_args.extend(["--barrier-output", token])
+        decision = run_decision_harness(*decision_args, project_root=project)
+        assert decision.returncode == 0, decision.stderr or decision.stdout
+        decision_path = json.loads(decision.stdout)["path"]
+        handoff_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "handoff_pass",
+            "--decision",
+            decision_path,
+            "--json",
+        ]
+        for token in barrier_outputs:
+            handoff_args.extend(["--barrier-output", token])
+        handoff = run_wavefront(*handoff_args, project_root=project)
+        assert handoff.returncode == 0, handoff.stderr or handoff.stdout
+
     plan = run_wavefront(
         "plan",
         "--ip-dir",
@@ -1369,7 +1448,7 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         for item in json.loads(bad_barrier_record.stdout)["issues"]
     ), bad_barrier_record.stdout
 
-    record_common = run_wavefront(
+    missing_decision_record = run_wavefront(
         "record",
         "--ip-dir",
         str(ip),
@@ -1381,28 +1460,15 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         "handoff_pass",
         "--barrier-output",
         "tb_common_import_clean",
-        "--barrier-output",
-        "helper_api_manifest",
         "--json",
         project_root=project,
     )
-    assert record_common.returncode == 0, record_common.stderr or record_common.stdout
-    record_scoreboard = run_wavefront(
-        "record",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_SCOREBOARD_SCHEMA",
-        "--status",
-        "handoff_pass",
-        "--barrier-output",
-        "scoreboard_schema_frozen",
-        "--json",
-        project_root=project,
-    )
-    assert record_scoreboard.returncode == 0, record_scoreboard.stderr or record_scoreboard.stdout
+    assert missing_decision_record.returncode != 0, missing_decision_record.stdout
+    missing_decision_codes = {item["code"] for item in json.loads(missing_decision_record.stdout)["issues"]}
+    assert "HANDOFF_DECISION_REQUIRED" in missing_decision_codes, missing_decision_record.stdout
+
+    approve_wavefront_task("TB_COMMON_API", "tb_common_import_clean", "helper_api_manifest")
+    approve_wavefront_task("TB_SCOREBOARD_SCHEMA", "scoreboard_schema_frozen")
 
     scenario_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert scenario_ready.returncode == 0, scenario_ready.stderr or scenario_ready.stdout
@@ -1421,22 +1487,7 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         project_root=project,
     )
     assert claim_scenario.returncode == 0, claim_scenario.stderr or claim_scenario.stdout
-    record_scenario = run_wavefront(
-        "record",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_SCENARIO_A",
-        "--status",
-        "handoff_pass",
-        "--barrier-output",
-        "scenario_import_clean",
-        "--json",
-        project_root=project,
-    )
-    assert record_scenario.returncode == 0, record_scenario.stderr or record_scenario.stdout
+    approve_wavefront_task("TB_SCENARIO_A", "scenario_import_clean")
     verify = run_wavefront("verify", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert verify.returncode == 0, verify.stderr or verify.stdout
 
