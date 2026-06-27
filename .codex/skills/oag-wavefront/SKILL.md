@@ -32,9 +32,13 @@ are satisfied.
 11. Use read-only triage before repair when simulation fails.
 12. For implementation gaps, consume `implementation_review` evidence and run
     highest-priority dependency-ready gaps first.
-13. Close completed child threads after their receipts are integrated or
+13. Treat each obligation-to-contract closure edge as a todo-like item with
+    owner, criteria, required evidence, approval policy, and approved reason.
+    Stop/run prompts should expose the open edge set so parent orchestration can
+    choose all open items, one item, a scoped module, or a bounded batch.
+14. Close completed child threads after their receipts are integrated or
     rejected, before opening another fan-out batch.
-14. Let parent/gate decide closure.
+15. Let parent/gate decide closure.
 
 ## Commands
 
@@ -142,6 +146,8 @@ or whose target artifacts overlap within the batch.
 - Worker receipts do not unlock downstream work; they move tasks to
   `review_pending`.
 - No approved reviewer decision, no `handoff_pass`.
+- No completion claim without an explicit approval reason on the final OAG
+  decision receipt.
 - No new fan-out batch while completed child threads remain open after receipt
   integration.
 - Do not record `handoff_pass` before the child receipt has passed the stop

@@ -648,24 +648,31 @@ Before claiming completion:
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
 python3 .codex/scripts/oag_closure_check.py --ip-dir <ip>
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"approval":{"approved":true,"reason":"Human or owner-approved completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 For an active run, prefer:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","approval":{"approved":true,"reason":"Human or owner-approved run completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 If a stop hook is available, call `oag.stop_check`. If it returns
 `should_continue: true`, continue with the returned prompt block instead of
-claiming completion. If checkpoint repeats the same blocker three times, the run
-status becomes `needs_human`.
+claiming completion. The prompt block is dynamic: it includes the current loop
+policy, ready/blocked wavefront tasks, dispatch candidates, active locks, and
+open closure edges. Each open obligation-to-contract edge should name owner,
+required evidence, approval policy, and criteria so the next action is not
+inferred from prose alone. If checkpoint repeats the same blocker three times,
+the run status becomes `needs_human`.
 
 If `oag.decide` returns `allowed: false`, report the blocker instead of saying
 the IP is complete. If it returns `allowed: true`, the decision receipt under
 `ontology/validations/` is the durable completion decision. Completion actions
-are blocked unless `record_decision` is true.
+are blocked unless `record_decision` is true and the completion request carries
+an explicit approval reason through `approval.reason`, `approval_reason`, or a
+human actor with a non-empty reason. Do not close from tests, summaries, or
+inferred intent alone.
 
 `oag_closure_check.py` is the release-grade package gate: it requires a passing
 `oag.check`, no `oag.inspect` artifact gaps, a passing

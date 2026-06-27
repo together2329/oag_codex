@@ -92,6 +92,7 @@ def _close_run(ip: Path, run_id: str, *, intent: str) -> dict[str, Any]:
                 "run_id": run_id,
                 "stage": "sim",
                 "intent": intent,
+                "approval": {"approved": True, "reason": "eval owner approved run checkpoint completion"},
                 "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
             },
         }
@@ -1123,6 +1124,20 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
     )
     assert undecided["result"]["allowed"] is False, undecided
     assert undecided["result"]["reason"] == "decision_receipt_required", undecided
+    missing_approval = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "claim_complete",
+                "stage": "sim",
+                "record_decision": True,
+                "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
+            },
+        }
+    )
+    assert missing_approval["result"]["allowed"] is False, missing_approval
+    assert missing_approval["result"]["reason"] == "completion_approval_required", missing_approval
     decided = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -1131,6 +1146,7 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
                 "action": "claim_complete",
                 "stage": "sim",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved claim_complete"},
                 "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
             },
         }
@@ -1916,6 +1932,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -1952,6 +1969,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -1982,6 +2000,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }

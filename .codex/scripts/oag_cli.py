@@ -1655,6 +1655,33 @@ def _is_human_approved(value: dict[str, Any]) -> bool:
     return bool(approved_by and str(approved_by).strip())
 
 
+def _approval_reason_text(arguments: dict[str, Any]) -> str:
+    approval = arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {}
+    for source in (approval, arguments):
+        for key in ("reason", "approval_reason", "approved_reason", "summary", "rationale"):
+            text = str(source.get(key) or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _completion_approval(arguments: dict[str, Any], actor: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    reason = _approval_reason_text(arguments)
+    approval = arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {}
+    payload = {
+        "approval": approval,
+        "approved_by": arguments.get("approved_by"),
+        "reason": reason,
+    }
+    approved = _is_human_approved({"action": "completion_decision", "actor": actor, "payload": payload})
+    return approved and bool(reason), reason, {
+        "approved": bool(approved),
+        "reason": reason,
+        "approved_by": str(arguments.get("approved_by") or approval.get("approved_by") or ""),
+        "approval": approval,
+    }
+
+
 def _protected_snapshot_delta(ip: Path) -> list[str]:
     last = _last_ledger_entry(ip)
     if not isinstance(last, dict):
@@ -3772,6 +3799,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     req_ids = {str(item.get("id") or "") for item in reqs if item.get("id")}
     obl_ids = {str(item.get("id") or "") for item in obligations if item.get("id")}
     contract_ids = {str(item.get("id") or "") for item in contracts if item.get("id")}
+    contracts_by_id = {str(item.get("id") or ""): item for item in contracts if item.get("id")}
     rule_ids = {str(item.get("id") or "") for item in design_rules if item.get("id")}
     rule_kind_by_id = {str(item.get("id") or ""): str(item.get("kind") or "") for item in design_rules if item.get("id")}
     rule_kinds = {kind for kind in rule_kind_by_id.values() if kind}
@@ -3912,7 +3940,9 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         for cid in [str(item) for item in _as_list(obligation.get("contracts") or obligation.get("contract") or obligation.get("contract_ids")) if item]:
             if cid not in contract_ids:
                 issues.append(f"{oid}: contract ref not found: {cid}")
-            edges.append({"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True})
+            edge = {"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True}
+            edge.update(_closure_edge_attrs(contracts_by_id.get(cid)))
+            edges.append(edge)
 
     for contract in contracts:
         cid = str(contract.get("id") or "")
@@ -3927,6 +3957,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             if oid not in obl_ids:
                 issues.append(f"{cid}: obligation ref not found: {oid}")
             edge = {"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True}
+            edge.update(_closure_edge_attrs(contract))
             if edge not in edges:
                 edges.append(edge)
         if not _contract_has_evidence_declaration(contract):
@@ -6991,6 +7022,7 @@ def _write_decision_receipt(
     actor: dict[str, str],
     inspect: dict[str, Any],
     check: dict[str, Any],
+    approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     receipt_id = f"DEC_{_stamp()}_{_slug(action)}"
     rel = DECISION_RECEIPTS_REL / f"{receipt_id}.json"
@@ -7005,6 +7037,7 @@ def _write_decision_receipt(
         "reason": reason,
         "next_action": next_action,
         "actor": actor,
+        "approval": approval if isinstance(approval, dict) else {},
         "created_at": _now(),
         "policy": {"closure_profile": _policy_profile(ip)},
         "evidence": {
@@ -7036,6 +7069,8 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
     scope_lock = _scope_lock_status(ip)
     inspect = _inspect(arguments)
     check = _check(arguments)
+    actor = _decision_actor(arguments)
+    approval_ok, _approval_reason, approval_payload = _completion_approval(arguments, actor)
     allowed = True
     reason = "allowed"
     next_action = ""
@@ -7080,6 +7115,10 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
             allowed = False
             reason = "decision_receipt_required"
             next_action = "rerun oag.decide with record_decision=true to write ontology/validations receipt"
+        if allowed and not approval_ok:
+            allowed = False
+            reason = "completion_approval_required"
+            next_action = "rerun oag.decide with approval.approved=true and a non-empty approval reason before closing the run"
     decision_receipt = None
     if arguments.get("record_decision") is True:
         decision_receipt = _write_decision_receipt(
@@ -7088,9 +7127,10 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
             allowed=allowed,
             reason=reason,
             next_action=next_action,
-            actor=_decision_actor(arguments),
+            actor=actor,
             inspect=inspect,
             check=check,
+            approval=approval_payload if action in VALID_COMPLETION_ACTIONS else {},
         )
     return {
         "schema_version": "oag_decision.v1",
@@ -7099,6 +7139,8 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
         "allowed": allowed,
         "reason": reason,
         "next_action": next_action,
+        "approval_required": action in VALID_COMPLETION_ACTIONS,
+        "approval": approval_payload if action in VALID_COMPLETION_ACTIONS else {},
         "policy": {"closure_profile": _policy_profile(_ip_dir(arguments))},
         "scope_lock": scope_lock,
         "inspect": inspect,
@@ -7654,6 +7696,7 @@ def _blocked_graph_tasks(graph: dict[str, Any], barriers: dict[str, Any], locks:
 def _graph_issue_action(ip: Path, state: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
     run_id = str(state.get("run_id") or "")
     issues = status.get("issues") if isinstance(status.get("issues"), list) else []
+    matrix = _closure_matrix(ip)
     return {
         "schema_version": "oag_run_graph_next_action.v1",
         "scheduler_schema_version": "oag_run_graph_scheduler.v1",
@@ -7683,7 +7726,8 @@ def _graph_issue_action(ip: Path, state: dict[str, Any], status: dict[str, Any])
         "active_locks": [],
         "dispatch_command_candidates": [],
         "graph_status": status,
-        "closure_matrix": _closure_matrix(ip),
+        "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "wavefront graph status=pass",
         "prompt_block": "",
     }
@@ -7721,6 +7765,7 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
         "commands": [candidate["command"] for candidate in dispatch_candidates],
         "required_evidence": _str_items(selected.get("required_evidence")),
     }
+    matrix = _closure_matrix(ip)
     return {
         "schema_version": "oag_run_graph_next_action.v1",
         "scheduler_schema_version": "oag_run_graph_scheduler.v1",
@@ -7740,7 +7785,8 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
         "active_locks": locks.get("locks", []),
         "dispatch_command_candidates": dispatch_candidates,
         "graph_status": status,
-        "closure_matrix": _closure_matrix(ip),
+        "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "oag.run.checkpoint allowed=true after graph tasks close",
         "prompt_block": "",
     }
@@ -7943,6 +7989,29 @@ def _apply_loop_projection(ip: Path, arguments: dict[str, Any], action: dict[str
     policy = _loop_policy_for_arguments(ip, arguments)
     if not policy.get("active"):
         return None
+    run_iteration = int(action.get("run_iteration") or 0)
+    max_iterations = int(policy.get("max_iterations") or 0)
+    if max_iterations > 0 and run_iteration > max_iterations:
+        plan = {
+            "schema_version": "oag_bounded_plan.v1",
+            "status": "pass",
+            "policy": loop_policy_storage(policy),
+            "recommended_batch": None,
+            "filtered_counts": {
+                "total_ready": 0,
+                "within_boundary": 0,
+                "after_scope_filter": 0,
+                "selected": 0,
+                "outside_boundary": 0,
+            },
+            "stop_reason": "max_iterations_reached",
+        }
+        action["loop_policy"] = plan["policy"]
+        action["loop_plan"] = plan
+        action["loop_stop_reason"] = "max_iterations_reached"
+        action["next_batch"] = None
+        action["prompt_block"] = ""
+        return plan
     plan = build_bounded_plan(ip, action, policy)
     batch = plan.get("recommended_batch") if isinstance(plan.get("recommended_batch"), dict) else None
     action["loop_policy"] = plan.get("policy") if isinstance(plan.get("policy"), dict) else loop_policy_storage(policy)
@@ -7952,6 +8021,13 @@ def _apply_loop_projection(ip: Path, arguments: dict[str, Any], action: dict[str
     if not batch:
         action["prompt_block"] = ""
     return plan
+
+
+def _refresh_loop_prompt(action: dict[str, Any]) -> None:
+    if action.get("loop_stop_reason") and not isinstance(action.get("next_batch"), dict):
+        action["prompt_block"] = ""
+        return
+    action["prompt_block"] = _format_run_prompt_block(action)
 
 
 def _loop_fields_for_response(plan: dict[str, Any] | None, action: dict[str, Any]) -> dict[str, Any]:
@@ -8041,6 +8117,7 @@ def _run_action_from_state(ip: Path, arguments: dict[str, Any], state: dict[str,
             },
             "blockers": [] if matrix.get("total") else [{"id": "BLK_NO_OBLIGATIONS", "text": "closure matrix has no obligations"}],
             "closure_matrix": matrix,
+            "closure_edges": _closure_edge_todos(ip, matrix),
             "stop_condition": "oag.run.checkpoint allowed=true",
             "prompt_block": "",
         }
@@ -8111,9 +8188,217 @@ def _run_action_from_state(ip: Path, arguments: dict[str, Any], state: dict[str,
         "blockers": blockers,
         "evidence_strength": evidence_strength,
         "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "oag.run.checkpoint allowed=true",
         "prompt_block": "",
     }
+
+
+def _closure_edge_todos(ip: Path, matrix: dict[str, Any]) -> list[dict[str, Any]]:
+    contracts_by_id = _contracts_by_id(ip)
+    edges: list[dict[str, Any]] = []
+    for row in matrix.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        obligation = str(row.get("obligation") or "").strip()
+        if not obligation:
+            continue
+        owner = _owner_for_obligation(ip, obligation)
+        records = _str_items(row.get("records"))
+        contracts = _str_items(row.get("contracts"))
+        if not contracts:
+            contracts = ["<missing_contract>"]
+        for contract_id in contracts:
+            contract = contracts_by_id.get(contract_id, {})
+            required_evidence = _contract_expected_evidence(contract) if contract else []
+            criteria = []
+            if contract_id == "<missing_contract>":
+                criteria.append("bind obligation to at least one contract")
+            else:
+                criteria.append("contract exists and remains bound to obligation")
+            if required_evidence:
+                criteria.append("required evidence exists and is fresh")
+            else:
+                criteria.append("contract declares auditable evidence or reviewer records a waiver")
+            criteria.append("closed ROCEV validation record links this obligation-contract edge")
+            closed = row.get("closed") is True
+            if closed and records:
+                approved_reason = "closed validation records: " + ", ".join(records[:4])
+            elif row.get("waived") is True:
+                approved_reason = "waived by ontology status"
+            else:
+                approved_reason = ""
+            edges.append(
+                {
+                    "schema_version": "oag_closure_edge_todo.v1",
+                    "id": f"edge.{_safe_filename(obligation)}.{_safe_filename(contract_id)}",
+                    "source": f"obligation::{obligation}",
+                    "target": f"contract::{contract_id}",
+                    "obligation": obligation,
+                    "contract": contract_id,
+                    "status": "closed" if closed else "open",
+                    "owner_module": str(owner.get("module") or ""),
+                    "owner_file": str(owner.get("file") or ""),
+                    "criteria": criteria,
+                    "required_evidence": required_evidence,
+                    "records": records,
+                    "approval_policy": "evidence_required",
+                    "approved": closed,
+                    "approved_reason": approved_reason,
+                }
+            )
+    edges.sort(key=lambda item: (item.get("status") == "closed", str(item.get("obligation") or ""), str(item.get("contract") or "")))
+    return edges
+
+
+def _closure_edge_attrs(contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    required_evidence = _contract_expected_evidence(contract or {}) if isinstance(contract, dict) else []
+    criteria = [
+        "contract exists and remains bound to obligation",
+        "required evidence exists and is fresh" if required_evidence else "contract declares auditable evidence or reviewer records a waiver",
+        "closed ROCEV validation record links this obligation-contract edge",
+    ]
+    return {
+        "closure_edge": True,
+        "approval_policy": "evidence_required",
+        "criteria": criteria,
+        "required_evidence": required_evidence,
+        "approved": False,
+        "approved_reason": "",
+    }
+
+
+def _clip_prompt_text(value: Any, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)] + "..."
+
+
+def _format_task_summary(task: dict[str, Any]) -> str:
+    parts = [
+        f"id={task.get('task_id') or task.get('id') or '<unknown>'}",
+        f"kind={task.get('kind') or task.get('next_action_kind') or '<unknown>'}",
+    ]
+    status = str(task.get("status") or "").strip()
+    if status:
+        parts.append(f"status={status}")
+    agent = str(task.get("agent_type") or "").strip()
+    if agent:
+        parts.append(f"agent={agent}")
+    obligation = str(task.get("obligation") or "").strip()
+    if obligation:
+        parts.append(f"obligation={obligation}")
+    contracts = _str_items(task.get("contracts"))
+    if contracts:
+        parts.append(f"contracts={','.join(contracts[:3])}")
+    owner = task.get("owner") if isinstance(task.get("owner"), dict) else {}
+    owner_module = str(task.get("owner_module") or owner.get("module") or "").strip()
+    if owner_module:
+        parts.append(f"owner={owner_module}")
+    allowed = _str_items(task.get("allowed_write_paths"))
+    shared = _str_items(task.get("shared_artifacts"))
+    if allowed:
+        parts.append(f"writes={','.join(allowed[:3])}")
+    if shared:
+        parts.append(f"shared={','.join(shared[:3])}")
+    deps = _str_items(task.get("depends_on") or task.get("deps"))
+    if deps:
+        parts.append(f"deps={','.join(deps[:4])}")
+    barriers = _str_items(task.get("barrier_outputs"))
+    if barriers:
+        parts.append(f"barriers={','.join(barriers[:4])}")
+    return _clip_prompt_text(" ".join(parts), 320)
+
+
+def _append_task_section(lines: list[str], title: str, tasks: Any, *, limit: int = 5) -> None:
+    if not isinstance(tasks, list) or not tasks:
+        return
+    lines.append(f"{title}={len(tasks)}")
+    for task in tasks[:limit]:
+        if isinstance(task, dict):
+            lines.append(f"- {_format_task_summary(task)}")
+        else:
+            lines.append(f"- {_clip_prompt_text(task)}")
+    if len(tasks) > limit:
+        lines.append(f"- ... {len(tasks) - limit} more")
+
+
+def _append_dispatch_candidates(lines: list[str], candidates: Any, *, limit: int = 3) -> None:
+    if not isinstance(candidates, list) or not candidates:
+        return
+    lines.append(f"dispatch_candidates={len(candidates)}")
+    for candidate in candidates[:limit]:
+        if isinstance(candidate, dict):
+            task_id = str(candidate.get("task_id") or "").strip()
+            command = _clip_prompt_text(candidate.get("command"), 260)
+            lines.append(f"- task={task_id or '<unknown>'} command={command}")
+        else:
+            lines.append(f"- {_clip_prompt_text(candidate, 260)}")
+    if len(candidates) > limit:
+        lines.append(f"- ... {len(candidates) - limit} more")
+
+
+def _append_loop_section(lines: list[str], action: dict[str, Any]) -> None:
+    policy = action.get("loop_policy") if isinstance(action.get("loop_policy"), dict) else {}
+    plan = action.get("loop_plan") if isinstance(action.get("loop_plan"), dict) else {}
+    batch = action.get("next_batch") if isinstance(action.get("next_batch"), dict) else None
+    if policy:
+        filters = []
+        for key in ("until", "requirements", "obligations", "owner_modules", "job_types", "limit", "mode"):
+            value = policy.get(key)
+            if value not in (None, "", [], {}):
+                filters.append(f"{key}={value}")
+        if filters:
+            lines.append("loop_policy=" + _clip_prompt_text("; ".join(filters), 360))
+    counts = plan.get("filtered_counts") if isinstance(plan.get("filtered_counts"), dict) else {}
+    if counts:
+        lines.append(
+            "loop_filtered_counts="
+            + ", ".join(f"{key}={counts.get(key)}" for key in ("total_ready", "within_boundary", "after_scope_filter", "selected", "outside_boundary"))
+        )
+    stop_reason = str(action.get("loop_stop_reason") or plan.get("stop_reason") or "").strip()
+    if stop_reason:
+        lines.append(f"loop_stop_reason={stop_reason}")
+    if batch:
+        tasks = batch.get("tasks") if isinstance(batch.get("tasks"), list) else []
+        lines.append(
+            "next_batch="
+            + _clip_prompt_text(
+                f"id={batch.get('batch_id')} job_type={batch.get('job_type')} boundary={batch.get('boundary_stage')} tasks={len(tasks)} stop_after_batch={batch.get('stop_after_batch')}",
+                360,
+            )
+        )
+        _append_task_section(lines, "next_batch_tasks", tasks, limit=5)
+
+
+def _append_closure_edge_section(lines: list[str], action: dict[str, Any], *, limit: int = 6) -> None:
+    matrix = action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {}
+    if matrix:
+        total = int(matrix.get("total") or 0)
+        closed = int(matrix.get("closed") or 0)
+        lines.append(f"closure_matrix=open {max(total - closed, 0)}/{total}")
+    edges = action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else []
+    open_edges = [edge for edge in edges if isinstance(edge, dict) and str(edge.get("status") or "") != "closed"]
+    if not open_edges:
+        return
+    lines.append(f"closure_edges_open={len(open_edges)}")
+    for edge in open_edges[:limit]:
+        owner = str(edge.get("owner_module") or edge.get("owner_file") or "unknown")
+        evidence = _str_items(edge.get("required_evidence"))
+        criteria = _str_items(edge.get("criteria"))
+        parts = [
+            f"{edge.get('source')}->{edge.get('target')}",
+            f"owner={owner}",
+            f"approval_policy={edge.get('approval_policy') or 'evidence_required'}",
+        ]
+        if evidence:
+            parts.append(f"evidence={','.join(evidence[:3])}")
+        if criteria:
+            parts.append(f"criteria={'; '.join(criteria[:3])}")
+        lines.append("- " + _clip_prompt_text(" ".join(parts), 420))
+    if len(open_edges) > limit:
+        lines.append(f"- ... {len(open_edges) - limit} more")
 
 
 def _format_run_prompt_block(action: dict[str, Any]) -> str:
@@ -8136,6 +8421,12 @@ def _format_run_prompt_block(action: dict[str, Any]) -> str:
         lines.append(f"required_evidence={', '.join(required)}")
     if blockers:
         lines.append("blockers=" + "; ".join(str(item.get("text") or item.get("id") or item) for item in blockers if isinstance(item, dict)))
+    _append_closure_edge_section(lines, action)
+    _append_loop_section(lines, action)
+    _append_task_section(lines, "ready_tasks", action.get("ready_tasks"), limit=5)
+    _append_task_section(lines, "blocked_tasks", action.get("blocked_tasks"), limit=5)
+    _append_task_section(lines, "active_locks", action.get("active_locks"), limit=5)
+    _append_dispatch_candidates(lines, action.get("dispatch_command_candidates"), limit=3)
     commands = _str_items(next_action.get("commands"))
     if commands:
         lines.append("commands:")
@@ -8268,8 +8559,9 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             action = _graph_issue_action(ip, state, graph_status)
         else:
             action = _run_graph_action_from_state(ip, state)
-        action["prompt_block"] = _format_run_prompt_block(action)
+        action["run_iteration"] = int(state.get("iteration") or 0) + 1
         loop_plan = _apply_loop_projection(ip, arguments, action)
+        _refresh_loop_prompt(action)
         state["iteration"] = int(state.get("iteration") or 0) + 1
         state["status"] = str(action.get("status") or "in_progress")
         state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8302,8 +8594,9 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         return result
     action_args = {**state, **arguments, "run_id": state["run_id"]}
     action = _run_action_from_state(ip, action_args, state)
-    action["prompt_block"] = _format_run_prompt_block(action)
+    action["run_iteration"] = int(state.get("iteration") or 0) + 1
     loop_plan = _apply_loop_projection(ip, arguments, action)
+    _refresh_loop_prompt(action)
     state["iteration"] = int(state.get("iteration") or 0) + 1
     state["status"] = str(action.get("status") or "in_progress")
     state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8496,6 +8789,11 @@ def _run_checkpoint(arguments: dict[str, Any]) -> dict[str, Any]:
                 "action": str(arguments.get("action") or "claim_complete"),
                 "record_decision": arguments.get("record_decision", True),
                 "actor": actor,
+                "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+                "approved_by": arguments.get("approved_by"),
+                "approval_reason": arguments.get("approval_reason"),
+                "reason": arguments.get("reason"),
+                "summary": arguments.get("summary"),
             }
         )
         action = _run_graph_action_from_state(ip, state)
@@ -8508,6 +8806,11 @@ def _run_checkpoint(arguments: dict[str, Any]) -> dict[str, Any]:
                 "action": str(arguments.get("action") or "claim_complete"),
                 "record_decision": arguments.get("record_decision", True),
                 "actor": actor,
+                "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+                "approved_by": arguments.get("approved_by"),
+                "approval_reason": arguments.get("approval_reason"),
+                "reason": arguments.get("reason"),
+                "summary": arguments.get("summary"),
             }
         )
         action_args = {**state, **arguments, "run_id": state["run_id"]}
@@ -8615,9 +8918,11 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
     if stored_action:
         loop_policy = _loop_policy_for_arguments(ip, arguments)
         if loop_policy.get("active"):
-            loop_plan = build_bounded_plan(ip, stored_action, loop_policy)
-            if not isinstance(loop_plan.get("recommended_batch"), dict):
-                return _bounded_loop_stop_response(ip, state, stored_action, loop_plan)
+            loop_action = dict(stored_action)
+            loop_action["run_iteration"] = int(state.get("iteration") or 0) + 1
+            loop_plan = _apply_loop_projection(ip, arguments, loop_action)
+            if isinstance(loop_plan, dict) and not isinstance(loop_plan.get("recommended_batch"), dict):
+                return _bounded_loop_stop_response(ip, state, loop_action, loop_plan)
         allowed, policy = _policy_allows_action(ip, stored_action)
         if not allowed:
             return {

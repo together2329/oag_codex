@@ -1516,6 +1516,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     early_codes = {item["code"] for item in early_result["issues"]}
     assert "DEPENDENCY_UNMET" in early_codes and "BARRIER_UNMET" in early_codes, early_result
 
+    common_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_COMMON_API_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_COMMON_API",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert common_dispatch.returncode == 0, common_dispatch.stderr or common_dispatch.stdout
+    common_dispatch_id = json.loads(common_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_common = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1524,12 +1545,35 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_COMMON_API",
+        "--dispatch-id",
+        common_dispatch_id,
         "--claimed-by",
         "smoke-common",
         "--json",
         project_root=project,
     )
     assert claim_common.returncode == 0, claim_common.stderr or claim_common.stdout
+    scoreboard_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_SCOREBOARD_SCHEMA_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_SCOREBOARD_SCHEMA",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert scoreboard_dispatch.returncode == 0, scoreboard_dispatch.stderr or scoreboard_dispatch.stdout
+    scoreboard_dispatch_id = json.loads(scoreboard_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_scoreboard = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1538,6 +1582,8 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_SCOREBOARD_SCHEMA",
+        "--dispatch-id",
+        scoreboard_dispatch_id,
         "--claimed-by",
         "smoke-scoreboard",
         "--json",
@@ -1606,6 +1652,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     scenario_ready_ids = [task["task_id"] for task in json.loads(scenario_ready.stdout)["ready_tasks"]]
     assert scenario_ready_ids == ["TB_SCENARIO_A"], scenario_ready.stdout
 
+    scenario_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_SCENARIO_A_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_SCENARIO_A",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert scenario_dispatch.returncode == 0, scenario_dispatch.stderr or scenario_dispatch.stdout
+    scenario_dispatch_id = json.loads(scenario_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_scenario = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1614,6 +1681,8 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_SCENARIO_A",
+        "--dispatch-id",
+        scenario_dispatch_id,
         "--json",
         project_root=project,
     )
@@ -1679,6 +1748,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         project_root=project,
     )
     assert conflict_plan.returncode == 0, conflict_plan.stderr or conflict_plan.stdout
+    dispatch_a = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(conflict_ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(conflict_ip / "knowledge" / "subagents" / "WRITE_A.json"),
+        "--wavefront-run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_A",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert dispatch_a.returncode == 0, dispatch_a.stderr or dispatch_a.stdout
+    dispatch_a_id = json.loads(dispatch_a.stdout)["dispatch"]["dispatch_id"]
     claim_a = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1687,10 +1777,33 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         conflict_run,
         "--task-id",
         "WRITE_A",
+        "--dispatch-id",
+        dispatch_a_id,
         "--json",
         project_root=project,
     )
     assert claim_a.returncode == 0, claim_a.stderr or claim_a.stdout
+    dispatch_b = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(conflict_ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(conflict_ip / "knowledge" / "subagents" / "WRITE_B.json"),
+        "--wavefront-run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_B",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert dispatch_b.returncode == 0, dispatch_b.stderr or dispatch_b.stdout
+    dispatch_b_id = json.loads(dispatch_b.stdout)["dispatch"]["dispatch_id"]
     claim_b = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1699,6 +1812,8 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         conflict_run,
         "--task-id",
         "WRITE_B",
+        "--dispatch-id",
+        dispatch_b_id,
         "--json",
         project_root=project,
     )
@@ -3488,6 +3603,8 @@ def main() -> int:
         assert sim_config["result"]["updates"]["hook_auto_continue_until"] == "sim", sim_config
         sim_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
         assert sim_stop["result"]["should_continue"] is True, sim_stop
+        assert "closure_matrix=open" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "closure_edges_open=" in sim_stop["result"]["prompt_block"], sim_stop
         bounded_rtl = call(
             {
                 "tool": "oag.run.next",
@@ -3549,6 +3666,18 @@ def main() -> int:
         )
         assert loop_stop["result"]["should_continue"] is False, loop_stop
         assert loop_stop["result"]["reason"] == "boundary_reached", loop_stop
+        maxed_loop = call(
+            {
+                "tool": "oag.stop_check",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "run_id": limit_run_id,
+                    "loop_policy": {"until": "tb", "max_iterations": 1},
+                },
+            }
+        )
+        assert maxed_loop["result"]["should_continue"] is False, maxed_loop
+        assert maxed_loop["result"]["reason"] == "max_iterations_reached", maxed_loop
         runner = run_loop_runner(
             "--ip-dir",
             str(limit_ip),
@@ -3668,6 +3797,7 @@ def main() -> int:
                     "run_id": run_id,
                     "stage": "sim",
                     "intent": "smoke close reset scoreboard obligation",
+                    "approval": {"approved": True, "reason": "smoke owner approved run checkpoint completion"},
                     "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
                 },
             }
@@ -4046,6 +4176,20 @@ def main() -> int:
         undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
         assert undecided["result"]["allowed"] is False, undecided
         assert undecided["result"]["reason"] == "decision_receipt_required", undecided
+        missing_approval = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert missing_approval["result"]["allowed"] is False, missing_approval
+        assert missing_approval["result"]["reason"] == "completion_approval_required", missing_approval
         decide = call(
             {
                 "tool": "oag.decide",
@@ -4054,6 +4198,7 @@ def main() -> int:
                     "action": "claim_complete",
                     "stage": "sim",
                     "record_decision": True,
+                    "approval": {"approved": True, "reason": "smoke owner approved claim_complete"},
                     "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
                 },
             }
@@ -4135,6 +4280,7 @@ def main() -> int:
                     "action": "signoff",
                     "stage": "signoff",
                     "record_decision": True,
+                    "approval": {"approved": True, "reason": "smoke owner approved signoff after independent review"},
                     "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
                 },
             }
