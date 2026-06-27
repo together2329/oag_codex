@@ -87,7 +87,8 @@ def collect_wavefront_claim_issues(dispatch: JsonObject) -> list[Issue]:
         issues.append(issue("WAVEFRONT_TASK_NOT_FOUND", "dispatch.task_id is not present in the wavefront graph", task_id))
         return issues
     task = matching_tasks[0]
-    if str(task.get("status") or "") != "claimed":
+    task_status = str(task.get("status") or "")
+    if task_status not in {"claimed", "review_pending"}:
         issues.append(issue("WAVEFRONT_TASK_UNCLAIMED", f"wavefront task status is {task.get('status')}", task_id))
     if str(task.get("ownership_mode") or "") != ownership_mode:
         issues.append(issue("WAVEFRONT_OWNERSHIP_MISMATCH", "dispatch.ownership_mode does not match the graph task", task_id))

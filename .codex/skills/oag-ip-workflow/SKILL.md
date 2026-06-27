@@ -173,7 +173,7 @@ instead of unconstrained fan-out:
 ```bash
 python3 .codex/scripts/oag_wavefront.py plan --ip-dir <ip> --run-id <run> --template .codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml --json
 python3 .codex/scripts/oag_wavefront.py ready --ip-dir <ip> --run-id <run> --json
-python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --json
+python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --dispatch-id <dispatch_id> --json
 ```
 
 Read-only triage can fan out aggressively. Write tasks require disjoint
@@ -181,6 +181,10 @@ Read-only triage can fan out aggressively. Write tasks require disjoint
 aggregate results, coverage JSON, and closure packages require a single
 integration owner. Simulation failures should be classified by read-only
 triage before repair agents are opened.
+For write/integration wavefront tasks, create the dispatch before claiming and
+pass its `dispatch_id` into the claim. Child receipt verification must happen
+while the task is still `claimed`; only then may the parent record
+`review_pending`, review it, and later record `handoff_pass`.
 
 After user lock, main agent orchestrates; subagents implement and verify. The
 main agent must not directly create or substantially edit RTL, TB, sim, lint,

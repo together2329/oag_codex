@@ -13,7 +13,8 @@ evidence boundaries are currently satisfied.
 locked ontology truth
   -> authoring packets / evidence plan
     -> wavefront task graph
-      -> dispatch + ownership lock
+      -> dispatch
+        -> ownership lock bound to dispatch_id
         -> subagent receipt
           -> review_pending
             -> reviewer decision
@@ -31,6 +32,10 @@ locked ontology truth
 - `integration` tasks own shared artifacts such as filelists, run scripts,
   aggregate results, coverage JSON, and generated closure summaries.
 - `closure` tasks are not worker-owned. Closure remains parent/gate authority.
+
+For write/integration tasks, the dispatch record must be created before the
+wavefront task is claimed. The claim must include the dispatch id so ownership
+locks bind the task to the child receipt that will later be verified.
 
 ## Required Conditions
 
@@ -51,6 +56,11 @@ artifacts do not overlap.
 `handoff_pass` is not a worker self-claim. A worker receipt moves a task to
 `review_pending`. Only an approved `oag_wavefront_decision.v1` review record
 may move `review_pending` to `handoff_pass` and unlock downstream barriers.
+The child receipt must be verified while the task is still `claimed`, or routed
+as bounded `INCONCLUSIVE`, `BLOCKED`, or `FAIL`. Parent orchestration must not
+record `handoff_pass` before the child stop hook has accepted the receipt; doing
+so releases wavefront ownership and makes the child-side dispatch verifier see
+an unclaimed/mismatched task.
 
 ## Worker Language
 

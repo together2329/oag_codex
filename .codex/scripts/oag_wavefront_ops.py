@@ -238,7 +238,16 @@ def _collect_claim_issues(check: ClaimCheck) -> list[Issue]:
         check.issues.extend(issue("BARRIER_UNMET", f"missing barrier token: {token}", request.task_id) for token in barrier_blockers)
     check.issues.extend(stale_path_issues(task, request.run.ip_dir))
     active = active_lock_paths(check.locks)
-    for path in task_write_paths(task):
+    write_paths = task_write_paths(task)
+    if write_paths and not request.dispatch_id:
+        check.issues.append(
+            issue(
+                "CLAIM_DISPATCH_ID_REQUIRED",
+                "write and integration wavefront claims require --dispatch-id from a pre-created dispatch record",
+                request.task_id,
+            )
+        )
+    for path in write_paths:
         if path in active:
             check.issues.append(issue("OWNERSHIP_CONFLICT", f"path already locked by {active[path]}", path))
     return check.issues
@@ -255,12 +264,23 @@ def _persist_claim(persistence: ClaimPersistence) -> JsonObject:
     claim_time = utc_now()
     try:
         with claim_file.open("x", encoding="utf-8") as fh:
-            fh.write(json.dumps({"task_id": request.task_id, "claimed_by": request.claimed_by, "claimed_at": claim_time}) + "\n")
+            fh.write(
+                json.dumps(
+                    {
+                        "task_id": request.task_id,
+                        "claimed_by": request.claimed_by,
+                        "dispatch_id": request.dispatch_id,
+                        "claimed_at": claim_time,
+                    }
+                )
+                + "\n"
+            )
     except FileExistsError:
         return result("fail", "oag_wavefront_claim_result.v1", issues=[issue("TASK_ALREADY_CLAIMED", "task claim lock already exists", request.task_id)])
 
     task["status"] = "claimed"
     task["claimed_by"] = request.claimed_by
+    task["dispatch_id"] = request.dispatch_id
     task["claimed_at"] = claim_time
     for lock_path in write_paths:
         locks.setdefault("locks", []).append(

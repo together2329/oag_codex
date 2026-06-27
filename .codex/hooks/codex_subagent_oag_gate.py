@@ -55,6 +55,12 @@ REQUIRED_RECEIPT_FIELDS = {
     "created_at",
 }
 RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
+EXTERNAL_DELTA_ISSUES = {"ACTUAL_PATH_OUT_OF_SCOPE"}
+EXTERNAL_WAVEFRONT_LIFECYCLE_ISSUES = {
+    "ACTUAL_PATH_OUT_OF_SCOPE",
+    "WAVEFRONT_TASK_UNCLAIMED",
+    "WAVEFRONT_CLAIM_DISPATCH_MISMATCH",
+}
 CONTEXT_PRESSURE_MARKERS = (
     "context compacted",
     "context_length_exceeded",
@@ -220,12 +226,20 @@ def dispatch_verify(cwd: Path, receipt: Path, payload: dict) -> tuple[bool, str]
     if not isinstance(issues, list):
         return False, issue_summary(result)
     issue_codes = {str(item.get("code") or "") for item in issues if isinstance(item, dict)}
-    if issue_codes and issue_codes <= {"ACTUAL_PATH_OUT_OF_SCOPE"}:
+    if issue_codes and issue_codes <= EXTERNAL_DELTA_ISSUES:
         if payload.get("status") in {"BLOCKED", "INCONCLUSIVE", "FAIL"} and has_blockers(payload):
             return True, ""
         return (
             False,
             "dispatch verifier only found out-of-scope workspace delta; receipt must use "
+            "BLOCKED, INCONCLUSIVE, or FAIL and record blockers before the stop hook can accept it",
+        )
+    if issue_codes and issue_codes <= EXTERNAL_WAVEFRONT_LIFECYCLE_ISSUES:
+        if payload.get("status") in {"BLOCKED", "INCONCLUSIVE", "FAIL"} and has_blockers(payload):
+            return True, ""
+        return (
+            False,
+            "dispatch verifier found only external wavefront lifecycle/bookkeeping issues; receipt must use "
             "BLOCKED, INCONCLUSIVE, or FAIL and record blockers before the stop hook can accept it",
         )
     return False, issue_summary(result)
@@ -304,7 +318,8 @@ def directive(payload: dict, reason: str) -> str:
         "schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. Handoff "
         "receipts must pass .codex/scripts/oag_dispatch.py verify; BLOCKED/INCONCLUSIVE/"
         "FAIL receipts may stop when verifier failures are limited to unrelated "
-        "ACTUAL_PATH_OUT_OF_SCOPE deltas and blockers are recorded. Do not claim final completion."
+        "ACTUAL_PATH_OUT_OF_SCOPE deltas or external wavefront lifecycle/bookkeeping "
+        "issues and blockers are recorded. Do not claim final completion."
     )
 
 

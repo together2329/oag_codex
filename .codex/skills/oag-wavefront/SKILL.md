@@ -19,19 +19,22 @@ are satisfied.
 1. Compile/check the IP ontology and authoring packets first.
 2. Plan a wavefront graph from existing contracts, packets, and evidence plan.
 3. Check ready tasks.
-4. Claim only dependency-satisfied tasks.
-5. Create dispatch records for write-capable tasks.
-6. Record worker receipts as `review_pending`.
-7. Review the handoff with `oag-custom-reviewer` or a narrower reviewer role.
-8. Record `handoff_pass` and barrier outputs only after an approved
+4. For write-capable tasks, create dispatch records before claiming.
+5. Claim only dependency-satisfied tasks, passing `--dispatch-id` for
+   write/integration claims.
+6. Spawn the child and let its stop hook verify the receipt while the task is
+   still `claimed`.
+7. Record worker receipts as `review_pending`.
+8. Review the handoff with `oag-custom-reviewer` or a narrower reviewer role.
+9. Record `handoff_pass` and barrier outputs only after an approved
    `oag_wavefront_decision.v1` record.
-9. Let a single integration owner write shared run artifacts.
-10. Use read-only triage before repair when simulation fails.
-11. For implementation gaps, consume `implementation_review` evidence and run
+10. Let a single integration owner write shared run artifacts.
+11. Use read-only triage before repair when simulation fails.
+12. For implementation gaps, consume `implementation_review` evidence and run
     highest-priority dependency-ready gaps first.
-12. Close completed child threads after their receipts are integrated or
+13. Close completed child threads after their receipts are integrated or
     rejected, before opening another fan-out batch.
-13. Let parent/gate decide closure.
+14. Let parent/gate decide closure.
 
 ## Commands
 
@@ -58,8 +61,13 @@ python3 .codex/scripts/oag_wavefront.py claim \
   --ip-dir <ip> \
   --run-id <run_id> \
   --task-id <task_id> \
+  --dispatch-id <dispatch_id> \
   --json
 ```
+
+For write/integration tasks, create the dispatch record first and pass its
+`dispatch_id` into `claim`. Claiming writable wavefront tasks without a
+dispatch id is invalid because ownership locks must bind to the child dispatch.
 
 Record bounded worker status after the worker receipt:
 
@@ -136,3 +144,5 @@ or whose target artifacts overlap within the batch.
 - No approved reviewer decision, no `handoff_pass`.
 - No new fan-out batch while completed child threads remain open after receipt
   integration.
+- Do not record `handoff_pass` before the child receipt has passed the stop
+  hook or has been routed as a bounded `INCONCLUSIVE`/`BLOCKED`/`FAIL` receipt.

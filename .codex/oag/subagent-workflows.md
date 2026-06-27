@@ -188,6 +188,24 @@ through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
 path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
 
+When the child belongs to a wavefront write or integration task, create the
+dispatch before `oag_wavefront.py claim`, then claim with
+`--dispatch-id <dispatch_id>`. Dispatch records that include wavefront metadata
+automatically allow that run's wavefront bookkeeping paths as tool side
+effects; workers still must not claim ownership of those paths. Do not record
+`handoff_pass` while the child is still trying to stop. The required order is:
+
+```text
+dispatch create
+-> wavefront claim --dispatch-id <dispatch_id>
+-> native child spawn
+-> child writes receipt and stop hook verifies while task is still claimed
+-> wavefront record review_pending
+-> reviewer decision
+-> wavefront record handoff_pass
+-> close child thread
+```
+
 The realistic stop boundary is receipt validity, not forced integration
 success. In a parallel wave, another worker can legitimately change files under
 the same IP after a dispatch baseline is captured. If `verify` fails only with
@@ -197,6 +215,11 @@ write `BLOCKED`, `INCONCLUSIVE`, or `FAIL` with blockers naming the external
 delta and end with `OAG_EVIDENCE_RECORDED`. The `SubagentStop` hook may accept
 that bounded blocked receipt so the parent can route or reconcile integration.
 Successful handoff statuses still require a verifier pass.
+The same bounded stop rule applies to parent-created wavefront lifecycle
+mismatches such as `WAVEFRONT_TASK_UNCLAIMED` or
+`WAVEFRONT_CLAIM_DISPATCH_MISMATCH`: child agents may record
+`INCONCLUSIVE`/`BLOCKED`/`FAIL` with explicit blockers, but they must not edit
+wavefront bookkeeping or widen their dispatch to hide the mismatch.
 Dispatch IDs include a short nonce after the timestamp so same-second fan-out
 does not rely on sleeps for uniqueness.
 When a dispatch belongs to a wavefront task, include `--wavefront-run-id`,

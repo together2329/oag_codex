@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--run-id", required=True)
     claim.add_argument("--task-id", required=True)
     claim.add_argument("--claimed-by", default="")
-    claim.add_argument("--dispatch-id", default="")
+    claim.add_argument("--dispatch-id", default="", help="Required for write/integration tasks; create dispatch before claiming.")
     claim.add_argument("--json", action="store_true")
 
     record = sub.add_parser("record", help="Record bounded worker status and barrier outputs.")

@@ -302,6 +302,14 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         ensure_under_ip(item, ip_dir, field="allowed_tool_side_effect")
         for item in (args.allowed_tool_side_effect or [])
     ]
+    if args.wavefront_run_id and args.task_id:
+        run_id = str(args.wavefront_run_id)
+        allowed_tool_side_effects.extend(
+            [
+                f"{ip_rel}/ontology/runs/{run_id}/",
+                f"{ip_rel}/knowledge/wavefront/{run_id}/",
+            ]
+        )
     receipt_path = ensure_under_ip(args.receipt_path, ip_dir, field="receipt_path")
     if not path_matches(receipt_path, allowed_write_paths):
         allowed_write_paths.append(str(Path(receipt_path).parent).replace("\\", "/") + "/")
