@@ -255,6 +255,62 @@ def case_stop_gate_obeys_policy_limit(root: Path) -> dict[str, Any]:
     }
 
 
+def case_closure_edge_projection_static(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "closure_edge_projection")
+    compiled = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+    assert compiled["result"]["status"] == "pass", compiled
+    truth_graph = json.loads(oag_paths.legacy_or_hidden(ip, "ontology/generated/design_truth_graph.json").read_text(encoding="utf-8"))
+    graph_edges = [
+        edge
+        for edge in truth_graph.get("edges", [])
+        if edge.get("type") == "closed_by" and edge.get("load_bearing") is True
+    ]
+    assert len(graph_edges) == 1, graph_edges
+    graph_edge = graph_edges[0]
+    assert graph_edge["closure_edge"] is True, graph_edge
+    assert graph_edge["approval_policy"] == "evidence_required", graph_edge
+    assert graph_edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], graph_edge
+    assert graph_edge["criteria"] == [
+        "contract exists and remains bound to obligation",
+        "required evidence exists and is fresh",
+        "closed ROCEV validation record links this obligation-contract edge",
+    ], graph_edge
+    assert graph_edge["approved"] is False, graph_edge
+    assert graph_edge["approved_reason"] == "", graph_edge
+    run_id, _started = _start_run(ip, intent="eval closure edge projection")
+    next_response = smoke_test.call({"tool": "oag.run.next", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+    edges = next_response["result"]["closure_edges"]
+    assert len(edges) == 1, next_response
+    edge = edges[0]
+    assert edge["schema_version"] == "oag_closure_edge_todo.v1", edge
+    assert edge["source"] == graph_edge["source"], edge
+    assert edge["target"] == graph_edge["target"], edge
+    assert edge["status"] == "open", edge
+    assert edge["owner_module"] == "demo_counter_cx1", edge
+    assert edge["owner_file"] == "rtl/demo_counter_cx1.sv", edge
+    assert edge["criteria"] == graph_edge["criteria"], edge
+    assert edge["required_evidence"] == graph_edge["required_evidence"], edge
+    assert edge["approval_policy"] == graph_edge["approval_policy"], edge
+    assert edge["approved"] is False, edge
+    assert edge["approved_reason"] == "", edge
+    prompt = next_response["result"]["prompt_block"]
+    assert "closure_edges_open=1" in prompt, prompt
+    assert "owner=demo_counter_cx1" in prompt, prompt
+    assert "evidence=sim/results.xml,sim/scoreboard_events.jsonl" in prompt, prompt
+    stored = json.loads(oag_paths.legacy_or_hidden(ip, f"ontology/runs/{run_id}/next_action.json").read_text(encoding="utf-8"))
+    assert stored["closure_edges"] == edges, stored
+    stop = smoke_test.call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+    assert stop["result"]["should_continue"] is True, stop
+    assert stop["result"]["closure_edges"] == edges, stop
+    return {
+        "ip": str(ip),
+        "run_id": run_id,
+        "edge_id": edge["id"],
+        "required_evidence": edge["required_evidence"],
+        "prompt_has_edge": "closure_edges_open=1" in prompt,
+    }
+
+
 def case_compile_skips_fresh_graph(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "fresh_compile")
     first = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
@@ -2052,6 +2108,7 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
 CASES: list[tuple[str, CaseFn]] = [
     ("stop_gate_blocks_incomplete", case_stop_gate_blocks_incomplete),
     ("stop_gate_obeys_policy_limit", case_stop_gate_obeys_policy_limit),
+    ("closure_edge_projection_static", case_closure_edge_projection_static),
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),

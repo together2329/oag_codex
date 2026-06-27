@@ -8587,6 +8587,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             if isinstance(action.get("dispatch_command_candidates"), list)
             else [],
             "graph_status": action.get("graph_status") if isinstance(action.get("graph_status"), dict) else {},
+            "closure_matrix": action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {},
+            "closure_edges": action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else [],
             "next_action": action,
             "prompt_block": action["prompt_block"],
         }
@@ -8612,6 +8614,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         "status": state["status"],
         "state_path": str(_run_state_path(ip, str(state["run_id"]))),
         "next_action_path": str(_run_next_action_path(ip, str(state["run_id"]))),
+        "closure_matrix": action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {},
+        "closure_edges": action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else [],
         "next_action": action,
         "prompt_block": action["prompt_block"],
     }
@@ -8967,6 +8971,8 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
         "reason": "run_incomplete",
         "next_action": next_action,
         "next_batch": next_response.get("next_batch") if isinstance(next_response.get("next_batch"), dict) else None,
+        "closure_matrix": next_response.get("closure_matrix") if isinstance(next_response.get("closure_matrix"), dict) else {},
+        "closure_edges": next_response.get("closure_edges") if isinstance(next_response.get("closure_edges"), list) else [],
         "prompt_block": next_response.get("prompt_block") or "",
         "policy": {
             **policy,

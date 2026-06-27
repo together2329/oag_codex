@@ -3537,6 +3537,23 @@ def main() -> int:
         truth_graph = json.loads((ip / "ontology" / "generated" / "design_truth_graph.json").read_text(encoding="utf-8"))
         truth_facts = truth_graph.get("generated", {}).get("design_facts", {})
         assert "git_head" not in (truth_facts.get("extractor") or {}), truth_graph
+        closure_graph_edges = [
+            edge
+            for edge in truth_graph.get("edges", [])
+            if edge.get("type") == "closed_by" and edge.get("load_bearing") is True
+        ]
+        assert closure_graph_edges, truth_graph
+        for edge in closure_graph_edges:
+            assert edge["closure_edge"] is True, edge
+            assert edge["approval_policy"] == "evidence_required", edge
+            assert edge["approved"] is False, edge
+            assert edge["approved_reason"] == "", edge
+            assert edge["criteria"] == [
+                "contract exists and remains bound to obligation",
+                "required evidence exists and is fresh",
+                "closed ROCEV validation record links this obligation-contract edge",
+            ], edge
+            assert edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], edge
         domain_matrix = json.loads((ip / "ontology" / "generated" / "domain_crossing_matrix.json").read_text(encoding="utf-8"))
         assert domain_matrix["schema_version"] == "oag_domain_crossing_matrix.v1", domain_matrix
         assert domain_matrix["status"] == "present", domain_matrix
@@ -3605,6 +3622,29 @@ def main() -> int:
         assert sim_stop["result"]["should_continue"] is True, sim_stop
         assert "closure_matrix=open" in sim_stop["result"]["prompt_block"], sim_stop
         assert "closure_edges_open=" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "owner=demo_counter_cx1" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "approval_policy=evidence_required" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "evidence=sim/results.xml,sim/scoreboard_events.jsonl" in sim_stop["result"]["prompt_block"], sim_stop
+        stop_edges = sim_stop["result"]["closure_edges"]
+        assert len(stop_edges) == 1, sim_stop
+        stop_edge = stop_edges[0]
+        assert stop_edge["schema_version"] == "oag_closure_edge_todo.v1", stop_edge
+        assert stop_edge["source"] == "obligation::OBL_DEMO_COUNTER_CX1_RESET_KNOWN", stop_edge
+        assert stop_edge["target"] == "contract::CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", stop_edge
+        assert stop_edge["status"] == "open", stop_edge
+        assert stop_edge["owner_module"] == "demo_counter_cx1", stop_edge
+        assert stop_edge["owner_file"] == "rtl/demo_counter_cx1.sv", stop_edge
+        assert stop_edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], stop_edge
+        assert stop_edge["approval_policy"] == "evidence_required", stop_edge
+        assert stop_edge["approved"] is False, stop_edge
+        assert stop_edge["approved_reason"] == "", stop_edge
+        assert stop_edge["criteria"] == [
+            "contract exists and remains bound to obligation",
+            "required evidence exists and is fresh",
+            "closed ROCEV validation record links this obligation-contract edge",
+        ], stop_edge
+        stored_action = json.loads((limit_ip / "ontology" / "runs" / limit_run_id / "next_action.json").read_text(encoding="utf-8"))
+        assert stored_action["closure_edges"] == stop_edges, stored_action
         bounded_rtl = call(
             {
                 "tool": "oag.run.next",
@@ -3617,6 +3657,7 @@ def main() -> int:
         )
         assert bounded_rtl["result"]["next_batch"] is None, bounded_rtl
         assert bounded_rtl["result"]["loop_stop_reason"] == "boundary_reached", bounded_rtl
+        assert bounded_rtl["result"]["closure_edges"] == stop_edges, bounded_rtl
         hook_rtl = run_loop_hook("--ip-dir", str(limit_ip), "--run-id", limit_run_id, "--until", "rtl", "--json")
         assert hook_rtl.returncode == 0, hook_rtl.stderr or hook_rtl.stdout
         hook_rtl_json = json.loads(hook_rtl.stdout)
@@ -4190,6 +4231,52 @@ def main() -> int:
         )
         assert missing_approval["result"]["allowed"] is False, missing_approval
         assert missing_approval["result"]["reason"] == "completion_approval_required", missing_approval
+        approved_without_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "approval": {"approved": True},
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert approved_without_reason["result"]["allowed"] is False, approved_without_reason
+        assert approved_without_reason["result"]["reason"] == "completion_approval_required", approved_without_reason
+        human_without_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                },
+            }
+        )
+        assert human_without_reason["result"]["allowed"] is False, human_without_reason
+        assert human_without_reason["result"]["reason"] == "completion_approval_required", human_without_reason
+        approved_by_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "approved_by": "smoke-owner",
+                    "approval_reason": "smoke owner approved claim_complete through approved_by",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert approved_by_reason["result"]["allowed"] is True, approved_by_reason
+        assert approved_by_reason["result"]["approval"]["approved"] is True, approved_by_reason
+        assert approved_by_reason["result"]["approval"]["reason"] == "smoke owner approved claim_complete through approved_by", approved_by_reason
         decide = call(
             {
                 "tool": "oag.decide",
