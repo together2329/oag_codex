@@ -262,9 +262,11 @@ CONTEXT -> PIN/RED -> BUILD -> EVIDENCE -> VALIDATE -> DECIDE
 - PIN/RED: capture the gap, failing behavior, stale evidence, or missing proof
   before changing behavior where practical.
 - BUILD: before lock, the main agent may write draft/interview/scaffold
-  material. After lock, the main agent orchestrates; native OAG subagents
-  implement or verify RTL, TB, sim, lint, coverage, formal, SDC, signoff, and
-  filelist artifacts.
+  material for new IPs. For imported or partial legacy IPs, preserve the source
+  hierarchy and use `.oag` overlay or analysis-workspace state instead of
+  scaffolding over existing RTL. After lock, the main agent orchestrates; native
+  OAG subagents implement or verify RTL, TB, sim, lint, coverage, formal, SDC,
+  signoff, and filelist artifacts.
 - EVIDENCE: produce concrete artifacts such as scoreboard rows, sim logs, VCD
   review notes, lint/formal/coverage reports, hashes, or decision receipts.
 - VALIDATE: record findings through `oag.record` or `oag.run.record`; ensure

@@ -104,6 +104,9 @@ Use native child steering only for targeted follow-up, and close child threads
 after integrating a completed or inconclusive lane.
 Do not mark a dependent step complete while an active child owns evidence for
 that step.
+Before opening a new parallel batch, close every completed child whose receipt
+has already been integrated, rejected, or routed. Keep only currently working
+children open. This is runtime hygiene, not an OAG closure action.
 
 Use subagents when the work is naturally parallel and bounded:
 
@@ -120,6 +123,13 @@ For larger fan-out, use `python3 .codex/scripts/oag_wavefront.py` first. The
 wavefront graph records dependency barriers, ownership locks, and the single
 integration owner for shared artifacts. A task that has unmet dependencies or a
 conflicting ownership lock must not be dispatched.
+When a gap matrix exists, run
+`python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json`
+and dispatch the returned `plan.next_wave.actions` first. For imported or
+partial legacy IPs that do not have an OAG scaffold, add
+`--legacy-no-scaffold`; the existing source hierarchy is the implementation
+artifact under review. Actions in the same next wave can be parallelized when
+their target artifacts are disjoint.
 
 After user lock, main agent orchestrates; subagents implement and verify. Locked
 RTL, TB, sim, lint, coverage, formal, SDC, signoff, and implementation filelist
@@ -217,7 +227,8 @@ Spawn these agents with fork_context=false:
   TASK: act as the OAG legacy/reference IP analyzer.
   DELIVERABLE: source paths, extracted behavior, inferred requirements, gaps,
   leakage risks, and evidence needs.
-  SCOPE: <paths>.
+  SCOPE: <paths>. Preserve the existing source hierarchy; do not scaffold,
+  move, or normalize legacy RTL into a new layout.
   VERIFY: cite exact files/lines or state INCONCLUSIVE.
 - agent_type=oag-requirement-contract-agent
   message starts:

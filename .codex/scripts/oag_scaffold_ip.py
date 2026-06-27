@@ -92,6 +92,9 @@ SUPPORTED_LAYOUTS = ("legacy", "dot_oag")
 
 def _layout_target(ip_path: Path, rel: str, layout: str) -> Path:
     """Map an IP-relative path to its on-disk location for the chosen layout.
+    The historical layout name "legacy" means top-level OAG state directories
+    created for a new OAG workspace. It does not mean imported legacy IP source
+    should be scaffolded or rearranged.
     In the dot_oag layout, the ontology/ and knowledge/ subtrees live under
     <ip>/.oag/; all other (human-facing) subtrees stay at the top level."""
     if layout == "dot_oag" and rel.split("/", 1)[0] in ("ontology", "knowledge"):

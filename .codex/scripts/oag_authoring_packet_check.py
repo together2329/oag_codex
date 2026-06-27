@@ -19,6 +19,7 @@ from oag_validate_json import contextual_schema_issues  # noqa: E402
 
 
 PACKET_DIR = Path("ontology/generated/authoring_packets")
+RTL_INTERFACE_API_REL = Path("ontology/generated/rtl_interface_api.md")
 DUT_DERIVED_TOKENS = {"dut_output", "rtl_expression", "post_hoc_simulation", "observed dut behavior", "observed_dut_output"}
 TB_FORBIDDEN_LIFECYCLE_PREFIXES = ("rtl/", "sim/", "waveform", "dut_output")
 CURRENT_IP_OWNERSHIPS = {"current_ip", "manifest", "owned"}
@@ -82,6 +83,25 @@ def module_id(module: dict[str, Any]) -> str:
         if value:
             return value
     return ""
+
+
+def module_edge_touches(edge: dict[str, Any], mid: str) -> bool:
+    producer = str(edge.get("producer") or "").strip()
+    consumer = str(edge.get("consumer") or "").strip()
+    return (
+        producer == mid
+        or consumer == mid
+        or producer in {"all_modules", "all_leaf_modules"}
+        or consumer in {"all_modules", "all_leaf_modules"}
+    )
+
+
+def contract_interface_refs(contract: dict[str, Any]) -> list[str]:
+    refs = str_items(contract.get("interface_contract_refs"))
+    boundary = contract.get("module_boundary") if isinstance(contract.get("module_boundary"), dict) else {}
+    refs.extend(str_items(boundary.get("interface_contract_refs")))
+    refs.extend(str_items(boundary.get("interface_contract")))
+    return sorted(set(refs))
 
 
 def check_lifecycle_refs(
@@ -197,11 +217,21 @@ def check_module_packets(ip_dir: Path, packets_dir: Path, *, hard_gate: bool) ->
         issues.append(issue("MODULE_DECOMPOSITION_INVALID", f"Cannot read decomposition.yaml: {decomp['__load_error__']}", str(decomp_path)))
         counts["module_packet_issues"] = len(issues)
         return issues, counts
+    modeling_path = oag_paths.legacy_or_hidden(ip_dir, "ontology/modeling.yaml")
+    modeling = read_yaml(modeling_path)
+    if "__load_error__" in modeling:
+        issues.append(issue("MODULE_MODELING_INVALID", f"Cannot read modeling.yaml: {modeling['__load_error__']}", str(modeling_path)))
+        counts["module_packet_issues"] = len(issues)
+        return issues, counts
 
     profile = ""
     if isinstance(decomp.get("profile"), dict):
         profile = str(decomp["profile"].get("mode") or "").strip()
     modules = [item for item in as_list(decomp.get("modules")) if isinstance(item, dict)]
+    decomposition_edges = [item for item in as_list(decomp.get("interfaces")) if isinstance(item, dict)]
+    model_interfaces = [item for item in as_list(modeling.get("module_interface_contracts")) if isinstance(item, dict)]
+    model_interface_ids = {str(item.get("id") or "").strip() for item in model_interfaces if str(item.get("id") or "").strip()}
+    interface_truth_present = bool(decomposition_edges or model_interfaces)
     current_modules = [
         module for module in modules
         if str(module.get("ownership") or "current_ip").strip() in CURRENT_IP_OWNERSHIPS
@@ -273,6 +303,35 @@ def check_module_packets(ip_dir: Path, packets_dir: Path, *, hard_gate: bool) ->
             issues.append(issue("MODULE_PACKET_SOURCE_REFS", f"{mid} packet needs source_refs for owned work.", str(path)))
         if profile == "greenfield_modular" and (expected_obligations or expected_contracts) and not str_items(payload.get("structure_refs")):
             issues.append(issue("MODULE_PACKET_STRUCTURE_REFS", f"{mid} packet needs structure_refs for greenfield modular RTL dispatch.", str(path)))
+        if profile == "greenfield_modular" and interface_truth_present and (expected_obligations or expected_contracts):
+            packet_interface_refs = set(str_items(payload.get("interface_contract_refs")))
+            packet_interfaces = [item for item in as_list(payload.get("interface_contracts")) if isinstance(item, dict)]
+            packet_edges = [item for item in as_list(payload.get("edge_interfaces")) if isinstance(item, dict)]
+            packet_boundaries = [item for item in as_list(payload.get("module_boundaries")) if isinstance(item, dict)]
+            expected_interface_refs: set[str] = set()
+            for contract in as_list(payload.get("contracts")):
+                if isinstance(contract, dict):
+                    expected_interface_refs.update(contract_interface_refs(contract))
+            for edge in decomposition_edges:
+                if module_edge_touches(edge, mid) and str(edge.get("interface_contract") or "").strip():
+                    expected_interface_refs.add(str(edge.get("interface_contract") or "").strip())
+            if expected_interface_refs and not packet_interface_refs:
+                issues.append(issue("MODULE_PACKET_INTERFACE_CONTRACT_REFS", f"{mid} packet needs interface_contract_refs projected from contracts/modeling.", str(path)))
+            missing_interface_refs = sorted(expected_interface_refs - packet_interface_refs)
+            if missing_interface_refs:
+                issues.append(issue("MODULE_PACKET_INTERFACE_CONTRACT_MISSING", f"{mid} packet missing interface contract refs: {missing_interface_refs}.", str(path)))
+            unknown_interface_refs = sorted(ref for ref in packet_interface_refs if model_interface_ids and ref not in model_interface_ids)
+            if unknown_interface_refs:
+                issues.append(issue("MODULE_PACKET_INTERFACE_CONTRACT_UNKNOWN", f"{mid} packet references interface contracts absent from modeling.yaml: {unknown_interface_refs}.", str(path)))
+            if packet_interface_refs and not packet_interfaces:
+                issues.append(issue("MODULE_PACKET_INTERFACE_CONTRACT_PAYLOAD", f"{mid} packet needs interface_contracts payloads for interface refs.", str(path)))
+            if any(isinstance(item, dict) and item.get("missing") for item in packet_interfaces):
+                issues.append(issue("MODULE_PACKET_INTERFACE_CONTRACT_UNRESOLVED", f"{mid} packet has unresolved interface_contracts entries.", str(path)))
+            expected_edges = [edge for edge in decomposition_edges if module_edge_touches(edge, mid)]
+            if expected_edges and not packet_edges:
+                issues.append(issue("MODULE_PACKET_EDGE_INTERFACES", f"{mid} packet needs edge_interfaces projected from decomposition interfaces.", str(path)))
+            if expected_interface_refs and not packet_boundaries and not packet_edges:
+                issues.append(issue("MODULE_PACKET_INTERFACE_BOUNDARY", f"{mid} packet needs module_boundaries or edge_interfaces for interface-authoring dispatch.", str(path)))
 
     if profile == "greenfield_modular":
         for file_rel, mids in sorted(file_owners.items()):

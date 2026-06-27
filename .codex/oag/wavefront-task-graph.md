@@ -57,3 +57,5 @@ It lives under:
   `oag_wavefront_decision.v1`.
 - Allowing a worker receipt to claim closure.
 - Repairing failing simulation before read-only failure triage.
+- Leaving completed child threads open after their receipts have been
+  integrated, which can exhaust native subagent slots in later batches.

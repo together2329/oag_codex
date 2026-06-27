@@ -113,14 +113,14 @@ handoff_targets = ["oag-rtl-lint-static-agent", "oag-tb-implementation-agent", "
 id = "oag-rtl-lint-static-agent"
 source_file = ".codex/agents/oag-rtl-lint-static-agent.toml"
 kind = "core"
-responsibility = "Run and interpret DUT compile, lint, static structure, and RTL facts checks."
+responsibility = "Run and interpret DUT compile, lint, static structure, RTL facts checks, and contract-to-implementation review."
 may_modify_source = false
 may_write_evidence = true
-allowed_write_paths = ["reports/", "knowledge/rtl_facts/", "knowledge/lint/"]
+allowed_write_paths = ["reports/", "knowledge/rtl_facts/", "knowledge/lint/", "knowledge/gap_matrix/"]
 may_claim_complete = false
 final_decision_authority = false
 requires_oag_context = true
-required_evidence = ["rtl_compile report", "dut_lint report", "design facts graph"]
+required_evidence = ["rtl_compile report", "dut_lint report", "design facts graph", "implementation review report when requested"]
 forbidden_actions = ["waive diagnostics without contract authority", "claim behavioral correctness from static checks alone"]
 handoff_targets = ["oag-rtl-implementation-agent", "oag-evidence-validator"]
 

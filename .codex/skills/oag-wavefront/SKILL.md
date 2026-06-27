@@ -27,7 +27,11 @@ are satisfied.
    `oag_wavefront_decision.v1` record.
 9. Let a single integration owner write shared run artifacts.
 10. Use read-only triage before repair when simulation fails.
-11. Let parent/gate decide closure.
+11. For implementation gaps, consume `implementation_review` evidence and run
+    highest-priority dependency-ready gaps first.
+12. Close completed child threads after their receipts are integrated or
+    rejected, before opening another fan-out batch.
+13. Let parent/gate decide closure.
 
 ## Commands
 
@@ -104,6 +108,22 @@ Verify graph invariants:
 python3 .codex/scripts/oag_wavefront.py verify --ip-dir <ip> --run-id <run_id> --json
 ```
 
+Plan from implementation-review gaps when present:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json
+```
+
+For imported or partial legacy IPs without an OAG scaffold, use:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --legacy-no-scaffold --json
+```
+
+Use `plan.next_wave.actions` as the next spawn batch. It is sorted by
+P0/P1/P2/P3 priority and excludes actions whose dependencies are not satisfied
+or whose target artifacts overlap within the batch.
+
 ## Rules
 
 - Read-only extraction and failure triage may fan out aggressively.
@@ -114,3 +134,5 @@ python3 .codex/scripts/oag_wavefront.py verify --ip-dir <ip> --run-id <run_id> -
 - Worker receipts do not unlock downstream work; they move tasks to
   `review_pending`.
 - No approved reviewer decision, no `handoff_pass`.
+- No new fan-out batch while completed child threads remain open after receipt
+  integration.

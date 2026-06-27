@@ -780,7 +780,7 @@ def test_dot_oag_migration_tool(tmp_root: Path) -> None:
     ip = tmp_root / "mig_ip"
     sc = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
     assert sc["ok"] is True, sc
-    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "legacy scaffold expected"
+    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "top-level OAG state scaffold expected"
     pre = {"ontology": _hash_tree(ip / "ontology"), "knowledge": _hash_tree(ip / "knowledge")}
 
     # dry-run must change nothing.

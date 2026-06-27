@@ -56,8 +56,11 @@ Allowed first actions for a short IP request:
 - read this skill and repo-local OAG guidance;
 - check whether the requested IP already exists and keep it separate from other
   IP workspaces;
-- create at most a draft scaffold/workspace when needed to store interview
-  notes;
+- create at most a draft scaffold/workspace when the IP is new and an OAG state
+  area is needed to store interview notes;
+- for an imported or partial legacy IP, do not scaffold over the source tree;
+  preserve the existing RTL/document hierarchy and attach OAG state through a
+  `.oag` overlay or external analysis workspace;
 - run `oag.inspect`, `oag.compile`, and `oag.context` only to understand the
   draft workspace state;
 - attempt bounded spec/source discovery;
@@ -213,6 +216,22 @@ role-specific authoring packets under `ontology/generated/authoring_packets/`.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 
+For legacy or partially implemented IP, scaffold is not required and should not
+reshape the source tree. Use the existing RTL/doc/filelist hierarchy as
+implementation evidence, select the `legacy_preserve` decomposition profile,
+and keep OAG facts in a `.oag` overlay or separate analysis workspace. A
+reviewer should compare the existing implementation against spec-derived
+requirements/contracts and write:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --legacy-no-scaffold --json
+```
+
+The resulting gap matrix ranks missing/partial contracts by priority and feeds
+wavefront scheduling. Only when a gap action needs edits should dispatch target
+the legacy files or wrapper files explicitly; there is no synthetic `rtl/`
+layout requirement for imported IP.
+
 Do not require a specific testbench implementation. Verilog, SystemVerilog,
 UVM, Python, cocotb, or a simulator adapter are all valid if they emit the
 standard evidence rows in `sim/scoreboard_events.jsonl`.
@@ -231,10 +250,12 @@ python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments"
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
 ```
 
-Use `oag.inspect` for legacy IP folders with no knowledge ledger. Use
-`oag.compile` after ontology edits. Use `oag.context` for prompt-ready ontology
-records. When Codex hooks are enabled, `codex_context_inject.py` can inject this
-context automatically on relevant UserPromptSubmit events.
+Use `oag.inspect` for legacy IP folders with no knowledge ledger. Legacy
+inspection is read-only: do not create scaffold directories unless the user is
+creating a new IP or explicitly asks for an OAG overlay. Use `oag.compile` after
+ontology edits. Use `oag.context` for prompt-ready ontology records. When Codex
+hooks are enabled, `codex_context_inject.py` can inject this context
+automatically on relevant UserPromptSubmit events.
 
 For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:
@@ -349,6 +370,21 @@ subagents are execution actors only. They must stay inside the prompted shard,
 preserve ROCEV traceability, and produce evidence paths. They cannot claim final
 completion, approve protected ontology edits, or replace `oag.check`,
 `oag.decide`, evidence validation, or gate review.
+
+For partial implementations, use implementation-review evidence before opening
+repair waves:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json
+```
+
+The report is normally
+`knowledge/gap_matrix/implementation_review.json` with
+`evidence_kind=implementation_review`. It classifies each contract as
+`implemented`, `partial`, `missing`, `unverifiable`, or `not_applicable`, ranks
+open gaps by P0/P1/P2/P3, and declares dependencies. Dispatch
+`plan.next_wave.actions` first; actions in the same wave may run in parallel
+only when dependency blockers are empty and target artifacts are disjoint.
 
 Requirement detail work before lock stays main-owned, but use read-heavy
 subagents when they help: spec extraction, reference RTL comparison, ambiguity
@@ -476,7 +512,8 @@ hard-coding "all one file" or "always split":
   current-IP module should map to a unique RTL file by default; shared files
   require explicit `shared_file_rationale`.
 - `legacy_preserve`: imported legacy IPs keep existing hierarchy while OAG maps
-  requirements and evidence onto that hierarchy.
+  requirements, contracts, gap actions, and evidence onto that hierarchy; no
+  scaffolded `rtl/` layout is required.
 - `wrapper_adapter`: a legacy/child core remains protected while wrapper or
   adapter modules own new integration obligations.
 

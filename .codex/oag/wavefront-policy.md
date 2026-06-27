@@ -41,6 +41,13 @@ A task is ready only when:
 3. no active ownership lock conflicts with its write paths;
 4. the task keeps `may_claim_complete=false`.
 
+For gap-driven work, parent orchestration should consume the latest
+`knowledge/gap_matrix/implementation_review.json` when present. Open
+implementation findings are scheduled by highest priority first (`P0` before
+`P1`, then `P2`, then `P3`). Tasks in the same priority band may run in
+parallel only when their dependency fields are satisfied and their target
+artifacts do not overlap.
+
 `handoff_pass` is not a worker self-claim. A worker receipt moves a task to
 `review_pending`. Only an approved `oag_wavefront_decision.v1` review record
 may move `review_pending` to `handoff_pass` and unlock downstream barriers.
@@ -52,6 +59,11 @@ Wavefront workers may say `HANDOFF_PASS`, `BLOCKED`, `FAIL`, or
 Parent orchestration records worker `HANDOFF_PASS` receipts as
 `review_pending` until `oag-custom-reviewer` or a narrower reviewer approves
 the handoff rationale.
+
+After a child reaches `handoff_pass`, `blocked`, `failed`, or `inconclusive`
+and the parent has integrated or rejected its receipt, close that native child
+thread before opening another fan-out batch. Completed child threads are not
+OAG evidence and should not consume runtime subagent slots.
 
 ## TB Barrier Pattern
 
