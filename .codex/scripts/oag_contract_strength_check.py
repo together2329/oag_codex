@@ -254,6 +254,7 @@ def check_contract(
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     hard_gate = require_locked or is_locked(ip_dir)
     path = oag_paths.legacy_or_hidden(ip_dir, "ontology/contracts.yaml")
     doc = read_yaml(path)

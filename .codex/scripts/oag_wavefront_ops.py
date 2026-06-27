@@ -61,6 +61,17 @@ class ClaimRequest:
 def create_wavefront_run(request: PlanRequest) -> JsonObject:
     now = utc_now()
     paths = graph_paths(request.run)
+    if not request.run.ip_dir.is_dir():
+        return _plan_failure(
+            paths,
+            [
+                issue(
+                    "IP_DIR_MISSING",
+                    "wavefront plan requires an existing IP directory; check --ip-dir and OAG_PROJECT_ROOT before planning",
+                    display_path(request.run.ip_dir),
+                )
+            ],
+        )
     tasks, task_issues = normalize_wavefront_tasks(request.raw_tasks, request.run.ip_dir)
     if task_issues:
         return _plan_failure(paths, task_issues)

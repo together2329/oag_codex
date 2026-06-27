@@ -1087,6 +1087,137 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: str, contract_id: str, obligation_id: str) -> None:
+    (ip / "ontology" / "generated" / "authoring_packets").mkdir(parents=True, exist_ok=True)
+    (ip / "ontology" / "contracts.yaml").write_text(
+        f"schema_version: oag_contracts.v2\ncontracts:\n- id: {contract_id}\n  status: locked\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "decomposition.yaml").write_text(
+        "\n".join(
+            [
+                "schema: oag_decomposition.v1",
+                f"ip: {ip.name}",
+                "profile:",
+                "  mode: greenfield_modular",
+                "modules:",
+                f"  - id: {module_id}",
+                f"    name: {module_id}",
+                "    role: rtl",
+                "    ownership: current_ip",
+                f"    file: {rtl_file}",
+                f"    owned_obligations: [{obligation_id}]",
+                f"    owned_contracts: [{contract_id}]",
+                "    structure_refs: [SIG_SMOKE]",
+                "    source_refs: [ontology/contracts.yaml]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "domain_intent.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: oag_domain_intent.v1",
+                f"ip: {ip.name}",
+                "clock_domains:",
+                "  - id: CD_CLK",
+                "    clock: clk",
+                "reset_domains:",
+                "  - id: RD_RST_N",
+                "    reset: rst_n",
+                "    clock_domain: CD_CLK",
+                "    polarity: active_low",
+                "    assertion: asynchronous",
+                "    deassertion: synchronous",
+                "cdc_crossings: []",
+                "rdc_crossings:",
+                "  - id: RDC_NONE",
+                "    classification: no_known_rdc",
+                "    basis: [single clock/reset fixture]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    packet_dir = ip / "ontology" / "generated" / "authoring_packets"
+    (packet_dir / f"module__{module_id}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_authoring_packet.v1",
+                "generated_by": "smoke",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "ip": ip.name,
+                "module": {"id": module_id, "name": module_id, "file": rtl_file},
+                "structure_profile": "greenfield_modular",
+                "source_refs": ["ontology/contracts.yaml"],
+                "structure_refs": ["SIG_SMOKE"],
+                "obligations": [{"id": obligation_id}],
+                "contracts": [{"id": contract_id}],
+                "requirements": [],
+                "execution_policy": {"edit_policy": "subagent_only"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (packet_dir / f"rtl__{ip.name}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_rtl_authoring_packet.v1",
+                "packet_type": "rtl_authoring_packet",
+                "ip": ip.name,
+                "allowed_truth_sources": ["ontology/contracts.yaml"],
+                "forbidden_sources": ["tb", "sim", "dut_output"],
+                "contract_refs_to_implement": [contract_id],
+                "behavior_refs_implemented_target": ["behavior_model.smoke"],
+                "ppa_notes_required": True,
+                "cdc_rdc_notes_required": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (packet_dir / f"tb__{ip.name}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_tb_authoring_packet.v1",
+                "packet_type": "tb_authoring_packet",
+                "ip": ip.name,
+                "expected_source_policy": "contract_oracle_only",
+                "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation"],
+                "contract_refs": [contract_id],
+                "scenario_refs": ["SCN_SMOKE"],
+                "scoreboard_row_refs": ["EVT_SMOKE"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    compile_inputs = ["ontology/contracts.yaml", "ontology/decomposition.yaml", "ontology/domain_intent.yaml"]
+    (ip / "ontology" / "generated" / "compile_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_compile_manifest.v1",
+                "status": "pass",
+                "compiled_at": "2026-01-01T00:00:00Z",
+                "input_fingerprints": [{"path": rel, "sha256": sha256(ip / rel)} for rel in compile_inputs],
+                "output_fingerprints": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def make_ip(root: Path) -> Path:
     ip = root / "demo_counter_cx1"
     scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
@@ -1751,6 +1882,57 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
     packet_dir = ip / "ontology" / "generated" / "authoring_packets"
     packet_dir.mkdir(parents=True)
     (ip / "ontology").mkdir(exist_ok=True)
+    (ip / "ontology" / "contracts.yaml").write_text(
+        "schema_version: oag_contracts.v2\ncontracts:\n- id: CONTRACT_DEMO\n  status: locked\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "decomposition.yaml").write_text(
+        "\n".join(
+            [
+                "schema: oag_decomposition.v1",
+                "ip: packet_lifecycle_ip",
+                "profile:",
+                "  mode: greenfield_modular",
+                "modules:",
+                "  - id: demo",
+                "    name: demo",
+                "    role: rtl",
+                "    ownership: current_ip",
+                "    file: rtl/top.sv",
+                "    owned_obligations: [OBL_DEMO]",
+                "    owned_contracts: [CONTRACT_DEMO]",
+                "    structure_refs: [SIG_DEMO]",
+                "    source_refs: [ontology/contracts.yaml]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "domain_intent.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: oag_domain_intent.v1",
+                "ip: packet_lifecycle_ip",
+                "clock_domains:",
+                "  - id: CD_CLK",
+                "    clock: clk",
+                "reset_domains:",
+                "  - id: RD_RST_N",
+                "    reset: rst_n",
+                "    clock_domain: CD_CLK",
+                "    polarity: active_low",
+                "    assertion: asynchronous",
+                "    deassertion: synchronous",
+                "cdc_crossings: []",
+                "rdc_crossings:",
+                "  - id: RDC_NONE",
+                "    classification: no_known_rdc",
+                "    basis: [single clock/reset fixture]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     lifecycle = {
         "schema_version": "oag_artifact_lifecycle.v1",
         "artifacts": [
@@ -1818,8 +2000,51 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
     }
     rtl_path = packet_dir / "rtl__demo.json"
     tb_path = packet_dir / "tb__demo.json"
+    module_path = packet_dir / "module__demo.json"
     rtl_path.write_text(json.dumps(rtl_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tb_path.write_text(json.dumps(tb_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    module_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_authoring_packet.v1",
+                "generated_by": "smoke",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "ip": "packet_lifecycle_ip",
+                "module": {"id": "demo", "name": "demo", "file": "rtl/top.sv"},
+                "structure_profile": "greenfield_modular",
+                "source_refs": ["ontology/contracts.yaml"],
+                "structure_refs": ["SIG_DEMO"],
+                "obligations": [{"id": "OBL_DEMO"}],
+                "contracts": [{"id": "CONTRACT_DEMO"}],
+                "requirements": [],
+                "execution_policy": {"edit_policy": "subagent_only"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    compile_inputs = [
+        "ontology/contracts.yaml",
+        "ontology/decomposition.yaml",
+        "ontology/domain_intent.yaml",
+    ]
+    (ip / "ontology" / "generated" / "compile_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_compile_manifest.v1",
+                "status": "pass",
+                "compiled_at": "2026-01-01T00:00:00Z",
+                "input_fingerprints": [{"path": rel, "sha256": sha256(ip / rel)} for rel in compile_inputs],
+                "output_fingerprints": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     good = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--require-lifecycle", "--json")
     assert good.returncode == 0, good.stderr or good.stdout
@@ -2946,6 +3171,13 @@ def main() -> int:
             )
             + "\n",
             encoding="utf-8",
+        )
+        write_minimal_rtl_dispatch_readiness(
+            hook_ip,
+            module_id="smoke",
+            rtl_file="rtl/smoke.sv",
+            contract_id="CONTRACT_SMOKE",
+            obligation_id="OBL_SMOKE",
         )
         dispatch_create_args = (
             "create",

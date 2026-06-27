@@ -118,6 +118,7 @@ def domain_intent_issues(intent: dict[str, Any], *, require_domain_intent: bool)
 
 
 def check(ip_dir: Path, rtl_files: list[Path], *, require_domain_intent: bool) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     intent_path = oag_paths.legacy_or_hidden(ip_dir, "ontology/domain_intent.yaml")
     intent = read_yaml(intent_path)
     issues = domain_intent_issues(intent, require_domain_intent=require_domain_intent)

@@ -236,6 +236,7 @@ def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str]) ->
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     locked = is_locked(ip_dir)
     hard_gate = require_locked or locked
     source_issues, claim_ids, source_counts = check_source_claims(ip_dir, hard_gate=hard_gate)

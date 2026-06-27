@@ -259,6 +259,7 @@ def check_contracts(ip_dir: Path, *, require_locked: bool) -> list[dict[str, str
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     atom_issues = check_atoms(ip_dir, require_locked=require_locked)
     obligation_issues = check_obligations(ip_dir, require_locked=require_locked)
     contract_issues = check_contracts(ip_dir, require_locked=require_locked)

@@ -18,7 +18,7 @@ SHARD_EVIDENCE_PREFIXES = ("sim/slices/", "cov/slices/", "formal/slices/", "know
 
 
 def dispatch_has_wavefront_metadata(dispatch: JsonObject) -> bool:
-    return any(str(dispatch.get(field) or "") for field in WAVEFRONT_FIELDS)
+    return bool(str(dispatch.get("wavefront_run_id") or "") or str(dispatch.get("task_id") or ""))
 
 
 def ip_relative(normalized_project_path: str, ip_rel: str) -> str:
@@ -95,11 +95,17 @@ def collect_wavefront_claim_issues(dispatch: JsonObject) -> list[Issue]:
         issues.append(issue("WAVEFRONT_TASK_COMPLETION_CLAIM", "graph task must keep may_claim_complete=false", task_id))
 
     dispatch_id = str(dispatch.get("dispatch_id") or "")
-    matching_locks = [
-        lock
-        for lock in locks.get("locks", [])
-        if isinstance(lock, dict) and str(lock.get("task_id") or "") == task_id and str(lock.get("dispatch_id") or "") == dispatch_id
-    ]
-    if not matching_locks:
-        issues.append(issue("WAVEFRONT_CLAIM_DISPATCH_MISMATCH", "no ownership lock binds dispatch_id to dispatch.task_id", task_id))
+    task_kind = str(task.get("kind") or "")
+    task_write_paths = [str(path) for path in task.get("allowed_write_paths") or []]
+    lockless_read_only = ownership_mode == "none" and task_kind == "read_only" and not task_write_paths
+    if ownership_mode == "none" and not lockless_read_only:
+        issues.append(issue("WAVEFRONT_LOCKLESS_TASK_SCOPE", "ownership_mode=none is only valid for read_only tasks with no write paths", task_id))
+    if not lockless_read_only:
+        matching_locks = [
+            lock
+            for lock in locks.get("locks", [])
+            if isinstance(lock, dict) and str(lock.get("task_id") or "") == task_id and str(lock.get("dispatch_id") or "") == dispatch_id
+        ]
+        if not matching_locks:
+            issues.append(issue("WAVEFRONT_CLAIM_DISPATCH_MISMATCH", "no ownership lock binds dispatch_id to dispatch.task_id", task_id))
     return issues

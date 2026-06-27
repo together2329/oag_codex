@@ -262,7 +262,7 @@ def _ip_dir(arguments: dict[str, Any]) -> Path:
     # Resolve here so the IP base is consistent with oag_paths.* (which resolve
     # internally); otherwise `<resolver_path>.relative_to(ip)` mismatches on
     # platforms where the temp/real root differs (e.g. macOS /var -> /private/var).
-    return Path(str(raw)).expanduser().resolve()
+    return oag_paths.ip_root(str(raw))
 
 
 def _read_json_file(path: Path) -> Any:

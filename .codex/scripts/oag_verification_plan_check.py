@@ -138,6 +138,7 @@ def objective_needs_strong_proof(objective: dict[str, Any]) -> bool:
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     locked = is_locked(ip_dir)
     hard_gate = require_locked or locked
     path = ip_dir / Path("ontology/verification_plan.yaml")

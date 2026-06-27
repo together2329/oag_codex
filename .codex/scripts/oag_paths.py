@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,24 @@ HIDDEN_DIR = ".oag"
 OAG_TOP_LEVEL_DIRS = frozenset({"knowledge", "ontology", "evidence", "cache", "manifests"})
 
 
+def project_root() -> Path | None:
+    override = os.environ.get("OAG_PROJECT_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / ".codex").exists():
+            return candidate
+    return None
+
+
 def ip_root(ip_dir: str | Path) -> Path:
-    return Path(ip_dir).expanduser().resolve()
+    path = Path(ip_dir).expanduser()
+    if not path.is_absolute():
+        root = project_root()
+        if root is not None:
+            path = root / path
+    return path.resolve()
 
 
 def oag_root(ip_dir: str | Path) -> Path:
