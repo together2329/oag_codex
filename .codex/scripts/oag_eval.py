@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -210,6 +211,8 @@ def _record_closed_validation(ip: Path, *, surface: str = "eval") -> dict[str, A
 def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "blocks_incomplete")
     run_id, started = _start_run(ip, intent="eval incomplete run blocks stop")
+    candidate = started["dispatch_command_candidates"][0]
+    command_env = {**os.environ, "OAG_DISABLE_BACKEND": "1", "OAG_PROJECT_ROOT": str(root)}
     rc, payload, stderr = _hook_json(ip, run_id)
     assert rc == 0, stderr
     assert payload is not None, "expected Codex hook block JSON"
@@ -217,12 +220,40 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     reason = str(payload.get("reason") or "")
     assert "OAG NEXT ACTION" in reason, payload
     assert "run incomplete" in reason, payload
+    assert "oag_dispatch.py create" in reason, payload
+    assert "--wavefront-run-id" in reason, payload
+    assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in reason, payload
+    assert "--dispatch-id <dispatch_id>" in reason, payload
+    create_proc = subprocess.run(
+        shlex.split(candidate["dispatch_create_command"]),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+        env=command_env,
+    )
+    assert create_proc.returncode == 0, create_proc.stderr or create_proc.stdout
+    dispatch_id = json.loads(create_proc.stdout)["dispatch"]["dispatch_id"]
+    claim_command = candidate["claim_command"].replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+    claim_proc = subprocess.run(
+        shlex.split(claim_command),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+        env=command_env,
+    )
+    assert claim_proc.returncode == 0, claim_proc.stderr or claim_proc.stdout
     return {
         "ip": str(ip),
         "run_id": run_id,
         "active_obligation": started["next_action"]["active_obligation"],
         "hook_decision": payload["decision"],
         "contains_next_action": "OAG NEXT ACTION" in reason,
+        "contains_dispatch_create": "oag_dispatch.py create" in reason,
+        "contains_claim_dispatch_id": "--dispatch-id <dispatch_id>" in reason,
+        "generated_dispatch_id": dispatch_id,
+        "generated_claim_passed": True,
     }
 
 
@@ -2199,6 +2230,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="print JSON report")
     parser.add_argument("--keep-temp", action="store_true", help="keep the temporary evaluation IPs on disk")
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help="run only matching case names; may be repeated and accepts substrings",
+    )
     args = parser.parse_args(argv)
 
     if args.keep_temp:
@@ -2209,7 +2246,14 @@ def main(argv: list[str] | None = None) -> int:
         temp_dir = cleanup.name
 
     root = Path(temp_dir)
-    cases = [_run_case(name, fn, root) for name, fn in CASES]
+    selected = CASES
+    if args.case:
+        needles = [str(item).strip() for item in args.case if str(item).strip()]
+        selected = [(name, fn) for name, fn in CASES if any(needle in name for needle in needles)]
+        if not selected:
+            print(f"no matching OAG eval cases for: {', '.join(needles)}", file=sys.stderr)
+            return 2
+    cases = [_run_case(name, fn, root) for name, fn in selected]
     passed = sum(1 for case in cases if case["ok"])
     report = {
         "schema_version": "oag_evaluation_report.v1",

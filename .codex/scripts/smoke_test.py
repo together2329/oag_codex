@@ -3785,6 +3785,21 @@ def main() -> int:
         assert run_start["result"]["status"] == "in_progress", run_start
         assert run_start["result"]["next_action"]["active_obligation"] == "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", run_start
         assert "OAG NEXT ACTION" in run_start["result"]["next_action"]["prompt_block"], run_start
+        run_start_candidates = run_start["result"]["dispatch_command_candidates"]
+        assert run_start_candidates, run_start
+        first_candidate = run_start_candidates[0]
+        assert "oag_dispatch.py create" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--wavefront-run-id" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--dispatch-id <dispatch_id>" in first_candidate["claim_command"], first_candidate
+        assert first_candidate["command_sequence"] == [
+            first_candidate["dispatch_create_command"],
+            first_candidate["claim_command"],
+        ], first_candidate
+        run_start_prompt = run_start["result"]["next_action"]["prompt_block"]
+        assert "dispatch_candidates=" in run_start_prompt, run_start_prompt
+        assert "oag_dispatch.py create" in run_start_prompt, run_start_prompt
+        assert "--dispatch-id <dispatch_id>" in run_start_prompt, run_start_prompt
         assert (ip / "ontology" / "runs" / run_id / "run_state.json").is_file(), run_start
         assert (ip / "ontology" / "runs" / run_id / "next_action.json").is_file(), run_start
         assert (ip / "ontology" / "runs" / run_id / "checkpoint_history.jsonl").is_file(), run_start

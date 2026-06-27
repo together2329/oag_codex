@@ -7645,18 +7645,54 @@ def _ensure_run_wavefront_graph(ip: Path, state: dict[str, Any]) -> dict[str, An
 
 def _dispatch_candidate(ip: Path, run_id: str, task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task.get("task_id") or "")
-    command = (
+    agent_type = str(task.get("agent_type") or "oag-custom-worker").strip() or "oag-custom-worker"
+    stage = str(task.get("phase") or task.get("kind") or "wavefront_task").strip() or "wavefront_task"
+    ownership_mode = str(task.get("ownership_mode") or "").strip()
+    receipt_name = f"{_safe_filename(task_id)}_{_safe_filename(agent_type)}.json"
+    receipt_path = ip / "knowledge" / "subagents" / receipt_name
+    create_parts = [
+        "python3",
+        ".codex/scripts/oag_dispatch.py",
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        agent_type,
+        "--stage",
+        stage,
+        "--receipt-path",
+        str(receipt_path),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        task_id,
+        "--json",
+    ]
+    if ownership_mode:
+        create_parts.extend(["--ownership-mode", ownership_mode])
+    for path in task_write_paths(task):
+        create_parts.extend(["--allowed-write-path", str(ip / path)])
+    create_command = " ".join(shlex.quote(part) for part in create_parts)
+    claim_command = (
         "python3 .codex/scripts/oag_wavefront.py claim"
         f" --ip-dir {shlex.quote(str(ip))}"
         f" --run-id {shlex.quote(run_id)}"
         f" --task-id {shlex.quote(task_id)}"
+        " --dispatch-id <dispatch_id>"
         " --claimed-by <actor>"
         " --json"
     )
     return {
         "task_id": task_id,
-        "command": command,
-        "ownership_mode": str(task.get("ownership_mode") or ""),
+        "command": claim_command,
+        "command_sequence": [create_command, claim_command],
+        "dispatch_create_command": create_command,
+        "claim_command": claim_command,
+        "dispatch_id_placeholder": "<dispatch_id>",
+        "agent_type": agent_type,
+        "stage": stage,
+        "receipt_path": str(receipt_path),
+        "ownership_mode": ownership_mode,
         "may_claim_complete": False,
     }
 
@@ -7754,6 +7790,10 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
     active_contracts = _str_items(selected.get("contracts"))
     owner = selected.get("owner") if isinstance(selected.get("owner"), dict) else {}
     dispatch_candidates = [_dispatch_candidate(ip, run_id, task) for task in ready]
+    commands: list[str] = []
+    for candidate in dispatch_candidates:
+        sequence = candidate.get("command_sequence") if isinstance(candidate.get("command_sequence"), list) else []
+        commands.extend(str(command) for command in sequence if str(command).strip())
     next_action = {
         "kind": str(selected.get("next_action_kind") or ("dispatch_ready_task" if ready else "wait_for_graph_dependencies")),
         "summary": str(selected.get("summary") or ("Dispatch a graph-ready OAG task." if ready else "No graph tasks are ready; clear blockers or complete active work.")),
@@ -7762,7 +7802,7 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
             f"blocked_tasks={len(blocked)}",
             f"active_locks={len(_as_list(locks.get('locks')))}",
         ],
-        "commands": [candidate["command"] for candidate in dispatch_candidates],
+        "commands": commands,
         "required_evidence": _str_items(selected.get("required_evidence")),
     }
     matrix = _closure_matrix(ip)
@@ -8331,8 +8371,10 @@ def _append_dispatch_candidates(lines: list[str], candidates: Any, *, limit: int
     for candidate in candidates[:limit]:
         if isinstance(candidate, dict):
             task_id = str(candidate.get("task_id") or "").strip()
-            command = _clip_prompt_text(candidate.get("command"), 260)
-            lines.append(f"- task={task_id or '<unknown>'} command={command}")
+            create_command = _clip_prompt_text(candidate.get("dispatch_create_command"), 320)
+            claim_command = _clip_prompt_text(candidate.get("claim_command") or candidate.get("command"), 260)
+            lines.append(f"- task={task_id or '<unknown>'} create={create_command}")
+            lines.append(f"  claim={claim_command}")
         else:
             lines.append(f"- {_clip_prompt_text(candidate, 260)}")
     if len(candidates) > limit:
