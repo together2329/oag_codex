@@ -16,7 +16,20 @@ from oag_validate_json import validate_document
 
 SCRIPTS_DIR: Final = Path(__file__).resolve().parent
 CODEX_ROOT: Final = SCRIPTS_DIR.parent
-PROJECT_ROOT: Final = Path(os.environ.get("OAG_PROJECT_ROOT") or CODEX_ROOT.parent).expanduser().resolve()
+
+
+def _default_project_root() -> Path:
+    override = os.environ.get("OAG_PROJECT_ROOT")
+    if override:
+        return Path(override).expanduser().resolve()
+    cwd = Path.cwd().resolve()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / ".codex").exists():
+            return candidate
+    return CODEX_ROOT.parent.expanduser().resolve()
+
+
+PROJECT_ROOT: Final = _default_project_root()
 SCHEMAS_DIR: Final = CODEX_ROOT / "schemas"
 RUN_LOCK_TIMEOUT_SECONDS: Final = 10.0
 RUN_LOCK_STALE_SECONDS: Final = 120.0

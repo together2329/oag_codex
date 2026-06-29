@@ -56,8 +56,11 @@ Allowed first actions for a short IP request:
 - read this skill and repo-local OAG guidance;
 - check whether the requested IP already exists and keep it separate from other
   IP workspaces;
-- create at most a draft scaffold/workspace when needed to store interview
-  notes;
+- create at most a draft scaffold/workspace when the IP is new and an OAG state
+  area is needed to store interview notes;
+- for an imported or partial legacy IP, do not scaffold over the source tree;
+  preserve the existing RTL/document hierarchy and attach OAG state through a
+  `.oag` overlay or external analysis workspace;
 - run `oag.inspect`, `oag.compile`, and `oag.context` only to understand the
   draft workspace state;
 - attempt bounded spec/source discovery;
@@ -164,13 +167,27 @@ The generated `ontology/generated/authoring_packets/rtl__*.json` and
 `tb__*.json` files are the role-specific implementation and proof inputs.
 RTL/TB agents should not reinterpret original prose once these packets exist.
 
+File-scoped repair prompts still enter OAG. If the user asks to find, fix,
+debug, test, or review a file reference such as `@ip_name/rtl/foo.sv`,
+`@ip_name/tb/bar.sv`, or an absolute path under an IP workspace, first resolve
+the owning IP root and run the same OAG context/lock/packet gates as if the user
+had named the IP explicitly. Do not wait for the prompt to contain the literal
+word `oag`. If multiple file references map to different IP roots, stop and
+split the work by IP instead of guessing.
+
+When RTL/TB dispatch creation fails only because the generated compile manifest
+is missing or stale, refresh it with `oag.compile` and retry the packet gate
+once. Treat schema, projection, lifecycle, decomposition, domain, or packet
+content failures as real blockers; do not hide them behind repeated compile
+loops.
+
 When multiple RTL/TB/sim tasks should run in parallel, use wavefront scheduling
 instead of unconstrained fan-out:
 
 ```bash
 python3 .codex/scripts/oag_wavefront.py plan --ip-dir <ip> --run-id <run> --template .codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml --json
 python3 .codex/scripts/oag_wavefront.py ready --ip-dir <ip> --run-id <run> --json
-python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --json
+python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --dispatch-id <dispatch_id> --json
 ```
 
 Read-only triage can fan out aggressively. Write tasks require disjoint
@@ -178,6 +195,10 @@ Read-only triage can fan out aggressively. Write tasks require disjoint
 aggregate results, coverage JSON, and closure packages require a single
 integration owner. Simulation failures should be classified by read-only
 triage before repair agents are opened.
+For write/integration wavefront tasks, create the dispatch before claiming and
+pass its `dispatch_id` into the claim. Child receipt verification must happen
+while the task is still `claimed`; only then may the parent record
+`review_pending`, review it, and later record `handoff_pass`.
 
 After user lock, main agent orchestrates; subagents implement and verify. The
 main agent must not directly create or substantially edit RTL, TB, sim, lint,
@@ -213,6 +234,22 @@ role-specific authoring packets under `ontology/generated/authoring_packets/`.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
 
+For legacy or partially implemented IP, scaffold is not required and should not
+reshape the source tree. Use the existing RTL/doc/filelist hierarchy as
+implementation evidence, select the `legacy_preserve` decomposition profile,
+and keep OAG facts in a `.oag` overlay or separate analysis workspace. A
+reviewer should compare the existing implementation against spec-derived
+requirements/contracts and write:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --legacy-no-scaffold --json
+```
+
+The resulting gap matrix ranks missing/partial contracts by priority and feeds
+wavefront scheduling. Only when a gap action needs edits should dispatch target
+the legacy files or wrapper files explicitly; there is no synthetic `rtl/`
+layout requirement for imported IP.
+
 Do not require a specific testbench implementation. Verilog, SystemVerilog,
 UVM, Python, cocotb, or a simulator adapter are all valid if they emit the
 standard evidence rows in `sim/scoreboard_events.jsonl`.
@@ -231,10 +268,12 @@ python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments"
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
 ```
 
-Use `oag.inspect` for legacy IP folders with no knowledge ledger. Use
-`oag.compile` after ontology edits. Use `oag.context` for prompt-ready ontology
-records. When Codex hooks are enabled, `codex_context_inject.py` can inject this
-context automatically on relevant UserPromptSubmit events.
+Use `oag.inspect` for legacy IP folders with no knowledge ledger. Legacy
+inspection is read-only: do not create scaffold directories unless the user is
+creating a new IP or explicitly asks for an OAG overlay. Use `oag.compile` after
+ontology edits. Use `oag.context` for prompt-ready ontology records. When Codex
+hooks are enabled, `codex_context_inject.py` can inject this context
+automatically on relevant UserPromptSubmit events.
 
 For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:
@@ -350,6 +389,21 @@ preserve ROCEV traceability, and produce evidence paths. They cannot claim final
 completion, approve protected ontology edits, or replace `oag.check`,
 `oag.decide`, evidence validation, or gate review.
 
+For partial implementations, use implementation-review evidence before opening
+repair waves:
+
+```bash
+python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json
+```
+
+The report is normally
+`knowledge/gap_matrix/implementation_review.json` with
+`evidence_kind=implementation_review`. It classifies each contract as
+`implemented`, `partial`, `missing`, `unverifiable`, or `not_applicable`, ranks
+open gaps by P0/P1/P2/P3, and declares dependencies. Dispatch
+`plan.next_wave.actions` first; actions in the same wave may run in parallel
+only when dependency blockers are empty and target artifacts are disjoint.
+
 Requirement detail work before lock stays main-owned, but use read-heavy
 subagents when they help: spec extraction, reference RTL comparison, ambiguity
 lists, or candidate obligation/contract review. Their output is draft evidence
@@ -388,6 +442,24 @@ python3 .codex/scripts/oag_dispatch.py verify \
 The verifier compares the child receipt and actual
 `git status --short -uall -- <ip>` delta against the dispatch baseline. Reject or explain any path outside
 the child scope.
+Dispatch records are immutable after creation. Do not edit
+`allowed_write_paths`, `allowed_tool_side_effects`, baseline fields, receipt
+path, wavefront fields, or ownership mode to make a failed verifier pass. If
+the scope or baseline was wrong, mark the worker receipt
+`INCONCLUSIVE`/`BLOCKED`, route cleanup or reconciliation separately, and create
+a new dispatch from the clean baseline. Nested same-name generated artifacts
+such as `<ip>/<ip>/ontology/generated` are cwd contamination, not valid tool
+side effects; clean or rebaseline them through a separate route.
+Use schema preflight before full path verification when repairing receipt
+shape:
+
+```bash
+python3 .codex/scripts/oag_dispatch.py verify \
+  --dispatch <ip>/knowledge/dispatches/<dispatch>.json \
+  --receipt <ip>/knowledge/subagents/<receipt>.json \
+  --schema-only \
+  --json
+```
 
 Subagent receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 `RTL_HANDOFF_PASS` for a bounded worker result. Do not use `PASS`, `COMPLETE`,
@@ -476,7 +548,8 @@ hard-coding "all one file" or "always split":
   current-IP module should map to a unique RTL file by default; shared files
   require explicit `shared_file_rationale`.
 - `legacy_preserve`: imported legacy IPs keep existing hierarchy while OAG maps
-  requirements and evidence onto that hierarchy.
+  requirements, contracts, gap actions, and evidence onto that hierarchy; no
+  scaffolded `rtl/` layout is required.
 - `wrapper_adapter`: a legacy/child core remains protected while wrapper or
   adapter modules own new integration obligations.
 
@@ -607,24 +680,31 @@ Before claiming completion:
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
 python3 .codex/scripts/oag_closure_check.py --ip-dir <ip>
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"approval":{"approved":true,"reason":"Human or owner-approved completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 For an active run, prefer:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","approval":{"approved":true,"reason":"Human or owner-approved run completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 ```
 
 If a stop hook is available, call `oag.stop_check`. If it returns
 `should_continue: true`, continue with the returned prompt block instead of
-claiming completion. If checkpoint repeats the same blocker three times, the run
-status becomes `needs_human`.
+claiming completion. The prompt block is dynamic: it includes the current loop
+policy, ready/blocked wavefront tasks, dispatch candidates, active locks, and
+open closure edges. Each open obligation-to-contract edge should name owner,
+required evidence, approval policy, and criteria so the next action is not
+inferred from prose alone. If checkpoint repeats the same blocker three times,
+the run status becomes `needs_human`.
 
 If `oag.decide` returns `allowed: false`, report the blocker instead of saying
 the IP is complete. If it returns `allowed: true`, the decision receipt under
 `ontology/validations/` is the durable completion decision. Completion actions
-are blocked unless `record_decision` is true.
+are blocked unless `record_decision` is true and the completion request carries
+an explicit approval reason through `approval.reason`, `approval_reason`, or a
+human actor with a non-empty reason. Do not close from tests, summaries, or
+inferred intent alone.
 
 `oag_closure_check.py` is the release-grade package gate: it requires a passing
 `oag.check`, no `oag.inspect` artifact gaps, a passing
@@ -633,6 +713,10 @@ are blocked unless `record_decision` is true.
 current closure artifacts, and no custom subagent final closure claim. If RTL,
 lint, simulation, scoreboard, coverage, validation, or generated evidence
 changes after gate PASS, the gate decision is stale and must be re-run.
+Canonical run summaries that are overwritten by reruns, such as
+`sim/uvm_status.json`, must also be preserved under an immutable run directory
+such as `sim/runs/<timestamp>_<scenario>/uvm_status.json` before they support
+closure or repair receipts.
 
 For `action=signoff`, OAG requires `ontology/policies.yaml` to use
 `closure_profile: signoff`, a compiled truth graph, a closed closure matrix,

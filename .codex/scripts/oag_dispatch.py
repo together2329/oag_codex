@@ -46,6 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     verify = sub.add_parser("verify", help="Verify a dispatch against a child receipt and actual path delta.")
     verify.add_argument("--dispatch", required=True)
     verify.add_argument("--receipt", required=True)
+    verify.add_argument("--schema-only", action="store_true", help="Validate dispatch/receipt JSON schema without checking workspace delta.")
     verify.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)

@@ -29,6 +29,7 @@ SPEC_RTL_LOOP = ROOT / "scripts" / "oag_spec_to_rtl_loop.py"
 EXEC_AUTO_RESEARCH = ROOT / "scripts" / "oag_exec_auto_research.py"
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
 WAVEFRONT = ROOT / "scripts" / "oag_wavefront.py"
+DECISION_HARNESS = ROOT / "scripts" / "oag_decision_harness.py"
 MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
@@ -231,6 +232,20 @@ def run_wavefront(*args: str, project_root: Path | None = None) -> subprocess.Co
     )
 
 
+def run_decision_harness(*args: str, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(DECISION_HARNESS), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
 def task5_rel(project: Path, path: Path) -> str:
     return path.resolve().relative_to(project.resolve()).as_posix()
 
@@ -335,8 +350,43 @@ def write_task5_dispatch(
         },
         "created_at": "2026-01-01T00:00:00Z",
     }
+    dispatch["dispatch_integrity"] = task5_dispatch_integrity(dispatch)
     dispatch_path.write_text(json.dumps(dispatch, sort_keys=True) + "\n", encoding="utf-8")
     return dispatch_path, receipt_path, dispatch
+
+
+def task5_dispatch_integrity(dispatch: dict) -> dict:
+    protected_fields = [
+        "schema_version",
+        "dispatch_id",
+        "dispatch_path",
+        "agent_type",
+        "role_name",
+        "role_kind",
+        "registered_id",
+        "ip_id",
+        "ip_dir",
+        "stage",
+        "owned_obligations",
+        "contracts",
+        "allowed_write_paths",
+        "allowed_tool_side_effects",
+        "receipt_path",
+        "may_claim_complete",
+        "wavefront_run_id",
+        "task_id",
+        "ownership_mode",
+        "baseline",
+        "created_at",
+    ]
+    payload = {field: dispatch.get(field) for field in protected_fields}
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {
+        "schema_version": "oag_dispatch_integrity.v1",
+        "protected_fields": protected_fields,
+        "scope_hash_algorithm": "sha256:jcs-v1",
+        "scope_hash": digest,
+    }
 
 
 def write_task5_receipt(
@@ -439,6 +489,34 @@ def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
     assert unclaimed_result["status"] == "fail", unclaimed_result
     assert any(item["code"] == "WAVEFRONT_TASK_UNCLAIMED" for item in unclaimed_result["issues"]), unclaimed_result
 
+    aborted_dispatch_path, aborted_receipt_path, aborted_dispatch = write_task5_dispatch(
+        project,
+        ip,
+        "aborted_late_receipt",
+        "TASK_ABORTED_LATE",
+        "exclusive_file",
+        worker_allowed,
+        run_id="RUN_ABORTED_LATE",
+    )
+    aborted_graph_path = ip / "ontology" / "runs" / "RUN_ABORTED_LATE" / "wavefront_task_graph.json"
+    aborted_graph = json.loads(aborted_graph_path.read_text(encoding="utf-8"))
+    aborted_task = aborted_graph["tasks"][0]
+    aborted_task["status"] = "failed"
+    aborted_task["recorded_at"] = "2026-01-01T00:00:02Z"
+    aborted_task["abort_marker"] = {
+        "status": "failed",
+        "recorded_at": "2026-01-01T00:00:02Z",
+        "dispatch_id": aborted_dispatch["dispatch_id"],
+        "receipt_path": "",
+        "reason": "wavefront task recorded terminal without approved handoff",
+    }
+    aborted_graph_path.write_text(json.dumps(aborted_graph, sort_keys=True) + "\n", encoding="utf-8")
+    write_task5_ownership_locks(ip, "RUN_ABORTED_LATE", "TASK_ABORTED_LATE", "DIFFERENT_REPLACEMENT_DISPATCH")
+    write_task5_receipt(aborted_receipt_path, aborted_dispatch, [task5_rel(project, worker_shard)])
+    aborted_result = verify_task5_dispatch(project, aborted_dispatch_path, aborted_receipt_path)
+    assert aborted_result["status"] == "fail", aborted_result
+    assert any(item["code"] == "WAVEFRONT_TASK_ABORTED" for item in aborted_result["issues"]), aborted_result
+
     compat_allowed = [task5_rel(project, ip / "knowledge" / "subagents")]
     compat_dispatch_path, compat_receipt_path, compat_dispatch = write_task5_dispatch(project, ip, "non_wavefront", "TASK_COMPAT", "none", compat_allowed, stage="draft", wavefront=False)
     write_task5_receipt(compat_receipt_path, compat_dispatch, [task5_rel(project, compat_receipt_path)], wavefront=False)
@@ -460,6 +538,259 @@ def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
     malformed_receipt_result = json.loads(malformed_receipt_verify.stdout)
     assert malformed_receipt_result["status"] == "fail", malformed_receipt_result
     assert any(item["code"] == "RECEIPT_LOAD_SHAPE" for item in malformed_receipt_result["issues"]), malformed_receipt_result
+
+
+def test_dispatch_hardening_guards(tmp_root: Path) -> None:
+    project = tmp_root / "dispatch_hardening_project"
+    project.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, text=True, capture_output=True, check=True)
+    ip = project / "hardening_ip"
+    (ip / "ontology").mkdir(parents=True, exist_ok=True)
+    (ip / "rtl").mkdir(parents=True, exist_ok=True)
+    (ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+    (ip / "ontology" / "scope_lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_scope_lock.v1",
+                "ip": ip.name,
+                "state": "locked",
+                "summary": "Dispatch hardening smoke scope.",
+                "confirmed_scope": ["dispatch hardening"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_minimal_rtl_dispatch_readiness(
+        ip,
+        module_id="smoke",
+        rtl_file="rtl/smoke.sv",
+        contract_id="CONTRACT_SMOKE",
+        obligation_id="OBL_SMOKE",
+    )
+    create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "rtl",
+        "--owned-obligation",
+        "OBL_SMOKE",
+        "--contract",
+        "CONTRACT_SMOKE",
+        "--allowed-write-path",
+        str(ip / "rtl" / "smoke.sv"),
+        "--allowed-write-path",
+        str(ip / "knowledge" / "subagents"),
+        "--allowed-tool-side-effect",
+        str(ip / "ontology" / "generated"),
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "smoke.json"),
+        "--json",
+        project_root=project,
+    )
+    assert create.returncode == 0, create.stderr or create.stdout
+    dispatch = json.loads(create.stdout)["dispatch"]
+    assert dispatch["dispatch_integrity"]["scope_hash"], dispatch
+    dispatch_path = project / dispatch["dispatch_path"]
+    receipt_path = project / dispatch["receipt_path"]
+    (ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_subagent_receipt.v1",
+                "product_name": "IP Dev Agent",
+                "internal_gateway": "Ontology Agent Gateway",
+                "dispatch_id": dispatch["dispatch_id"],
+                "dispatch_path": dispatch["dispatch_path"],
+                "role_name": "oag-custom-worker",
+                "shard_scope": "smoke",
+                "stage": "rtl",
+                "status": "STATIC_HANDOFF_PASS",
+                "owned_obligations": ["OBL_SMOKE"],
+                "contracts": ["CONTRACT_SMOKE"],
+                "allowed_write_paths": dispatch["allowed_write_paths"],
+                "changed_paths": [f"{ip.name}/rtl/smoke.sv"],
+                "generated_side_effects": [],
+                "evidence_outputs": [dispatch["receipt_path"]],
+                "may_claim_complete": False,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    clean_verify = run_dispatch("verify", "--dispatch", str(dispatch_path), "--receipt", str(receipt_path), "--json", project_root=project)
+    assert clean_verify.returncode == 0, clean_verify.stderr or clean_verify.stdout
+    schema_preflight = run_dispatch(
+        "verify",
+        "--dispatch",
+        str(dispatch_path),
+        "--receipt",
+        str(receipt_path),
+        "--schema-only",
+        "--json",
+        project_root=project,
+    )
+    assert schema_preflight.returncode == 0, schema_preflight.stderr or schema_preflight.stdout
+    schema_preflight_payload = json.loads(schema_preflight.stdout)
+    assert schema_preflight_payload["schema_only"] is True, schema_preflight_payload
+
+    mutated = json.loads(dispatch_path.read_text(encoding="utf-8"))
+    mutated["allowed_tool_side_effects"].append(f"{ip.name}/mctp_rx_assembler/ontology/generated")
+    dispatch_path.write_text(json.dumps(mutated, sort_keys=True) + "\n", encoding="utf-8")
+    mutated_verify = run_dispatch("verify", "--dispatch", str(dispatch_path), "--receipt", str(receipt_path), "--json", project_root=project)
+    assert mutated_verify.returncode != 0, mutated_verify.stdout
+    mutated_payload = json.loads(mutated_verify.stdout)
+    assert any(item["code"] == "DISPATCH_MUTATED_AFTER_CREATE" for item in mutated_payload["issues"]), mutated_payload
+
+    nested_create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "draft",
+        "--allowed-write-path",
+        str(ip / "knowledge" / "subagents"),
+        "--allowed-tool-side-effect",
+        str(ip / ip.name / "ontology" / "generated"),
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "nested.json"),
+        "--json",
+        project_root=project,
+    )
+    assert nested_create.returncode != 0, nested_create.stdout
+    assert "NESTED_IP_DIR_GENERATED_ARTIFACT" in (nested_create.stderr + nested_create.stdout), nested_create.stderr or nested_create.stdout
+    nested_compile = subprocess.run(
+        [
+            sys.executable,
+            str(OAG),
+            "call",
+            "--json",
+            json.dumps({"tool": "oag.compile", "arguments": {"ip_dir": ip.name}}),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ip,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1", "OAG_PROJECT_ROOT": ""},
+    )
+    assert nested_compile.returncode != 0, nested_compile.stderr or nested_compile.stdout
+    nested_compile_payload = json.loads(nested_compile.stdout)
+    assert nested_compile_payload["ok"] is False, nested_compile_payload
+    assert "NESTED_IP_DIR_GENERATED_ARTIFACT" in " ".join(nested_compile_payload["errors"]), nested_compile_payload
+    assert not (ip / ip.name / "ontology" / "generated").exists(), nested_compile_payload
+
+    active_ip = project / "active_dispatch_ip"
+    (active_ip / "ontology").mkdir(parents=True, exist_ok=True)
+    (active_ip / "rtl").mkdir(parents=True, exist_ok=True)
+    (active_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+    (active_ip / "ontology" / "scope_lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_scope_lock.v1",
+                "ip": active_ip.name,
+                "state": "locked",
+                "summary": "Active dispatch smoke scope.",
+                "confirmed_scope": ["active dispatch parent write"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_minimal_rtl_dispatch_readiness(
+        active_ip,
+        module_id="smoke",
+        rtl_file="rtl/smoke.sv",
+        contract_id="CONTRACT_SMOKE",
+        obligation_id="OBL_SMOKE",
+    )
+    active_create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(active_ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "rtl",
+        "--owned-obligation",
+        "OBL_SMOKE",
+        "--contract",
+        "CONTRACT_SMOKE",
+        "--allowed-write-path",
+        str(active_ip / "rtl" / "smoke.sv"),
+        "--receipt-path",
+        str(active_ip / "knowledge" / "subagents" / "active.json"),
+        "--json",
+        project_root=project,
+    )
+    assert active_create.returncode == 0, active_create.stderr or active_create.stdout
+    (active_ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
+    active_gate = run_main_write_gate(active_ip, project_root=project)
+    assert active_gate.returncode != 0, active_gate.stdout
+    active_payload = json.loads(active_gate.stdout)
+    assert any(item["code"] == "PARENT_WRITE_WITH_ACTIVE_DISPATCH" for item in active_payload["issues"]), active_payload
+
+
+def test_dispatch_authoring_packet_retry_classifier() -> None:
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    spec = importlib.util.spec_from_file_location("oag_dispatch_support_smoke", ROOT / "scripts" / "oag_dispatch_support.py")
+    assert spec and spec.loader, spec
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    retryable = {
+        "issues": [
+            {"code": "COMPILE_MANIFEST_STALE_INPUT", "message": "stale"},
+            {"code": "RTL_PACKET_MISSING", "message": "missing"},
+        ]
+    }
+    assert module.authoring_packet_gate_retryable(retryable) is True
+    structural = {
+        "issues": [
+            {"code": "COMPILE_MANIFEST_STALE_INPUT", "message": "stale"},
+            {"code": "MODULE_PACKET_INTERFACE_CONTRACT_REFS", "message": "projection missing"},
+        ]
+    }
+    assert module.authoring_packet_gate_retryable(structural) is False
+    assert module.authoring_packet_gate_retryable({"issues": []}) is False
+
+
+def test_canonical_run_evidence_archive_guard(tmp_root: Path) -> None:
+    ip = make_ip(tmp_root / "archive_guard")
+    (ip / "sim").mkdir(parents=True, exist_ok=True)
+    (ip / "sim" / "uvm_status.json").write_text(
+        json.dumps({"schema_version": "mctp_rx_uvm_status.v1", "status": "pass"}) + "\n",
+        encoding="utf-8",
+    )
+    missing_archive = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    assert missing_archive["ok"] is True, missing_archive
+    assert any(
+        "canonical run evidence lacks immutable archive: sim/uvm_status.json" in issue
+        for issue in missing_archive["result"]["issues"]
+    ), missing_archive
+
+    archive = ip / "sim" / "runs" / "20260101T000000Z_uvm" / "uvm_status.json"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_text((ip / "sim" / "uvm_status.json").read_text(encoding="utf-8"), encoding="utf-8")
+    archived = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    assert archived["ok"] is True, archived
+    assert not any(
+        "canonical run evidence lacks immutable archive: sim/uvm_status.json" in issue
+        for issue in archived["result"]["issues"]
+    ), archived
 
 
 def run_lifecycle_check(*args: str) -> subprocess.CompletedProcess[str]:
@@ -765,7 +1096,7 @@ def test_dot_oag_migration_tool(tmp_root: Path) -> None:
     ip = tmp_root / "mig_ip"
     sc = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
     assert sc["ok"] is True, sc
-    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "legacy scaffold expected"
+    assert (ip / "ontology").is_dir() and (ip / "knowledge").is_dir(), "top-level OAG state scaffold expected"
     pre = {"ontology": _hash_tree(ip / "ontology"), "knowledge": _hash_tree(ip / "knowledge")}
 
     # dry-run must change nothing.
@@ -1072,6 +1403,137 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: str, contract_id: str, obligation_id: str) -> None:
+    (ip / "ontology" / "generated" / "authoring_packets").mkdir(parents=True, exist_ok=True)
+    (ip / "ontology" / "contracts.yaml").write_text(
+        f"schema_version: oag_contracts.v2\ncontracts:\n- id: {contract_id}\n  status: locked\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "decomposition.yaml").write_text(
+        "\n".join(
+            [
+                "schema: oag_decomposition.v1",
+                f"ip: {ip.name}",
+                "profile:",
+                "  mode: greenfield_modular",
+                "modules:",
+                f"  - id: {module_id}",
+                f"    name: {module_id}",
+                "    role: rtl",
+                "    ownership: current_ip",
+                f"    file: {rtl_file}",
+                f"    owned_obligations: [{obligation_id}]",
+                f"    owned_contracts: [{contract_id}]",
+                "    structure_refs: [SIG_SMOKE]",
+                "    source_refs: [ontology/contracts.yaml]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "domain_intent.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: oag_domain_intent.v1",
+                f"ip: {ip.name}",
+                "clock_domains:",
+                "  - id: CD_CLK",
+                "    clock: clk",
+                "reset_domains:",
+                "  - id: RD_RST_N",
+                "    reset: rst_n",
+                "    clock_domain: CD_CLK",
+                "    polarity: active_low",
+                "    assertion: asynchronous",
+                "    deassertion: synchronous",
+                "cdc_crossings: []",
+                "rdc_crossings:",
+                "  - id: RDC_NONE",
+                "    classification: no_known_rdc",
+                "    basis: [single clock/reset fixture]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    packet_dir = ip / "ontology" / "generated" / "authoring_packets"
+    (packet_dir / f"module__{module_id}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_authoring_packet.v1",
+                "generated_by": "smoke",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "ip": ip.name,
+                "module": {"id": module_id, "name": module_id, "file": rtl_file},
+                "structure_profile": "greenfield_modular",
+                "source_refs": ["ontology/contracts.yaml"],
+                "structure_refs": ["SIG_SMOKE"],
+                "obligations": [{"id": obligation_id}],
+                "contracts": [{"id": contract_id}],
+                "requirements": [],
+                "execution_policy": {"edit_policy": "subagent_only"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (packet_dir / f"rtl__{ip.name}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_rtl_authoring_packet.v1",
+                "packet_type": "rtl_authoring_packet",
+                "ip": ip.name,
+                "allowed_truth_sources": ["ontology/contracts.yaml"],
+                "forbidden_sources": ["tb", "sim", "dut_output"],
+                "contract_refs_to_implement": [contract_id],
+                "behavior_refs_implemented_target": ["behavior_model.smoke"],
+                "ppa_notes_required": True,
+                "cdc_rdc_notes_required": True,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (packet_dir / f"tb__{ip.name}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_tb_authoring_packet.v1",
+                "packet_type": "tb_authoring_packet",
+                "ip": ip.name,
+                "expected_source_policy": "contract_oracle_only",
+                "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation"],
+                "contract_refs": [contract_id],
+                "scenario_refs": ["SCN_SMOKE"],
+                "scoreboard_row_refs": ["EVT_SMOKE"],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    compile_inputs = ["ontology/contracts.yaml", "ontology/decomposition.yaml", "ontology/domain_intent.yaml"]
+    (ip / "ontology" / "generated" / "compile_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_compile_manifest.v1",
+                "status": "pass",
+                "compiled_at": "2026-01-01T00:00:00Z",
+                "input_fingerprints": [{"path": rel, "sha256": sha256(ip / rel)} for rel in compile_inputs],
+                "output_fingerprints": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def make_ip(root: Path) -> Path:
     ip = root / "demo_counter_cx1"
     scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
@@ -1269,6 +1731,70 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     ip.mkdir()
     run_id = "RUN_WAVE_SMOKE"
 
+    def approve_wavefront_task(task_id: str, *barrier_outputs: str) -> None:
+        review_pending = run_wavefront(
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "review_pending",
+            "--receipt",
+            str(ip / "knowledge" / "subagents" / f"{task_id.lower()}_receipt.json"),
+            "--json",
+            project_root=project,
+        )
+        assert review_pending.returncode == 0, review_pending.stderr or review_pending.stdout
+        decision_id = f"DEC_{task_id}_SMOKE"
+        decision_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--decision-id",
+            decision_id,
+            "--decision-type",
+            "custom_review",
+            "--verdict",
+            "approved",
+            "--summary",
+            f"{task_id} handoff reviewed by smoke test.",
+            "--checked-against",
+            f"{ip}/ontology/runs/{run_id}/wavefront_task_graph.json#{task_id}",
+            "--preserved",
+            "declared wavefront barrier semantics",
+            "--json",
+        ]
+        for token in barrier_outputs:
+            decision_args.extend(["--barrier-output", token])
+        decision = run_decision_harness(*decision_args, project_root=project)
+        assert decision.returncode == 0, decision.stderr or decision.stdout
+        decision_path = json.loads(decision.stdout)["path"]
+        handoff_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "handoff_pass",
+            "--decision",
+            decision_path,
+            "--json",
+        ]
+        for token in barrier_outputs:
+            handoff_args.extend(["--barrier-output", token])
+        handoff = run_wavefront(*handoff_args, project_root=project)
+        assert handoff.returncode == 0, handoff.stderr or handoff.stdout
+
     plan = run_wavefront(
         "plan",
         "--ip-dir",
@@ -1306,6 +1832,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     early_codes = {item["code"] for item in early_result["issues"]}
     assert "DEPENDENCY_UNMET" in early_codes and "BARRIER_UNMET" in early_codes, early_result
 
+    common_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_COMMON_API_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_COMMON_API",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert common_dispatch.returncode == 0, common_dispatch.stderr or common_dispatch.stdout
+    common_dispatch_id = json.loads(common_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_common = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1314,12 +1861,35 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_COMMON_API",
+        "--dispatch-id",
+        common_dispatch_id,
         "--claimed-by",
         "smoke-common",
         "--json",
         project_root=project,
     )
     assert claim_common.returncode == 0, claim_common.stderr or claim_common.stdout
+    scoreboard_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_SCOREBOARD_SCHEMA_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_SCOREBOARD_SCHEMA",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert scoreboard_dispatch.returncode == 0, scoreboard_dispatch.stderr or scoreboard_dispatch.stdout
+    scoreboard_dispatch_id = json.loads(scoreboard_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_scoreboard = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1328,6 +1898,8 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_SCOREBOARD_SCHEMA",
+        "--dispatch-id",
+        scoreboard_dispatch_id,
         "--claimed-by",
         "smoke-scoreboard",
         "--json",
@@ -1369,7 +1941,7 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         for item in json.loads(bad_barrier_record.stdout)["issues"]
     ), bad_barrier_record.stdout
 
-    record_common = run_wavefront(
+    missing_decision_record = run_wavefront(
         "record",
         "--ip-dir",
         str(ip),
@@ -1381,34 +1953,42 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         "handoff_pass",
         "--barrier-output",
         "tb_common_import_clean",
-        "--barrier-output",
-        "helper_api_manifest",
         "--json",
         project_root=project,
     )
-    assert record_common.returncode == 0, record_common.stderr or record_common.stdout
-    record_scoreboard = run_wavefront(
-        "record",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_SCOREBOARD_SCHEMA",
-        "--status",
-        "handoff_pass",
-        "--barrier-output",
-        "scoreboard_schema_frozen",
-        "--json",
-        project_root=project,
-    )
-    assert record_scoreboard.returncode == 0, record_scoreboard.stderr or record_scoreboard.stdout
+    assert missing_decision_record.returncode != 0, missing_decision_record.stdout
+    missing_decision_codes = {item["code"] for item in json.loads(missing_decision_record.stdout)["issues"]}
+    assert "HANDOFF_DECISION_REQUIRED" in missing_decision_codes, missing_decision_record.stdout
+
+    approve_wavefront_task("TB_COMMON_API", "tb_common_import_clean", "helper_api_manifest")
+    approve_wavefront_task("TB_SCOREBOARD_SCHEMA", "scoreboard_schema_frozen")
 
     scenario_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert scenario_ready.returncode == 0, scenario_ready.stderr or scenario_ready.stdout
     scenario_ready_ids = [task["task_id"] for task in json.loads(scenario_ready.stdout)["ready_tasks"]]
     assert scenario_ready_ids == ["TB_SCENARIO_A"], scenario_ready.stdout
 
+    scenario_dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "TB_SCENARIO_A_oag_tb_implementation_agent.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "TB_SCENARIO_A",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert scenario_dispatch.returncode == 0, scenario_dispatch.stderr or scenario_dispatch.stdout
+    scenario_dispatch_id = json.loads(scenario_dispatch.stdout)["dispatch"]["dispatch_id"]
     claim_scenario = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1417,26 +1997,13 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         run_id,
         "--task-id",
         "TB_SCENARIO_A",
+        "--dispatch-id",
+        scenario_dispatch_id,
         "--json",
         project_root=project,
     )
     assert claim_scenario.returncode == 0, claim_scenario.stderr or claim_scenario.stdout
-    record_scenario = run_wavefront(
-        "record",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_SCENARIO_A",
-        "--status",
-        "handoff_pass",
-        "--barrier-output",
-        "scenario_import_clean",
-        "--json",
-        project_root=project,
-    )
-    assert record_scenario.returncode == 0, record_scenario.stderr or record_scenario.stdout
+    approve_wavefront_task("TB_SCENARIO_A", "scenario_import_clean")
     verify = run_wavefront("verify", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert verify.returncode == 0, verify.stderr or verify.stdout
 
@@ -1497,6 +2064,27 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         project_root=project,
     )
     assert conflict_plan.returncode == 0, conflict_plan.stderr or conflict_plan.stdout
+    dispatch_a = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(conflict_ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(conflict_ip / "knowledge" / "subagents" / "WRITE_A.json"),
+        "--wavefront-run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_A",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert dispatch_a.returncode == 0, dispatch_a.stderr or dispatch_a.stdout
+    dispatch_a_id = json.loads(dispatch_a.stdout)["dispatch"]["dispatch_id"]
     claim_a = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1505,10 +2093,33 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         conflict_run,
         "--task-id",
         "WRITE_A",
+        "--dispatch-id",
+        dispatch_a_id,
         "--json",
         project_root=project,
     )
     assert claim_a.returncode == 0, claim_a.stderr or claim_a.stdout
+    dispatch_b = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(conflict_ip),
+        "--agent-type",
+        "oag-custom-researcher",
+        "--stage",
+        "wavefront_claim_smoke",
+        "--receipt-path",
+        str(conflict_ip / "knowledge" / "subagents" / "WRITE_B.json"),
+        "--wavefront-run-id",
+        conflict_run,
+        "--task-id",
+        "WRITE_B",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert dispatch_b.returncode == 0, dispatch_b.stderr or dispatch_b.stdout
+    dispatch_b_id = json.loads(dispatch_b.stdout)["dispatch"]["dispatch_id"]
     claim_b = run_wavefront(
         "claim",
         "--ip-dir",
@@ -1517,6 +2128,8 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         conflict_run,
         "--task-id",
         "WRITE_B",
+        "--dispatch-id",
+        dispatch_b_id,
         "--json",
         project_root=project,
     )
@@ -1700,6 +2313,57 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
     packet_dir = ip / "ontology" / "generated" / "authoring_packets"
     packet_dir.mkdir(parents=True)
     (ip / "ontology").mkdir(exist_ok=True)
+    (ip / "ontology" / "contracts.yaml").write_text(
+        "schema_version: oag_contracts.v2\ncontracts:\n- id: CONTRACT_DEMO\n  status: locked\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "decomposition.yaml").write_text(
+        "\n".join(
+            [
+                "schema: oag_decomposition.v1",
+                "ip: packet_lifecycle_ip",
+                "profile:",
+                "  mode: greenfield_modular",
+                "modules:",
+                "  - id: demo",
+                "    name: demo",
+                "    role: rtl",
+                "    ownership: current_ip",
+                "    file: rtl/top.sv",
+                "    owned_obligations: [OBL_DEMO]",
+                "    owned_contracts: [CONTRACT_DEMO]",
+                "    structure_refs: [SIG_DEMO]",
+                "    source_refs: [ontology/contracts.yaml]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "domain_intent.yaml").write_text(
+        "\n".join(
+            [
+                "schema_version: oag_domain_intent.v1",
+                "ip: packet_lifecycle_ip",
+                "clock_domains:",
+                "  - id: CD_CLK",
+                "    clock: clk",
+                "reset_domains:",
+                "  - id: RD_RST_N",
+                "    reset: rst_n",
+                "    clock_domain: CD_CLK",
+                "    polarity: active_low",
+                "    assertion: asynchronous",
+                "    deassertion: synchronous",
+                "cdc_crossings: []",
+                "rdc_crossings:",
+                "  - id: RDC_NONE",
+                "    classification: no_known_rdc",
+                "    basis: [single clock/reset fixture]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     lifecycle = {
         "schema_version": "oag_artifact_lifecycle.v1",
         "artifacts": [
@@ -1767,8 +2431,51 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
     }
     rtl_path = packet_dir / "rtl__demo.json"
     tb_path = packet_dir / "tb__demo.json"
+    module_path = packet_dir / "module__demo.json"
     rtl_path.write_text(json.dumps(rtl_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tb_path.write_text(json.dumps(tb_packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    module_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_authoring_packet.v1",
+                "generated_by": "smoke",
+                "generated_at": "2026-01-01T00:00:00Z",
+                "ip": "packet_lifecycle_ip",
+                "module": {"id": "demo", "name": "demo", "file": "rtl/top.sv"},
+                "structure_profile": "greenfield_modular",
+                "source_refs": ["ontology/contracts.yaml"],
+                "structure_refs": ["SIG_DEMO"],
+                "obligations": [{"id": "OBL_DEMO"}],
+                "contracts": [{"id": "CONTRACT_DEMO"}],
+                "requirements": [],
+                "execution_policy": {"edit_policy": "subagent_only"},
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    compile_inputs = [
+        "ontology/contracts.yaml",
+        "ontology/decomposition.yaml",
+        "ontology/domain_intent.yaml",
+    ]
+    (ip / "ontology" / "generated" / "compile_manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_compile_manifest.v1",
+                "status": "pass",
+                "compiled_at": "2026-01-01T00:00:00Z",
+                "input_fingerprints": [{"path": rel, "sha256": sha256(ip / rel)} for rel in compile_inputs],
+                "output_fingerprints": [],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     good = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--require-lifecycle", "--json")
     assert good.returncode == 0, good.stderr or good.stdout
@@ -2385,6 +3092,9 @@ def main() -> int:
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
         test_task5_dispatch_wavefront_matrix(Path(tmp))
+        test_dispatch_hardening_guards(Path(tmp))
+        test_dispatch_authoring_packet_retry_classifier()
+        test_canonical_run_evidence_archive_guard(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
         test_stale_propagation_checker(Path(tmp))
@@ -2896,6 +3606,13 @@ def main() -> int:
             + "\n",
             encoding="utf-8",
         )
+        write_minimal_rtl_dispatch_readiness(
+            hook_ip,
+            module_id="smoke",
+            rtl_file="rtl/smoke.sv",
+            contract_id="CONTRACT_SMOKE",
+            obligation_id="OBL_SMOKE",
+        )
         dispatch_create_args = (
             "create",
             "--ip-dir",
@@ -3139,6 +3856,23 @@ def main() -> int:
         truth_graph = json.loads((ip / "ontology" / "generated" / "design_truth_graph.json").read_text(encoding="utf-8"))
         truth_facts = truth_graph.get("generated", {}).get("design_facts", {})
         assert "git_head" not in (truth_facts.get("extractor") or {}), truth_graph
+        closure_graph_edges = [
+            edge
+            for edge in truth_graph.get("edges", [])
+            if edge.get("type") == "closed_by" and edge.get("load_bearing") is True
+        ]
+        assert closure_graph_edges, truth_graph
+        for edge in closure_graph_edges:
+            assert edge["closure_edge"] is True, edge
+            assert edge["approval_policy"] == "evidence_required", edge
+            assert edge["approved"] is False, edge
+            assert edge["approved_reason"] == "", edge
+            assert edge["criteria"] == [
+                "contract exists and remains bound to obligation",
+                "required evidence exists and is fresh",
+                "closed ROCEV validation record links this obligation-contract edge",
+            ], edge
+            assert edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], edge
         domain_matrix = json.loads((ip / "ontology" / "generated" / "domain_crossing_matrix.json").read_text(encoding="utf-8"))
         assert domain_matrix["schema_version"] == "oag_domain_crossing_matrix.v1", domain_matrix
         assert domain_matrix["status"] == "present", domain_matrix
@@ -3205,6 +3939,31 @@ def main() -> int:
         assert sim_config["result"]["updates"]["hook_auto_continue_until"] == "sim", sim_config
         sim_stop = call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(limit_ip), "run_id": limit_run_id}})
         assert sim_stop["result"]["should_continue"] is True, sim_stop
+        assert "closure_matrix=open" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "closure_edges_open=" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "owner=demo_counter_cx1" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "approval_policy=evidence_required" in sim_stop["result"]["prompt_block"], sim_stop
+        assert "evidence=sim/results.xml,sim/scoreboard_events.jsonl" in sim_stop["result"]["prompt_block"], sim_stop
+        stop_edges = sim_stop["result"]["closure_edges"]
+        assert len(stop_edges) == 1, sim_stop
+        stop_edge = stop_edges[0]
+        assert stop_edge["schema_version"] == "oag_closure_edge_todo.v1", stop_edge
+        assert stop_edge["source"] == "obligation::OBL_DEMO_COUNTER_CX1_RESET_KNOWN", stop_edge
+        assert stop_edge["target"] == "contract::CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD", stop_edge
+        assert stop_edge["status"] == "open", stop_edge
+        assert stop_edge["owner_module"] == "demo_counter_cx1", stop_edge
+        assert stop_edge["owner_file"] == "rtl/demo_counter_cx1.sv", stop_edge
+        assert stop_edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], stop_edge
+        assert stop_edge["approval_policy"] == "evidence_required", stop_edge
+        assert stop_edge["approved"] is False, stop_edge
+        assert stop_edge["approved_reason"] == "", stop_edge
+        assert stop_edge["criteria"] == [
+            "contract exists and remains bound to obligation",
+            "required evidence exists and is fresh",
+            "closed ROCEV validation record links this obligation-contract edge",
+        ], stop_edge
+        stored_action = json.loads((limit_ip / "ontology" / "runs" / limit_run_id / "next_action.json").read_text(encoding="utf-8"))
+        assert stored_action["closure_edges"] == stop_edges, stored_action
         bounded_rtl = call(
             {
                 "tool": "oag.run.next",
@@ -3217,6 +3976,7 @@ def main() -> int:
         )
         assert bounded_rtl["result"]["next_batch"] is None, bounded_rtl
         assert bounded_rtl["result"]["loop_stop_reason"] == "boundary_reached", bounded_rtl
+        assert bounded_rtl["result"]["closure_edges"] == stop_edges, bounded_rtl
         hook_rtl = run_loop_hook("--ip-dir", str(limit_ip), "--run-id", limit_run_id, "--until", "rtl", "--json")
         assert hook_rtl.returncode == 0, hook_rtl.stderr or hook_rtl.stdout
         hook_rtl_json = json.loads(hook_rtl.stdout)
@@ -3266,6 +4026,18 @@ def main() -> int:
         )
         assert loop_stop["result"]["should_continue"] is False, loop_stop
         assert loop_stop["result"]["reason"] == "boundary_reached", loop_stop
+        maxed_loop = call(
+            {
+                "tool": "oag.stop_check",
+                "arguments": {
+                    "ip_dir": str(limit_ip),
+                    "run_id": limit_run_id,
+                    "loop_policy": {"until": "tb", "max_iterations": 1},
+                },
+            }
+        )
+        assert maxed_loop["result"]["should_continue"] is False, maxed_loop
+        assert maxed_loop["result"]["reason"] == "max_iterations_reached", maxed_loop
         runner = run_loop_runner(
             "--ip-dir",
             str(limit_ip),
@@ -3332,6 +4104,21 @@ def main() -> int:
         assert run_start["result"]["status"] == "in_progress", run_start
         assert run_start["result"]["next_action"]["active_obligation"] == "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", run_start
         assert "OAG NEXT ACTION" in run_start["result"]["next_action"]["prompt_block"], run_start
+        run_start_candidates = run_start["result"]["dispatch_command_candidates"]
+        assert run_start_candidates, run_start
+        first_candidate = run_start_candidates[0]
+        assert "oag_dispatch.py create" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--wavefront-run-id" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in first_candidate["dispatch_create_command"], first_candidate
+        assert "--dispatch-id <dispatch_id>" in first_candidate["claim_command"], first_candidate
+        assert first_candidate["command_sequence"] == [
+            first_candidate["dispatch_create_command"],
+            first_candidate["claim_command"],
+        ], first_candidate
+        run_start_prompt = run_start["result"]["next_action"]["prompt_block"]
+        assert "dispatch_candidates=" in run_start_prompt, run_start_prompt
+        assert "oag_dispatch.py create" in run_start_prompt, run_start_prompt
+        assert "--dispatch-id <dispatch_id>" in run_start_prompt, run_start_prompt
         assert (ip / "ontology" / "runs" / run_id / "run_state.json").is_file(), run_start
         assert (ip / "ontology" / "runs" / run_id / "next_action.json").is_file(), run_start
         assert (ip / "ontology" / "runs" / run_id / "checkpoint_history.jsonl").is_file(), run_start
@@ -3385,6 +4172,7 @@ def main() -> int:
                     "run_id": run_id,
                     "stage": "sim",
                     "intent": "smoke close reset scoreboard obligation",
+                    "approval": {"approved": True, "reason": "smoke owner approved run checkpoint completion"},
                     "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
                 },
             }
@@ -3738,17 +4526,31 @@ def main() -> int:
         for name, run_id in (("route_alpha", "RUN_ALPHA"), ("route_beta", "RUN_BETA")):
             route_ip = route_root / name
             (route_ip / "ontology" / "runs").mkdir(parents=True)
+            (route_ip / "rtl").mkdir(parents=True)
+            (route_ip / "tb" / "uvm").mkdir(parents=True)
             (route_ip / "ontology" / "ip.yaml").write_text(f"ip: {name}\n", encoding="utf-8")
+            (route_ip / "rtl" / "unit.sv").write_text(f"module {name}_unit; endmodule\n", encoding="utf-8")
+            (route_ip / "rtl" / f"{name}_only.sv").write_text(f"module {name}_only; endmodule\n", encoding="utf-8")
+            (route_ip / "tb" / "uvm" / "unit_tb.sv").write_text("module unit_tb; endmodule\n", encoding="utf-8")
             (route_ip / "ontology" / "runs" / "active_run.json").write_text(
                 json.dumps({"run_id": run_id, "status": "in_progress"}) + "\n",
                 encoding="utf-8",
             )
+        (route_root / "not_an_ip" / "rtl").mkdir(parents=True)
+        (route_root / "not_an_ip" / "rtl" / "unit.sv").write_text("module outside; endmodule\n", encoding="utf-8")
         assert hook_target_names(route_root, {"prompt": "승인", "context_pressure": "critical"}, require_signal=False) == []
         assert hook_target_names(route_root, {"prompt": "oag context"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "route OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "continue route_alpha OAG"}, require_signal=True) == ["route_alpha"]
         assert hook_target_names(route_root, {"prompt": "compare route_alpha and route_beta OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"ip_dir": str(route_root / "route_beta"), "prompt": "승인"}, require_signal=False) == ["route_beta"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @route_alpha/rtl/unit.sv"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in `route_alpha/tb/uvm/unit_tb.sv`"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": f"Find and fix a bug in @{route_root / 'route_beta' / 'rtl' / 'unit.sv'}"}, require_signal=True) == ["route_beta"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @route_alpha_only.sv"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @unit.sv"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "Fix @route_alpha/rtl/unit.sv and @route_beta/rtl/unit.sv"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @not_an_ip/rtl/unit.sv"}, require_signal=True) == []
         single_route_root = Path(tmp) / "single_hook_route_project"
         single_route_ip = single_route_root / "solo_route"
         (single_route_ip / "ontology" / "runs").mkdir(parents=True)
@@ -3763,6 +4565,66 @@ def main() -> int:
         undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
         assert undecided["result"]["allowed"] is False, undecided
         assert undecided["result"]["reason"] == "decision_receipt_required", undecided
+        missing_approval = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert missing_approval["result"]["allowed"] is False, missing_approval
+        assert missing_approval["result"]["reason"] == "completion_approval_required", missing_approval
+        approved_without_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "approval": {"approved": True},
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert approved_without_reason["result"]["allowed"] is False, approved_without_reason
+        assert approved_without_reason["result"]["reason"] == "completion_approval_required", approved_without_reason
+        human_without_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                },
+            }
+        )
+        assert human_without_reason["result"]["allowed"] is False, human_without_reason
+        assert human_without_reason["result"]["reason"] == "completion_approval_required", human_without_reason
+        approved_by_reason = call(
+            {
+                "tool": "oag.decide",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "record_decision": True,
+                    "approved_by": "smoke-owner",
+                    "approval_reason": "smoke owner approved claim_complete through approved_by",
+                    "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                },
+            }
+        )
+        assert approved_by_reason["result"]["allowed"] is True, approved_by_reason
+        assert approved_by_reason["result"]["approval"]["approved"] is True, approved_by_reason
+        assert approved_by_reason["result"]["approval"]["reason"] == "smoke owner approved claim_complete through approved_by", approved_by_reason
         decide = call(
             {
                 "tool": "oag.decide",
@@ -3771,6 +4633,7 @@ def main() -> int:
                     "action": "claim_complete",
                     "stage": "sim",
                     "record_decision": True,
+                    "approval": {"approved": True, "reason": "smoke owner approved claim_complete"},
                     "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
                 },
             }
@@ -3852,6 +4715,7 @@ def main() -> int:
                     "action": "signoff",
                     "stage": "signoff",
                     "record_decision": True,
+                    "approval": {"approved": True, "reason": "smoke owner approved signoff after independent review"},
                     "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
                 },
             }

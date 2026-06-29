@@ -137,6 +137,7 @@ def contract_refs(contract: dict[str, Any], *keys: str) -> list[str]:
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     hard_gate = require_locked or is_locked(ip_dir)
     issues: list[dict[str, str]] = []
 

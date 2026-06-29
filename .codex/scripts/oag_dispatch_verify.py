@@ -10,12 +10,15 @@ from oag_dispatch_support import (
     hash_known_paths,
     issue,
     load_json,
+    dispatch_scope_hash,
+    nested_ip_generated_artifact,
     normalize_rel,
     path_matches,
     project_rel,
     resolve_project_path,
     schema_issues,
 )
+import oag_paths
 from oag_dispatch_wavefront import (
     WAVEFRONT_FIELDS,
     collect_wavefront_claim_issues,
@@ -36,6 +39,7 @@ RECEIPT_SAFE_STATUSES = {
 }
 LEGACY_RECEIPT_STATUSES = {"PASS"}
 FORBIDDEN_STATUS_WORDS = ("COMPLETE", "DONE", "SIGNOFF", "RELEASED", "CLOSED")
+WAVEFRONT_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
 
 
 def string_list(payload: JsonObject, *fields: str) -> list[str]:
@@ -108,6 +112,47 @@ def load_json_object(path: Path, artifact_name: str, issue_code: str, issues: li
     return payload
 
 
+def wavefront_task_for_dispatch(dispatch: JsonObject) -> JsonObject:
+    run_id = str(dispatch.get("wavefront_run_id") or "")
+    task_id = str(dispatch.get("task_id") or "")
+    ip_rel = str(dispatch.get("ip_dir") or "")
+    if not run_id or not task_id or not ip_rel:
+        return {}
+    graph_path = oag_paths.legacy_or_hidden(resolve_project_path(ip_rel), f"ontology/runs/{run_id}/wavefront_task_graph.json")
+    try:
+        graph = load_json(graph_path)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(graph, dict):
+        return {}
+    for task in graph.get("tasks", []):
+        if isinstance(task, dict) and str(task.get("task_id") or "") == task_id:
+            return task
+    return {}
+
+
+def append_wavefront_abort_issues(issues: list[Issue], dispatch: JsonObject, receipt_path: Path) -> None:
+    task = wavefront_task_for_dispatch(dispatch)
+    if not task:
+        return
+    status = str(task.get("status") or "")
+    if status not in WAVEFRONT_ABORT_STATUSES:
+        return
+    recorded_receipt = normalize_rel(str(task.get("receipt_path") or "")) if task.get("receipt_path") else ""
+    current_receipt = project_rel(receipt_path)
+    if recorded_receipt and recorded_receipt == current_receipt:
+        return
+    marker = task.get("abort_marker") if isinstance(task.get("abort_marker"), dict) else {}
+    issues.append(
+        issue(
+            "WAVEFRONT_TASK_ABORTED",
+            "receipt arrived for a wavefront task already recorded as "
+            f"{status}; create a fresh dispatch from the current baseline instead of integrating late child output",
+            str(marker.get("receipt_path") or current_receipt),
+        )
+    )
+
+
 def verify_dispatch(args: argparse.Namespace) -> JsonObject:
     issues: list[Issue] = []
     dispatch_path = resolve_project_path(args.dispatch)
@@ -120,7 +165,32 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
     if receipt:
         append_schema_issues(issues, "oag_subagent_receipt.schema.json", receipt, "RECEIPT_SCHEMA")
 
+    if getattr(args, "schema_only", False):
+        return {
+            "schema_version": "oag_dispatch_schema_preflight_result.v1",
+            "status": "fail" if issues else "pass",
+            "dispatch_path": str(dispatch_path),
+            "receipt_path": str(receipt_path),
+            "dispatch_id": dispatch.get("dispatch_id", ""),
+            "receipt_status": receipt.get("status", ""),
+            "schema_only": True,
+            "issues": issues,
+        }
+
     if dispatch and receipt:
+        integrity = dispatch.get("dispatch_integrity") if isinstance(dispatch.get("dispatch_integrity"), dict) else {}
+        expected_scope_hash = str(integrity.get("scope_hash") or "")
+        observed_scope_hash = dispatch_scope_hash(dispatch)
+        if not expected_scope_hash:
+            issues.append(issue("DISPATCH_INTEGRITY_MISSING", "dispatch is missing immutable scope hash metadata"))
+        elif observed_scope_hash != expected_scope_hash:
+            issues.append(
+                issue(
+                    "DISPATCH_MUTATED_AFTER_CREATE",
+                    "dispatch protected scope fields changed after dispatch creation; create a new dispatch instead of widening this one",
+                    project_rel(dispatch_path),
+                )
+            )
         dispatch_id = str(dispatch.get("dispatch_id") or "")
         if str(receipt.get("dispatch_id") or "") != dispatch_id:
             issues.append(issue("DISPATCH_ID_MISMATCH", "receipt.dispatch_id does not match dispatch.dispatch_id"))
@@ -144,6 +214,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
                 elif receipt_value != dispatch_value:
                     issues.append(issue("WAVEFRONT_FIELD_MISMATCH", f"receipt.{field} does not match dispatch.{field}"))
             issues.extend(collect_wavefront_claim_issues(dispatch))
+            append_wavefront_abort_issues(issues, dispatch, receipt_path)
 
         status = str(receipt.get("status") or "")
         if status in LEGACY_RECEIPT_STATUSES:
@@ -155,22 +226,49 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
 
         allowed_write_paths = [str(item) for item in dispatch.get("allowed_write_paths") or []]
         allowed_tool_side_effects = [str(item) for item in dispatch.get("allowed_tool_side_effects") or []]
+        ip_rel = str(dispatch.get("ip_dir") or "")
+        ip_name = str(dispatch.get("ip_id") or Path(ip_rel).name)
+        for path in allowed_tool_side_effects:
+            if nested_ip_generated_artifact(path, ip_rel, ip_name):
+                issues.append(
+                    issue(
+                        "NESTED_IP_DIR_GENERATED_ARTIFACT",
+                        "dispatch allowed_tool_side_effects target nested generated output; check cwd and create a new clean dispatch",
+                        path,
+                    )
+                )
         owned = string_list(receipt, "changed_paths", "owned_changed_paths")
         generated = string_list(receipt, "generated_side_effects")
         for path in owned:
             if not path_matches(normalize_rel(path), allowed_write_paths):
                 issues.append(issue("OWNED_PATH_OUT_OF_SCOPE", "receipt changed path is outside allowed_write_paths", path))
         for path in generated:
+            if nested_ip_generated_artifact(normalize_rel(path), ip_rel, ip_name):
+                issues.append(
+                    issue(
+                        "NESTED_IP_DIR_GENERATED_ARTIFACT",
+                        "receipt generated side effect targets nested generated output; treat it as cwd contamination, not valid evidence",
+                        path,
+                    )
+                )
             if not path_matches(normalize_rel(path), allowed_tool_side_effects):
                 issues.append(issue("GENERATED_PATH_OUT_OF_SCOPE", "receipt generated side effect is outside allowed_tool_side_effects", path))
 
         current_paths, delta_paths = actual_delta(dispatch)
         expected_paths = [*allowed_write_paths, *allowed_tool_side_effects, str(dispatch.get("receipt_path") or ""), str(dispatch.get("dispatch_path") or "")]
         out_of_scope_actual = [path for path in delta_paths if not path_matches(path, expected_paths)]
+        for path in delta_paths:
+            if nested_ip_generated_artifact(path, ip_rel, ip_name):
+                issues.append(
+                    issue(
+                        "NESTED_IP_DIR_GENERATED_ARTIFACT",
+                        "actual delta includes nested generated output; cleanup/rebaseline instead of closing this dispatch",
+                        path,
+                    )
+                )
         for path in out_of_scope_actual:
             issues.append(issue("ACTUAL_PATH_OUT_OF_SCOPE", "actual git status delta is outside dispatch scope", path))
         if wavefront_dispatch:
-            ip_rel = str(dispatch.get("ip_dir") or "")
             ownership_mode = str(dispatch.get("ownership_mode") or "")
             wavefront_bookkeeping_paths = [str(dispatch.get("dispatch_path") or ""), *allowed_tool_side_effects]
             scoped_wavefront_paths = [

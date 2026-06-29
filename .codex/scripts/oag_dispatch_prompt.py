@@ -34,6 +34,10 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
                 f"- wavefront_run_id: {dispatch['wavefront_run_id']}",
                 f"- task_id: {dispatch.get('task_id') or '(none)'}",
                 f"- ownership_mode: {dispatch.get('ownership_mode') or '(none)'}",
+                "Wavefront abort guard:",
+                "- before writing outputs or a receipt, re-read the task in "
+                f"{dispatch['ip_dir']}/ontology/runs/{dispatch['wavefront_run_id']}/wavefront_task_graph.json",
+                "- if that task status is blocked, failed, or inconclusive, stop immediately and do not write late artifacts",
             ]
         )
     lines.extend(

@@ -60,6 +60,7 @@ def cmd_record(args: argparse.Namespace) -> JsonObject:
             status=args.status,
             barrier_outputs=normalize_list(args.barrier_output),
             receipt=args.receipt or "",
+            decision=args.decision or "",
         )
     )
 
@@ -110,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--run-id", required=True)
     claim.add_argument("--task-id", required=True)
     claim.add_argument("--claimed-by", default="")
-    claim.add_argument("--dispatch-id", default="")
+    claim.add_argument("--dispatch-id", default="", help="Required for write/integration tasks; create dispatch before claiming.")
     claim.add_argument("--json", action="store_true")
 
     record = sub.add_parser("record", help="Record bounded worker status and barrier outputs.")
@@ -120,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--status", required=True, choices=sorted(VALID_STATUSES))
     record.add_argument("--barrier-output", action="append")
     record.add_argument("--receipt", default="")
+    record.add_argument("--decision", default="", help="Approved oag_wavefront_decision.v1 JSON required for handoff_pass.")
     record.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify graph, lock, and barrier invariants.")

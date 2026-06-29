@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,7 @@ def _close_run(ip: Path, run_id: str, *, intent: str) -> dict[str, Any]:
                 "run_id": run_id,
                 "stage": "sim",
                 "intent": intent,
+                "approval": {"approved": True, "reason": "eval owner approved run checkpoint completion"},
                 "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
             },
         }
@@ -209,6 +211,8 @@ def _record_closed_validation(ip: Path, *, surface: str = "eval") -> dict[str, A
 def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "blocks_incomplete")
     run_id, started = _start_run(ip, intent="eval incomplete run blocks stop")
+    candidate = started["dispatch_command_candidates"][0]
+    command_env = {**os.environ, "OAG_DISABLE_BACKEND": "1", "OAG_PROJECT_ROOT": str(root)}
     rc, payload, stderr = _hook_json(ip, run_id)
     assert rc == 0, stderr
     assert payload is not None, "expected Codex hook block JSON"
@@ -216,12 +220,40 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     reason = str(payload.get("reason") or "")
     assert "OAG NEXT ACTION" in reason, payload
     assert "run incomplete" in reason, payload
+    assert "oag_dispatch.py create" in reason, payload
+    assert "--wavefront-run-id" in reason, payload
+    assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in reason, payload
+    assert "--dispatch-id <dispatch_id>" in reason, payload
+    create_proc = subprocess.run(
+        shlex.split(candidate["dispatch_create_command"]),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+        env=command_env,
+    )
+    assert create_proc.returncode == 0, create_proc.stderr or create_proc.stdout
+    dispatch_id = json.loads(create_proc.stdout)["dispatch"]["dispatch_id"]
+    claim_command = candidate["claim_command"].replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+    claim_proc = subprocess.run(
+        shlex.split(claim_command),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=PROJECT,
+        env=command_env,
+    )
+    assert claim_proc.returncode == 0, claim_proc.stderr or claim_proc.stdout
     return {
         "ip": str(ip),
         "run_id": run_id,
         "active_obligation": started["next_action"]["active_obligation"],
         "hook_decision": payload["decision"],
         "contains_next_action": "OAG NEXT ACTION" in reason,
+        "contains_dispatch_create": "oag_dispatch.py create" in reason,
+        "contains_claim_dispatch_id": "--dispatch-id <dispatch_id>" in reason,
+        "generated_dispatch_id": dispatch_id,
+        "generated_claim_passed": True,
     }
 
 
@@ -251,6 +283,62 @@ def case_stop_gate_obeys_policy_limit(root: Path) -> dict[str, Any]:
         "configured": configured["result"]["updates"],
         "reason": stop["result"]["reason"],
         "next_action_stage": stop["result"]["policy"]["next_action_stage"],
+    }
+
+
+def case_closure_edge_projection_static(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "closure_edge_projection")
+    compiled = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+    assert compiled["result"]["status"] == "pass", compiled
+    truth_graph = json.loads(oag_paths.legacy_or_hidden(ip, "ontology/generated/design_truth_graph.json").read_text(encoding="utf-8"))
+    graph_edges = [
+        edge
+        for edge in truth_graph.get("edges", [])
+        if edge.get("type") == "closed_by" and edge.get("load_bearing") is True
+    ]
+    assert len(graph_edges) == 1, graph_edges
+    graph_edge = graph_edges[0]
+    assert graph_edge["closure_edge"] is True, graph_edge
+    assert graph_edge["approval_policy"] == "evidence_required", graph_edge
+    assert graph_edge["required_evidence"] == ["sim/results.xml", "sim/scoreboard_events.jsonl"], graph_edge
+    assert graph_edge["criteria"] == [
+        "contract exists and remains bound to obligation",
+        "required evidence exists and is fresh",
+        "closed ROCEV validation record links this obligation-contract edge",
+    ], graph_edge
+    assert graph_edge["approved"] is False, graph_edge
+    assert graph_edge["approved_reason"] == "", graph_edge
+    run_id, _started = _start_run(ip, intent="eval closure edge projection")
+    next_response = smoke_test.call({"tool": "oag.run.next", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+    edges = next_response["result"]["closure_edges"]
+    assert len(edges) == 1, next_response
+    edge = edges[0]
+    assert edge["schema_version"] == "oag_closure_edge_todo.v1", edge
+    assert edge["source"] == graph_edge["source"], edge
+    assert edge["target"] == graph_edge["target"], edge
+    assert edge["status"] == "open", edge
+    assert edge["owner_module"] == "demo_counter_cx1", edge
+    assert edge["owner_file"] == "rtl/demo_counter_cx1.sv", edge
+    assert edge["criteria"] == graph_edge["criteria"], edge
+    assert edge["required_evidence"] == graph_edge["required_evidence"], edge
+    assert edge["approval_policy"] == graph_edge["approval_policy"], edge
+    assert edge["approved"] is False, edge
+    assert edge["approved_reason"] == "", edge
+    prompt = next_response["result"]["prompt_block"]
+    assert "closure_edges_open=1" in prompt, prompt
+    assert "owner=demo_counter_cx1" in prompt, prompt
+    assert "evidence=sim/results.xml,sim/scoreboard_events.jsonl" in prompt, prompt
+    stored = json.loads(oag_paths.legacy_or_hidden(ip, f"ontology/runs/{run_id}/next_action.json").read_text(encoding="utf-8"))
+    assert stored["closure_edges"] == edges, stored
+    stop = smoke_test.call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
+    assert stop["result"]["should_continue"] is True, stop
+    assert stop["result"]["closure_edges"] == edges, stop
+    return {
+        "ip": str(ip),
+        "run_id": run_id,
+        "edge_id": edge["id"],
+        "required_evidence": edge["required_evidence"],
+        "prompt_has_edge": "closure_edges_open=1" in prompt,
     }
 
 
@@ -1123,6 +1211,20 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
     )
     assert undecided["result"]["allowed"] is False, undecided
     assert undecided["result"]["reason"] == "decision_receipt_required", undecided
+    missing_approval = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "claim_complete",
+                "stage": "sim",
+                "record_decision": True,
+                "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
+            },
+        }
+    )
+    assert missing_approval["result"]["allowed"] is False, missing_approval
+    assert missing_approval["result"]["reason"] == "completion_approval_required", missing_approval
     decided = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -1131,6 +1233,7 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
                 "action": "claim_complete",
                 "stage": "sim",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved claim_complete"},
                 "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
             },
         }
@@ -1916,6 +2019,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -1952,6 +2056,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -1982,6 +2087,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
+                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -2033,6 +2139,7 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
 CASES: list[tuple[str, CaseFn]] = [
     ("stop_gate_blocks_incomplete", case_stop_gate_blocks_incomplete),
     ("stop_gate_obeys_policy_limit", case_stop_gate_obeys_policy_limit),
+    ("closure_edge_projection_static", case_closure_edge_projection_static),
     ("compile_skips_fresh_graph", case_compile_skips_fresh_graph),
     ("modeling_scaffold_seed", case_modeling_scaffold_seed),
     ("requirement_atom_scaffold_seed", case_requirement_atom_scaffold_seed),
@@ -2123,6 +2230,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="print JSON report")
     parser.add_argument("--keep-temp", action="store_true", help="keep the temporary evaluation IPs on disk")
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        help="run only matching case names; may be repeated and accepts substrings",
+    )
     args = parser.parse_args(argv)
 
     if args.keep_temp:
@@ -2133,7 +2246,14 @@ def main(argv: list[str] | None = None) -> int:
         temp_dir = cleanup.name
 
     root = Path(temp_dir)
-    cases = [_run_case(name, fn, root) for name, fn in CASES]
+    selected = CASES
+    if args.case:
+        needles = [str(item).strip() for item in args.case if str(item).strip()]
+        selected = [(name, fn) for name, fn in CASES if any(needle in name for needle in needles)]
+        if not selected:
+            print(f"no matching OAG eval cases for: {', '.join(needles)}", file=sys.stderr)
+            return 2
+    cases = [_run_case(name, fn, root) for name, fn in selected]
     passed = sum(1 for case in cases if case["ok"])
     report = {
         "schema_version": "oag_evaluation_report.v1",

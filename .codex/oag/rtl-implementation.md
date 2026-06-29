@@ -288,6 +288,42 @@ TB/sim validation then checks the stronger semantic claims:
 - validation record exists;
 - gate reviewed fresh evidence.
 
+## Implementation Review Evidence
+
+`implementation_review` is a read-only evidence kind. It is produced by a
+reviewer/static agent after partial RTL, legacy RTL, or reference artifacts
+exist. It compares current implementation facts against existing contracts and
+classifies each contract:
+
+- `implemented`: structurally present with RTL or evidence refs;
+- `partial`: some required behavior is present, but a required path, state, or
+  observable remains incomplete;
+- `missing`: no credible implementation evidence was found;
+- `unverifiable`: current artifacts are too weak or ambiguous to judge;
+- `not_applicable`: contract is intentionally not implemented in this artifact
+  scope.
+
+The standard report path is:
+
+```text
+knowledge/gap_matrix/implementation_review.json
+```
+
+The report uses `schema_version: oag_implementation_review_report.v1` and
+`evidence_kind: implementation_review`. It may rank next actions by P0/P1/P2/P3
+and declare dependencies through `depends_on`, `depends_on_actions`, or
+`depends_on_contracts`. It must never claim closure; it feeds wavefront planning
+and evidence validation.
+
+For legacy or partially implemented IP, the current source tree is the artifact
+under review. Do not scaffold or rearrange it just to make the checker happy.
+Use the existing RTL, filelists, docs, and wrappers as `rtl_refs`/
+`evidence_refs`, and keep OAG state in `.oag` or an external analysis
+workspace. If canonical ontology is not present yet, the implementation review
+can still be recorded as legacy-no-scaffold evidence; unknown contract ID checks
+become advisory until spec-derived requirements, obligations, and contracts are
+projected.
+
 ## RTL Language Subset
 
 Default generated RTL should target OAG SV-lite:

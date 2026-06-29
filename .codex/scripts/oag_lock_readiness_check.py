@@ -19,6 +19,7 @@ import oag_req_quality_check  # noqa: E402
 import oag_verification_plan_check  # noqa: E402
 import oag_contract_strength_check  # noqa: E402
 import oag_trace_graph_check  # noqa: E402
+import oag_domain_crossing_check  # noqa: E402
 from oag_validate_json import contextual_schema_issues  # noqa: E402
 
 
@@ -154,6 +155,7 @@ def check_decisions(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, st
 
 
 def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
+    ip_dir = oag_paths.ip_root(ip_dir)
     locked = is_locked(ip_dir)
     hard_gate = require_locked or locked
     decision_issues, decision_counts, blockers = check_decisions(ip_dir, hard_gate=hard_gate)
@@ -167,7 +169,13 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     vplan_issues = vplan_result.get("issues", []) if isinstance(vplan_result, dict) else []
     trace_result = oag_trace_graph_check.check(ip_dir, require_locked=hard_gate)
     trace_issues = trace_result.get("issues", []) if isinstance(trace_result, dict) else []
-    issues = decision_issues + req_quality_issues + atom_issues + contract_strength_issues + vplan_issues + trace_issues
+    domain_result = oag_domain_crossing_check.check(ip_dir, [], require_domain_intent=hard_gate)
+    raw_domain_issues = domain_result.get("issues", []) if isinstance(domain_result, dict) else []
+    domain_issues = [
+        issue("DOMAIN_CROSSING_READINESS", str(item), str(domain_result.get("domain_intent") or "ontology/domain_intent.yaml"))
+        for item in raw_domain_issues
+    ]
+    issues = decision_issues + req_quality_issues + atom_issues + contract_strength_issues + vplan_issues + trace_issues + domain_issues
 
     next_actions: list[str] = []
     if decision_counts["unresolved_lock_blockers"]:
@@ -182,6 +190,8 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         next_actions.append("Resolve verification strategy plan issues before TB implementation or closure.")
     if trace_issues:
         next_actions.append("Resolve source-to-contract-to-evidence trace graph issues.")
+    if domain_issues:
+        next_actions.append("Resolve clock/reset-domain intent and mitigation issues before RTL implementation dispatch.")
     if not issues and not hard_gate:
         next_actions.append("Draft is lock-ready only after user lock and hard gate re-check.")
 
@@ -200,6 +210,7 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
             "contract_strength_issues": len(contract_strength_issues),
             "verification_plan_issues": len(vplan_issues),
             "trace_issues": len(trace_issues),
+            "domain_crossing_issues": len(domain_issues),
             "issues": len(issues),
         },
         "unresolved_lock_blockers": blockers,

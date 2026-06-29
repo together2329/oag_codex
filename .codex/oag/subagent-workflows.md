@@ -104,6 +104,9 @@ Use native child steering only for targeted follow-up, and close child threads
 after integrating a completed or inconclusive lane.
 Do not mark a dependent step complete while an active child owns evidence for
 that step.
+Before opening a new parallel batch, close every completed child whose receipt
+has already been integrated, rejected, or routed. Keep only currently working
+children open. This is runtime hygiene, not an OAG closure action.
 
 Use subagents when the work is naturally parallel and bounded:
 
@@ -120,6 +123,13 @@ For larger fan-out, use `python3 .codex/scripts/oag_wavefront.py` first. The
 wavefront graph records dependency barriers, ownership locks, and the single
 integration owner for shared artifacts. A task that has unmet dependencies or a
 conflicting ownership lock must not be dispatched.
+When a gap matrix exists, run
+`python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json`
+and dispatch the returned `plan.next_wave.actions` first. For imported or
+partial legacy IPs that do not have an OAG scaffold, add
+`--legacy-no-scaffold`; the existing source hierarchy is the implementation
+artifact under review. Actions in the same next wave can be parallelized when
+their target artifacts are disjoint.
 
 After user lock, main agent orchestrates; subagents implement and verify. Locked
 RTL, TB, sim, lint, coverage, formal, SDC, signoff, and implementation filelist
@@ -178,6 +188,24 @@ through `python3 .codex/scripts/oag_dispatch.py verify --dispatch <dispatch>
 path outside the child scope must be identified as pre-existing, rejected, or
 explicitly routed to a new task before integration.
 
+When the child belongs to a wavefront write or integration task, create the
+dispatch before `oag_wavefront.py claim`, then claim with
+`--dispatch-id <dispatch_id>`. Dispatch records that include wavefront metadata
+automatically allow that run's wavefront bookkeeping paths as tool side
+effects; workers still must not claim ownership of those paths. Do not record
+`handoff_pass` while the child is still trying to stop. The required order is:
+
+```text
+dispatch create
+-> wavefront claim --dispatch-id <dispatch_id>
+-> native child spawn
+-> child writes receipt and stop hook verifies while task is still claimed
+-> wavefront record review_pending
+-> reviewer decision
+-> wavefront record handoff_pass
+-> close child thread
+```
+
 The realistic stop boundary is receipt validity, not forced integration
 success. In a parallel wave, another worker can legitimately change files under
 the same IP after a dispatch baseline is captured. If `verify` fails only with
@@ -187,6 +215,11 @@ write `BLOCKED`, `INCONCLUSIVE`, or `FAIL` with blockers naming the external
 delta and end with `OAG_EVIDENCE_RECORDED`. The `SubagentStop` hook may accept
 that bounded blocked receipt so the parent can route or reconcile integration.
 Successful handoff statuses still require a verifier pass.
+The same bounded stop rule applies to parent-created wavefront lifecycle
+mismatches such as `WAVEFRONT_TASK_UNCLAIMED` or
+`WAVEFRONT_CLAIM_DISPATCH_MISMATCH`: child agents may record
+`INCONCLUSIVE`/`BLOCKED`/`FAIL` with explicit blockers, but they must not edit
+wavefront bookkeeping or widen their dispatch to hide the mismatch.
 Dispatch IDs include a short nonce after the timestamp so same-second fan-out
 does not rely on sleeps for uniqueness.
 When a dispatch belongs to a wavefront task, include `--wavefront-run-id`,
@@ -217,7 +250,8 @@ Spawn these agents with fork_context=false:
   TASK: act as the OAG legacy/reference IP analyzer.
   DELIVERABLE: source paths, extracted behavior, inferred requirements, gaps,
   leakage risks, and evidence needs.
-  SCOPE: <paths>.
+  SCOPE: <paths>. Preserve the existing source hierarchy; do not scaffold,
+  move, or normalize legacy RTL into a new layout.
   VERIFY: cite exact files/lines or state INCONCLUSIVE.
 - agent_type=oag-requirement-contract-agent
   message starts:

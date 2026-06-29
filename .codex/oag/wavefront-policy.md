@@ -13,10 +13,14 @@ evidence boundaries are currently satisfied.
 locked ontology truth
   -> authoring packets / evidence plan
     -> wavefront task graph
-      -> dispatch + ownership lock
+      -> dispatch
+        -> ownership lock bound to dispatch_id
         -> subagent receipt
-          -> evidence validation
-            -> gate decision
+          -> review_pending
+            -> reviewer decision
+              -> handoff_pass
+                -> evidence validation
+                  -> gate decision
 ```
 
 ## Boundaries
@@ -29,6 +33,10 @@ locked ontology truth
   aggregate results, coverage JSON, and generated closure summaries.
 - `closure` tasks are not worker-owned. Closure remains parent/gate authority.
 
+For write/integration tasks, the dispatch record must be created before the
+wavefront task is claimed. The claim must include the dispatch id so ownership
+locks bind the task to the child receipt that will later be verified.
+
 ## Required Conditions
 
 A task is ready only when:
@@ -38,10 +46,34 @@ A task is ready only when:
 3. no active ownership lock conflicts with its write paths;
 4. the task keeps `may_claim_complete=false`.
 
+For gap-driven work, parent orchestration should consume the latest
+`knowledge/gap_matrix/implementation_review.json` when present. Open
+implementation findings are scheduled by highest priority first (`P0` before
+`P1`, then `P2`, then `P3`). Tasks in the same priority band may run in
+parallel only when their dependency fields are satisfied and their target
+artifacts do not overlap.
+
+`handoff_pass` is not a worker self-claim. A worker receipt moves a task to
+`review_pending`. Only an approved `oag_wavefront_decision.v1` review record
+may move `review_pending` to `handoff_pass` and unlock downstream barriers.
+The child receipt must be verified while the task is still `claimed`, or routed
+as bounded `INCONCLUSIVE`, `BLOCKED`, or `FAIL`. Parent orchestration must not
+record `handoff_pass` before the child stop hook has accepted the receipt; doing
+so releases wavefront ownership and makes the child-side dispatch verifier see
+an unclaimed/mismatched task.
+
 ## Worker Language
 
 Wavefront workers may say `HANDOFF_PASS`, `BLOCKED`, `FAIL`, or
 `INCONCLUSIVE`. They must not say completion, signoff, release, or closure.
+Parent orchestration records worker `HANDOFF_PASS` receipts as
+`review_pending` until `oag-custom-reviewer` or a narrower reviewer approves
+the handoff rationale.
+
+After a child reaches `handoff_pass`, `blocked`, `failed`, or `inconclusive`
+and the parent has integrated or rejected its receipt, close that native child
+thread before opening another fan-out batch. Completed child threads are not
+OAG evidence and should not consume runtime subagent slots.
 
 ## TB Barrier Pattern
 

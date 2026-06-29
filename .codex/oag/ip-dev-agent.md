@@ -35,6 +35,9 @@ OSVVM, UVVM, or PSS files unless the proof need justifies it.
 
 1. Identify `ip_dir`, `stage`, and user intent.
 2. If the IP is new, call `oag.scaffold` to create the ontology-first layout.
+   If the IP is imported legacy or partially implemented, do not scaffold over
+   the source tree; preserve the existing hierarchy and use `.oag` overlay
+   state or an external analysis workspace.
 3. Call `oag.inspect` for read-only artifact health.
 4. Call `oag.compile` after ontology edits to refresh the derived truth graph.
 5. Call `oag.context` for ontology memory.
@@ -106,6 +109,8 @@ OSVVM, UVVM, or PSS files unless the proof need justifies it.
   `small_leaf_single_file` for tiny leaf IPs, `greenfield_modular` for new
   nontrivial IPs, `legacy_preserve` for imported hierarchy, and
   `wrapper_adapter` for protected cores plus editable integration wrappers.
+  `legacy_preserve` maps requirements/contracts/evidence onto existing modules
+  and filelists; it does not require a scaffolded `rtl/` directory.
 - Treat `ontology/generated/design_spec.json` and
   `ontology/generated/authoring_packets/*.json` as read-only projections from
   authored ontology. Treat `ontology/generated/domain_crossing_matrix.json` as

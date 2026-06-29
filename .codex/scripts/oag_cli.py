@@ -64,6 +64,9 @@ CANONICAL_AGGREGATE_REFS = {
     "cov/coverage.json": "cov",
     "formal/formal_status.json": "formal",
 }
+CANONICAL_RUN_ARCHIVE_REFS = {
+    "sim/uvm_status.json": "sim/runs/*/uvm_status.json",
+}
 SCOREBOARD_REQUIRED_FIELDS = {
     "goal_id",
     "scenario_id",
@@ -111,6 +114,7 @@ DESIGN_SPEC_REL = Path("ontology/generated/design_spec.json")
 DESIGN_FACTS_REL = Path("ontology/generated/design_facts_graph.json")
 COMPILE_MANIFEST_REL = Path("ontology/generated/compile_manifest.json")
 AUTHORING_PACKETS_REL = Path("ontology/generated/authoring_packets")
+RTL_INTERFACE_API_REL = Path("ontology/generated/rtl_interface_api.md")
 STAGE_RECEIPTS_REL = Path("ontology/evidence/stage_runs")
 DECISION_RECEIPTS_REL = Path("ontology/validations")
 RUNS_REL = Path("ontology/runs")
@@ -262,7 +266,13 @@ def _ip_dir(arguments: dict[str, Any]) -> Path:
     # Resolve here so the IP base is consistent with oag_paths.* (which resolve
     # internally); otherwise `<resolver_path>.relative_to(ip)` mismatches on
     # platforms where the temp/real root differs (e.g. macOS /var -> /private/var).
-    return Path(str(raw)).expanduser().resolve()
+    ip = oag_paths.ip_root(str(raw))
+    if ip.parent.name == ip.name and (ip.parent / "ontology").exists():
+        raise ValueError(
+            "NESTED_IP_DIR_GENERATED_ARTIFACT: resolved ip_dir points to a same-name nested IP under an existing "
+            f"OAG IP ({ip}); check cwd, OAG_PROJECT_ROOT, and --ip-dir"
+        )
+    return ip
 
 
 def _read_json_file(path: Path) -> Any:
@@ -1149,6 +1159,29 @@ def _write_generated_design_views(
     domain_intent = _domain_intent_doc(ip)
     tb_methodology = _tb_methodology_doc(ip)
     verification_plan = _verification_plan_doc(ip)
+    model_interface_contracts = [
+        item for item in _as_list(modeling.get("module_interface_contracts"))
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
+    ]
+    interface_contract_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in model_interface_contracts
+        if str(item.get("id") or "").strip()
+    }
+    raw_layouts = modeling.get("metadata_layouts")
+    if isinstance(raw_layouts, dict):
+        metadata_layout_values = [item for item in raw_layouts.values() if isinstance(item, dict)]
+    else:
+        metadata_layout_values = [item for item in _as_list(raw_layouts) if isinstance(item, dict)]
+    metadata_layout_by_id = {
+        str(item.get("id") or "").strip(): item
+        for item in metadata_layout_values
+        if str(item.get("id") or "").strip()
+    }
+    decomposition_edges = [
+        item for item in _as_list(decomposition.get("interfaces"))
+        if isinstance(item, dict)
+    ]
 
     def contract_ref_list(contract: dict[str, Any], *keys: str) -> list[str]:
         refs: list[str] = []
@@ -1159,6 +1192,126 @@ def _write_generated_design_views(
             refs.extend(_str_items(oracle.get(key)))
             refs.extend(_str_items(projection.get(key)))
         return sorted(set(refs))
+
+    def contract_interface_refs(contract: dict[str, Any]) -> list[str]:
+        refs = _str_items(contract.get("interface_contract_refs"))
+        boundary = contract.get("module_boundary") if isinstance(contract.get("module_boundary"), dict) else {}
+        refs.extend(_str_items(boundary.get("interface_contract_refs")))
+        refs.extend(_str_items(boundary.get("interface_contract")))
+        return sorted(set(refs))
+
+    def edge_touches_module(edge: dict[str, Any], mid: str) -> bool:
+        producer = str(edge.get("producer") or "").strip()
+        consumer = str(edge.get("consumer") or "").strip()
+        return (
+            producer == mid
+            or consumer == mid
+            or producer in {"all_modules", "all_leaf_modules"}
+            or consumer in {"all_modules", "all_leaf_modules"}
+        )
+
+    def module_edge_interfaces(mid: str) -> list[dict[str, Any]]:
+        edges: list[dict[str, Any]] = []
+        for edge in decomposition_edges:
+            if not edge_touches_module(edge, mid):
+                continue
+            edges.append(
+                {
+                    "id": str(edge.get("id") or ""),
+                    "producer": str(edge.get("producer") or ""),
+                    "consumer": str(edge.get("consumer") or ""),
+                    "interface": str(edge.get("interface") or edge.get("structure_interface") or ""),
+                    "interface_contract": str(edge.get("interface_contract") or ""),
+                    "payload": str(edge.get("payload") or ""),
+                }
+            )
+        return edges
+
+    def metadata_refs_from_interfaces(interface_refs: list[str]) -> list[str]:
+        refs: list[str] = []
+        for ref in interface_refs:
+            iface = interface_contract_by_id.get(ref) or {}
+            refs.extend(_str_items(iface.get("metadata_layout")))
+            refs.extend(_str_items(iface.get("metadata_layouts")))
+            refs.extend(_str_items(iface.get("key_layout")))
+        return sorted(set(refs))
+
+    def render_rtl_interface_api(module_packets: list[dict[str, Any]]) -> str:
+        lines = [
+            "# Generated RTL Interface API",
+            "",
+            "Generated by `oag.compile` from canonical ontology.",
+            "Do not edit this file by hand. Update `ontology/contracts.yaml`, `ontology/modeling.yaml`, `ontology/structure.yaml`, or `ontology/decomposition.yaml`, then compile again.",
+            "",
+            "## Module Packets",
+            "",
+        ]
+        for packet in sorted(module_packets, key=lambda item: str((item.get("module") or {}).get("id") or "")):
+            module = packet.get("module") if isinstance(packet.get("module"), dict) else {}
+            mid = str(module.get("id") or "").strip()
+            if not mid:
+                continue
+            lines.extend(
+                [
+                    f"### {mid}",
+                    "",
+                    f"- file: `{module.get('file') or ''}`",
+                    f"- interface_contract_refs: {', '.join(_str_items(packet.get('interface_contract_refs'))) or 'none'}",
+                    f"- structure_refs: {', '.join(_str_items(packet.get('structure_refs'))) or 'none'}",
+                    f"- metadata_layout_refs: {', '.join(_str_items(packet.get('metadata_layout_refs'))) or 'none'}",
+                    "",
+                ]
+            )
+            boundaries = [item for item in _as_list(packet.get("module_boundaries")) if isinstance(item, dict)]
+            if boundaries:
+                lines.append("Module boundaries:")
+                for boundary in boundaries:
+                    lines.append(f"- contract: `{boundary.get('contract') or ''}`")
+                    if _str_items(boundary.get("input_ports")):
+                        lines.append(f"  - inputs: {', '.join(_str_items(boundary.get('input_ports')))}")
+                    if _str_items(boundary.get("output_ports")):
+                        lines.append(f"  - outputs: {', '.join(_str_items(boundary.get('output_ports')))}")
+                    if _str_items(boundary.get("stream_inputs")):
+                        lines.append(f"  - stream_inputs: {', '.join(_str_items(boundary.get('stream_inputs')))}")
+                    if _str_items(boundary.get("stream_outputs")):
+                        lines.append(f"  - stream_outputs: {', '.join(_str_items(boundary.get('stream_outputs')))}")
+                    if _str_items(boundary.get("event_outputs")):
+                        lines.append(f"  - event_outputs: {', '.join(_str_items(boundary.get('event_outputs')))}")
+                lines.append("")
+            edges = [item for item in _as_list(packet.get("edge_interfaces")) if isinstance(item, dict)]
+            if edges:
+                lines.append("Edge interfaces:")
+                for edge in edges:
+                    lines.append(
+                        f"- `{edge.get('id') or ''}`: {edge.get('producer') or ''} -> {edge.get('consumer') or ''}; "
+                        f"interface `{edge.get('interface') or ''}`; contract `{edge.get('interface_contract') or ''}`"
+                    )
+                lines.append("")
+        lines.extend(["## Interface Contracts", ""])
+        for item in sorted(model_interface_contracts, key=lambda entry: str(entry.get("id") or "")):
+            iid = str(item.get("id") or "").strip()
+            lines.extend(
+                [
+                    f"### {iid}",
+                    "",
+                    f"- producer: `{item.get('producer') or ''}`",
+                    f"- consumer: `{item.get('consumer') or ''}`",
+                    f"- structure_interface: `{item.get('structure_interface') or ''}`",
+                    f"- handshake: `{item.get('handshake') or ''}`",
+                    f"- signal_refs: {', '.join(_str_items(item.get('signal_refs'))) or 'none'}",
+                    "",
+                ]
+            )
+        lines.extend(["## Metadata Layouts", ""])
+        for mid, item in sorted(metadata_layout_by_id.items()):
+            lines.extend([f"### {mid}", "", f"- width: `{item.get('width') or ''}`", f"- owner: `{item.get('owner') or ''}`"])
+            fields = [field for field in _as_list(item.get("fields")) if isinstance(field, dict)]
+            if fields:
+                lines.append("- fields:")
+                for field in fields:
+                    lines.append(f"  - `{field.get('bits') or ''}` {field.get('name') or ''}")
+            lines.append("")
+        return "\n".join(lines).rstrip() + "\n"
 
     all_contract_ids = sorted(str(item.get("id") or item.get("contract_id") or "").strip() for item in contracts if str(item.get("id") or item.get("contract_id") or "").strip())
     all_behavior_refs = sorted(set(ref for contract in contracts for ref in contract_ref_list(contract, "behavior_refs", "fl_model_refs", "cl_model_refs")))
@@ -1211,6 +1364,7 @@ def _write_generated_design_views(
     packets_dir = oag_paths.state_path(ip, str(AUTHORING_PACKETS_REL))
     packets_dir.mkdir(parents=True, exist_ok=True)
     packets: list[dict[str, Any]] = []
+    module_packets_for_api: list[dict[str, Any]] = []
     live_packet_paths: set[Path] = set()
     for module in modules:
         mid = _module_id(module)
@@ -1220,6 +1374,30 @@ def _write_generated_design_views(
         contract_ids = _str_items(module.get("owned_contracts") or module.get("contracts"))
         ownership = str(module.get("ownership") or "current_ip").strip()
         editable = ownership in CURRENT_IP_OWNERSHIPS and str(module.get("edit_policy") or "editable") != "do_not_edit"
+        module_contracts = [contract_by_id.get(cid, {"id": cid, "missing": True}) for cid in contract_ids]
+        edge_interfaces = module_edge_interfaces(mid)
+        interface_contract_refs = sorted(
+            set(
+                ref
+                for contract in module_contracts
+                if isinstance(contract, dict)
+                for ref in contract_interface_refs(contract)
+            )
+            | {
+                str(edge.get("interface_contract") or "").strip()
+                for edge in edge_interfaces
+                if str(edge.get("interface_contract") or "").strip()
+            }
+        )
+        module_boundaries: list[dict[str, Any]] = []
+        for contract in module_contracts:
+            if not isinstance(contract, dict):
+                continue
+            boundary = contract.get("module_boundary") if isinstance(contract.get("module_boundary"), dict) else {}
+            if not boundary:
+                continue
+            module_boundaries.append({"contract": str(contract.get("id") or ""), **boundary})
+        metadata_layout_refs = metadata_refs_from_interfaces(interface_contract_refs)
         packet = {
             "schema_version": "oag_authoring_packet.v1",
             "generated_by": "oag.compile",
@@ -1237,7 +1415,19 @@ def _write_generated_design_views(
             "source_refs": _str_items(module.get("source_refs")),
             "structure_refs": _str_items(module.get("structure_refs")),
             "obligations": [obl_by_id.get(oid, {"id": oid, "missing": True}) for oid in obligation_ids],
-            "contracts": [contract_by_id.get(cid, {"id": cid, "missing": True}) for cid in contract_ids],
+            "contracts": module_contracts,
+            "interface_contract_refs": interface_contract_refs,
+            "interface_contracts": [
+                interface_contract_by_id.get(ref, {"id": ref, "missing": True})
+                for ref in interface_contract_refs
+            ],
+            "edge_interfaces": edge_interfaces,
+            "module_boundaries": module_boundaries,
+            "metadata_layout_refs": metadata_layout_refs,
+            "metadata_layouts": [
+                metadata_layout_by_id.get(ref, {"id": ref, "missing": True})
+                for ref in metadata_layout_refs
+            ],
             "requirements": [
                 req_by_id.get(str(obl_by_id.get(oid, {}).get("requirement") or ""), {})
                 for oid in obligation_ids
@@ -1254,6 +1444,12 @@ def _write_generated_design_views(
         _write_json_semantic_stable(packet_path, packet, volatile_keys={"generated_at"})
         live_packet_paths.add(packet_path)
         packets.append({"module": mid, "path": str(packet_path.relative_to(ip)), "editable": editable})
+        module_packets_for_api.append(packet)
+    rtl_api_path = oag_paths.state_path(ip, str(RTL_INTERFACE_API_REL))
+    rtl_api_path.parent.mkdir(parents=True, exist_ok=True)
+    rtl_api_text = render_rtl_interface_api(module_packets_for_api)
+    if not rtl_api_path.is_file() or rtl_api_path.read_text(encoding="utf-8") != rtl_api_text:
+        rtl_api_path.write_text(rtl_api_text, encoding="utf-8")
     rtl_packet = {
         "schema_version": "oag_rtl_authoring_packet.v1",
         "packet_type": "rtl_authoring_packet",
@@ -1332,6 +1528,7 @@ def _write_generated_design_views(
 
     return {
         "design_spec": str(design_spec_path),
+        "rtl_interface_api": str(rtl_api_path),
         "authoring_packets": packets,
         "authoring_packet_count": len(packets),
     }
@@ -1465,6 +1662,33 @@ def _is_human_approved(value: dict[str, Any]) -> bool:
         return True
     approved_by = payload.get("approved_by")
     return bool(approved_by and str(approved_by).strip())
+
+
+def _approval_reason_text(arguments: dict[str, Any]) -> str:
+    approval = arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {}
+    for source in (approval, arguments):
+        for key in ("reason", "approval_reason", "approved_reason", "summary", "rationale"):
+            text = str(source.get(key) or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def _completion_approval(arguments: dict[str, Any], actor: dict[str, Any]) -> tuple[bool, str, dict[str, Any]]:
+    reason = _approval_reason_text(arguments)
+    approval = arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {}
+    payload = {
+        "approval": approval,
+        "approved_by": arguments.get("approved_by"),
+        "reason": reason,
+    }
+    approved = _is_human_approved({"action": "completion_decision", "actor": actor, "payload": payload})
+    return approved and bool(reason), reason, {
+        "approved": bool(approved),
+        "reason": reason,
+        "approved_by": str(arguments.get("approved_by") or approval.get("approved_by") or ""),
+        "approval": approval,
+    }
 
 
 def _protected_snapshot_delta(ip: Path) -> list[str]:
@@ -3491,7 +3715,7 @@ def _fresh_compile_manifest(ip: Path, inputs: list[dict[str, str]]) -> dict[str,
 
 def _write_compile_manifest(ip: Path, *, inputs: list[dict[str, str]], graph: dict[str, Any], generated: dict[str, Any]) -> dict[str, Any]:
     outputs = []
-    for rel in (TRUTH_GRAPH_REL, DESIGN_SPEC_REL, DESIGN_FACTS_REL, DOMAIN_CROSSING_MATRIX_REL, TB_METHODOLOGY_MATRIX_REL):
+    for rel in (TRUTH_GRAPH_REL, DESIGN_SPEC_REL, DESIGN_FACTS_REL, DOMAIN_CROSSING_MATRIX_REL, TB_METHODOLOGY_MATRIX_REL, RTL_INTERFACE_API_REL):
         path = oag_paths.legacy_or_hidden(ip, str(rel))
         outputs.append({"path": str(rel), "sha256": _sha256(path) if path.is_file() else "missing"})
     packets = oag_paths.legacy_or_hidden(ip, str(AUTHORING_PACKETS_REL))
@@ -3584,6 +3808,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     req_ids = {str(item.get("id") or "") for item in reqs if item.get("id")}
     obl_ids = {str(item.get("id") or "") for item in obligations if item.get("id")}
     contract_ids = {str(item.get("id") or "") for item in contracts if item.get("id")}
+    contracts_by_id = {str(item.get("id") or ""): item for item in contracts if item.get("id")}
     rule_ids = {str(item.get("id") or "") for item in design_rules if item.get("id")}
     rule_kind_by_id = {str(item.get("id") or ""): str(item.get("kind") or "") for item in design_rules if item.get("id")}
     rule_kinds = {kind for kind in rule_kind_by_id.values() if kind}
@@ -3724,7 +3949,9 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         for cid in [str(item) for item in _as_list(obligation.get("contracts") or obligation.get("contract") or obligation.get("contract_ids")) if item]:
             if cid not in contract_ids:
                 issues.append(f"{oid}: contract ref not found: {cid}")
-            edges.append({"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True})
+            edge = {"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True}
+            edge.update(_closure_edge_attrs(contracts_by_id.get(cid)))
+            edges.append(edge)
 
     for contract in contracts:
         cid = str(contract.get("id") or "")
@@ -3739,6 +3966,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             if oid not in obl_ids:
                 issues.append(f"{cid}: obligation ref not found: {oid}")
             edge = {"source": f"obligation::{oid}", "target": f"contract::{cid}", "type": "closed_by", "load_bearing": True}
+            edge.update(_closure_edge_attrs(contract))
             if edge not in edges:
                 edges.append(edge)
         if not _contract_has_evidence_declaration(contract):
@@ -4237,6 +4465,20 @@ def _record_evidence_issues(ip: Path) -> list[str]:
         if not strength.get("closure_grade"):
             for issue in _as_list(strength.get("issues"))[:8]:
                 issues.append(f"{Path(str(record.get('_path'))).name}: weak closure evidence: {issue}")
+    return issues
+
+
+def _canonical_run_archive_issues(ip: Path) -> list[str]:
+    issues: list[str] = []
+    for canonical_rel, archive_glob in CANONICAL_RUN_ARCHIVE_REFS.items():
+        canonical = ip / canonical_rel
+        if not canonical.is_file():
+            continue
+        archives = sorted(ip.glob(archive_glob))
+        if not any(path.is_file() for path in archives):
+            issues.append(
+                f"canonical run evidence lacks immutable archive: {canonical_rel} requires at least one {archive_glob}"
+            )
     return issues
 
 
@@ -6305,6 +6547,7 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
     issues.extend(_ledger_issues(ip))
     issues.extend(_monotonic_issues(ip))
     issues.extend(_record_evidence_issues(ip))
+    issues.extend(_canonical_run_archive_issues(ip))
     scoreboard = _scoreboard_summary(ip / SCOREBOARD_REL)
     if scoreboard.get("present"):
         issues.extend([f"scoreboard_rows.v1: {issue}" for issue in _as_list(scoreboard.get("issues"))])
@@ -6803,6 +7046,7 @@ def _write_decision_receipt(
     actor: dict[str, str],
     inspect: dict[str, Any],
     check: dict[str, Any],
+    approval: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     receipt_id = f"DEC_{_stamp()}_{_slug(action)}"
     rel = DECISION_RECEIPTS_REL / f"{receipt_id}.json"
@@ -6817,6 +7061,7 @@ def _write_decision_receipt(
         "reason": reason,
         "next_action": next_action,
         "actor": actor,
+        "approval": approval if isinstance(approval, dict) else {},
         "created_at": _now(),
         "policy": {"closure_profile": _policy_profile(ip)},
         "evidence": {
@@ -6848,6 +7093,8 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
     scope_lock = _scope_lock_status(ip)
     inspect = _inspect(arguments)
     check = _check(arguments)
+    actor = _decision_actor(arguments)
+    approval_ok, _approval_reason, approval_payload = _completion_approval(arguments, actor)
     allowed = True
     reason = "allowed"
     next_action = ""
@@ -6892,6 +7139,10 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
             allowed = False
             reason = "decision_receipt_required"
             next_action = "rerun oag.decide with record_decision=true to write ontology/validations receipt"
+        if allowed and not approval_ok:
+            allowed = False
+            reason = "completion_approval_required"
+            next_action = "rerun oag.decide with approval.approved=true and a non-empty approval reason before closing the run"
     decision_receipt = None
     if arguments.get("record_decision") is True:
         decision_receipt = _write_decision_receipt(
@@ -6900,9 +7151,10 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
             allowed=allowed,
             reason=reason,
             next_action=next_action,
-            actor=_decision_actor(arguments),
+            actor=actor,
             inspect=inspect,
             check=check,
+            approval=approval_payload if action in VALID_COMPLETION_ACTIONS else {},
         )
     return {
         "schema_version": "oag_decision.v1",
@@ -6911,6 +7163,8 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
         "allowed": allowed,
         "reason": reason,
         "next_action": next_action,
+        "approval_required": action in VALID_COMPLETION_ACTIONS,
+        "approval": approval_payload if action in VALID_COMPLETION_ACTIONS else {},
         "policy": {"closure_profile": _policy_profile(_ip_dir(arguments))},
         "scope_lock": scope_lock,
         "inspect": inspect,
@@ -7415,18 +7669,54 @@ def _ensure_run_wavefront_graph(ip: Path, state: dict[str, Any]) -> dict[str, An
 
 def _dispatch_candidate(ip: Path, run_id: str, task: dict[str, Any]) -> dict[str, Any]:
     task_id = str(task.get("task_id") or "")
-    command = (
+    agent_type = str(task.get("agent_type") or "oag-custom-worker").strip() or "oag-custom-worker"
+    stage = str(task.get("phase") or task.get("kind") or "wavefront_task").strip() or "wavefront_task"
+    ownership_mode = str(task.get("ownership_mode") or "").strip()
+    receipt_name = f"{_safe_filename(task_id)}_{_safe_filename(agent_type)}.json"
+    receipt_path = ip / "knowledge" / "subagents" / receipt_name
+    create_parts = [
+        "python3",
+        ".codex/scripts/oag_dispatch.py",
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        agent_type,
+        "--stage",
+        stage,
+        "--receipt-path",
+        str(receipt_path),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        task_id,
+        "--json",
+    ]
+    if ownership_mode:
+        create_parts.extend(["--ownership-mode", ownership_mode])
+    for path in task_write_paths(task):
+        create_parts.extend(["--allowed-write-path", str(ip / path)])
+    create_command = " ".join(shlex.quote(part) for part in create_parts)
+    claim_command = (
         "python3 .codex/scripts/oag_wavefront.py claim"
         f" --ip-dir {shlex.quote(str(ip))}"
         f" --run-id {shlex.quote(run_id)}"
         f" --task-id {shlex.quote(task_id)}"
+        " --dispatch-id <dispatch_id>"
         " --claimed-by <actor>"
         " --json"
     )
     return {
         "task_id": task_id,
-        "command": command,
-        "ownership_mode": str(task.get("ownership_mode") or ""),
+        "command": claim_command,
+        "command_sequence": [create_command, claim_command],
+        "dispatch_create_command": create_command,
+        "claim_command": claim_command,
+        "dispatch_id_placeholder": "<dispatch_id>",
+        "agent_type": agent_type,
+        "stage": stage,
+        "receipt_path": str(receipt_path),
+        "ownership_mode": ownership_mode,
         "may_claim_complete": False,
     }
 
@@ -7466,6 +7756,7 @@ def _blocked_graph_tasks(graph: dict[str, Any], barriers: dict[str, Any], locks:
 def _graph_issue_action(ip: Path, state: dict[str, Any], status: dict[str, Any]) -> dict[str, Any]:
     run_id = str(state.get("run_id") or "")
     issues = status.get("issues") if isinstance(status.get("issues"), list) else []
+    matrix = _closure_matrix(ip)
     return {
         "schema_version": "oag_run_graph_next_action.v1",
         "scheduler_schema_version": "oag_run_graph_scheduler.v1",
@@ -7495,7 +7786,8 @@ def _graph_issue_action(ip: Path, state: dict[str, Any], status: dict[str, Any])
         "active_locks": [],
         "dispatch_command_candidates": [],
         "graph_status": status,
-        "closure_matrix": _closure_matrix(ip),
+        "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "wavefront graph status=pass",
         "prompt_block": "",
     }
@@ -7522,6 +7814,10 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
     active_contracts = _str_items(selected.get("contracts"))
     owner = selected.get("owner") if isinstance(selected.get("owner"), dict) else {}
     dispatch_candidates = [_dispatch_candidate(ip, run_id, task) for task in ready]
+    commands: list[str] = []
+    for candidate in dispatch_candidates:
+        sequence = candidate.get("command_sequence") if isinstance(candidate.get("command_sequence"), list) else []
+        commands.extend(str(command) for command in sequence if str(command).strip())
     next_action = {
         "kind": str(selected.get("next_action_kind") or ("dispatch_ready_task" if ready else "wait_for_graph_dependencies")),
         "summary": str(selected.get("summary") or ("Dispatch a graph-ready OAG task." if ready else "No graph tasks are ready; clear blockers or complete active work.")),
@@ -7530,9 +7826,10 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
             f"blocked_tasks={len(blocked)}",
             f"active_locks={len(_as_list(locks.get('locks')))}",
         ],
-        "commands": [candidate["command"] for candidate in dispatch_candidates],
+        "commands": commands,
         "required_evidence": _str_items(selected.get("required_evidence")),
     }
+    matrix = _closure_matrix(ip)
     return {
         "schema_version": "oag_run_graph_next_action.v1",
         "scheduler_schema_version": "oag_run_graph_scheduler.v1",
@@ -7552,7 +7849,8 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
         "active_locks": locks.get("locks", []),
         "dispatch_command_candidates": dispatch_candidates,
         "graph_status": status,
-        "closure_matrix": _closure_matrix(ip),
+        "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "oag.run.checkpoint allowed=true after graph tasks close",
         "prompt_block": "",
     }
@@ -7755,6 +8053,29 @@ def _apply_loop_projection(ip: Path, arguments: dict[str, Any], action: dict[str
     policy = _loop_policy_for_arguments(ip, arguments)
     if not policy.get("active"):
         return None
+    run_iteration = int(action.get("run_iteration") or 0)
+    max_iterations = int(policy.get("max_iterations") or 0)
+    if max_iterations > 0 and run_iteration > max_iterations:
+        plan = {
+            "schema_version": "oag_bounded_plan.v1",
+            "status": "pass",
+            "policy": loop_policy_storage(policy),
+            "recommended_batch": None,
+            "filtered_counts": {
+                "total_ready": 0,
+                "within_boundary": 0,
+                "after_scope_filter": 0,
+                "selected": 0,
+                "outside_boundary": 0,
+            },
+            "stop_reason": "max_iterations_reached",
+        }
+        action["loop_policy"] = plan["policy"]
+        action["loop_plan"] = plan
+        action["loop_stop_reason"] = "max_iterations_reached"
+        action["next_batch"] = None
+        action["prompt_block"] = ""
+        return plan
     plan = build_bounded_plan(ip, action, policy)
     batch = plan.get("recommended_batch") if isinstance(plan.get("recommended_batch"), dict) else None
     action["loop_policy"] = plan.get("policy") if isinstance(plan.get("policy"), dict) else loop_policy_storage(policy)
@@ -7764,6 +8085,13 @@ def _apply_loop_projection(ip: Path, arguments: dict[str, Any], action: dict[str
     if not batch:
         action["prompt_block"] = ""
     return plan
+
+
+def _refresh_loop_prompt(action: dict[str, Any]) -> None:
+    if action.get("loop_stop_reason") and not isinstance(action.get("next_batch"), dict):
+        action["prompt_block"] = ""
+        return
+    action["prompt_block"] = _format_run_prompt_block(action)
 
 
 def _loop_fields_for_response(plan: dict[str, Any] | None, action: dict[str, Any]) -> dict[str, Any]:
@@ -7853,6 +8181,7 @@ def _run_action_from_state(ip: Path, arguments: dict[str, Any], state: dict[str,
             },
             "blockers": [] if matrix.get("total") else [{"id": "BLK_NO_OBLIGATIONS", "text": "closure matrix has no obligations"}],
             "closure_matrix": matrix,
+            "closure_edges": _closure_edge_todos(ip, matrix),
             "stop_condition": "oag.run.checkpoint allowed=true",
             "prompt_block": "",
         }
@@ -7923,9 +8252,219 @@ def _run_action_from_state(ip: Path, arguments: dict[str, Any], state: dict[str,
         "blockers": blockers,
         "evidence_strength": evidence_strength,
         "closure_matrix": matrix,
+        "closure_edges": _closure_edge_todos(ip, matrix),
         "stop_condition": "oag.run.checkpoint allowed=true",
         "prompt_block": "",
     }
+
+
+def _closure_edge_todos(ip: Path, matrix: dict[str, Any]) -> list[dict[str, Any]]:
+    contracts_by_id = _contracts_by_id(ip)
+    edges: list[dict[str, Any]] = []
+    for row in matrix.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        obligation = str(row.get("obligation") or "").strip()
+        if not obligation:
+            continue
+        owner = _owner_for_obligation(ip, obligation)
+        records = _str_items(row.get("records"))
+        contracts = _str_items(row.get("contracts"))
+        if not contracts:
+            contracts = ["<missing_contract>"]
+        for contract_id in contracts:
+            contract = contracts_by_id.get(contract_id, {})
+            required_evidence = _contract_expected_evidence(contract) if contract else []
+            criteria = []
+            if contract_id == "<missing_contract>":
+                criteria.append("bind obligation to at least one contract")
+            else:
+                criteria.append("contract exists and remains bound to obligation")
+            if required_evidence:
+                criteria.append("required evidence exists and is fresh")
+            else:
+                criteria.append("contract declares auditable evidence or reviewer records a waiver")
+            criteria.append("closed ROCEV validation record links this obligation-contract edge")
+            closed = row.get("closed") is True
+            if closed and records:
+                approved_reason = "closed validation records: " + ", ".join(records[:4])
+            elif row.get("waived") is True:
+                approved_reason = "waived by ontology status"
+            else:
+                approved_reason = ""
+            edges.append(
+                {
+                    "schema_version": "oag_closure_edge_todo.v1",
+                    "id": f"edge.{_safe_filename(obligation)}.{_safe_filename(contract_id)}",
+                    "source": f"obligation::{obligation}",
+                    "target": f"contract::{contract_id}",
+                    "obligation": obligation,
+                    "contract": contract_id,
+                    "status": "closed" if closed else "open",
+                    "owner_module": str(owner.get("module") or ""),
+                    "owner_file": str(owner.get("file") or ""),
+                    "criteria": criteria,
+                    "required_evidence": required_evidence,
+                    "records": records,
+                    "approval_policy": "evidence_required",
+                    "approved": closed,
+                    "approved_reason": approved_reason,
+                }
+            )
+    edges.sort(key=lambda item: (item.get("status") == "closed", str(item.get("obligation") or ""), str(item.get("contract") or "")))
+    return edges
+
+
+def _closure_edge_attrs(contract: dict[str, Any] | None = None) -> dict[str, Any]:
+    required_evidence = _contract_expected_evidence(contract or {}) if isinstance(contract, dict) else []
+    criteria = [
+        "contract exists and remains bound to obligation",
+        "required evidence exists and is fresh" if required_evidence else "contract declares auditable evidence or reviewer records a waiver",
+        "closed ROCEV validation record links this obligation-contract edge",
+    ]
+    return {
+        "closure_edge": True,
+        "approval_policy": "evidence_required",
+        "criteria": criteria,
+        "required_evidence": required_evidence,
+        "approved": False,
+        "approved_reason": "",
+    }
+
+
+def _clip_prompt_text(value: Any, limit: int = 220) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 3, 0)] + "..."
+
+
+def _format_task_summary(task: dict[str, Any]) -> str:
+    parts = [
+        f"id={task.get('task_id') or task.get('id') or '<unknown>'}",
+        f"kind={task.get('kind') or task.get('next_action_kind') or '<unknown>'}",
+    ]
+    status = str(task.get("status") or "").strip()
+    if status:
+        parts.append(f"status={status}")
+    agent = str(task.get("agent_type") or "").strip()
+    if agent:
+        parts.append(f"agent={agent}")
+    obligation = str(task.get("obligation") or "").strip()
+    if obligation:
+        parts.append(f"obligation={obligation}")
+    contracts = _str_items(task.get("contracts"))
+    if contracts:
+        parts.append(f"contracts={','.join(contracts[:3])}")
+    owner = task.get("owner") if isinstance(task.get("owner"), dict) else {}
+    owner_module = str(task.get("owner_module") or owner.get("module") or "").strip()
+    if owner_module:
+        parts.append(f"owner={owner_module}")
+    allowed = _str_items(task.get("allowed_write_paths"))
+    shared = _str_items(task.get("shared_artifacts"))
+    if allowed:
+        parts.append(f"writes={','.join(allowed[:3])}")
+    if shared:
+        parts.append(f"shared={','.join(shared[:3])}")
+    deps = _str_items(task.get("depends_on") or task.get("deps"))
+    if deps:
+        parts.append(f"deps={','.join(deps[:4])}")
+    barriers = _str_items(task.get("barrier_outputs"))
+    if barriers:
+        parts.append(f"barriers={','.join(barriers[:4])}")
+    return _clip_prompt_text(" ".join(parts), 320)
+
+
+def _append_task_section(lines: list[str], title: str, tasks: Any, *, limit: int = 5) -> None:
+    if not isinstance(tasks, list) or not tasks:
+        return
+    lines.append(f"{title}={len(tasks)}")
+    for task in tasks[:limit]:
+        if isinstance(task, dict):
+            lines.append(f"- {_format_task_summary(task)}")
+        else:
+            lines.append(f"- {_clip_prompt_text(task)}")
+    if len(tasks) > limit:
+        lines.append(f"- ... {len(tasks) - limit} more")
+
+
+def _append_dispatch_candidates(lines: list[str], candidates: Any, *, limit: int = 3) -> None:
+    if not isinstance(candidates, list) or not candidates:
+        return
+    lines.append(f"dispatch_candidates={len(candidates)}")
+    for candidate in candidates[:limit]:
+        if isinstance(candidate, dict):
+            task_id = str(candidate.get("task_id") or "").strip()
+            create_command = _clip_prompt_text(candidate.get("dispatch_create_command"), 320)
+            claim_command = _clip_prompt_text(candidate.get("claim_command") or candidate.get("command"), 260)
+            lines.append(f"- task={task_id or '<unknown>'} create={create_command}")
+            lines.append(f"  claim={claim_command}")
+        else:
+            lines.append(f"- {_clip_prompt_text(candidate, 260)}")
+    if len(candidates) > limit:
+        lines.append(f"- ... {len(candidates) - limit} more")
+
+
+def _append_loop_section(lines: list[str], action: dict[str, Any]) -> None:
+    policy = action.get("loop_policy") if isinstance(action.get("loop_policy"), dict) else {}
+    plan = action.get("loop_plan") if isinstance(action.get("loop_plan"), dict) else {}
+    batch = action.get("next_batch") if isinstance(action.get("next_batch"), dict) else None
+    if policy:
+        filters = []
+        for key in ("until", "requirements", "obligations", "owner_modules", "job_types", "limit", "mode"):
+            value = policy.get(key)
+            if value not in (None, "", [], {}):
+                filters.append(f"{key}={value}")
+        if filters:
+            lines.append("loop_policy=" + _clip_prompt_text("; ".join(filters), 360))
+    counts = plan.get("filtered_counts") if isinstance(plan.get("filtered_counts"), dict) else {}
+    if counts:
+        lines.append(
+            "loop_filtered_counts="
+            + ", ".join(f"{key}={counts.get(key)}" for key in ("total_ready", "within_boundary", "after_scope_filter", "selected", "outside_boundary"))
+        )
+    stop_reason = str(action.get("loop_stop_reason") or plan.get("stop_reason") or "").strip()
+    if stop_reason:
+        lines.append(f"loop_stop_reason={stop_reason}")
+    if batch:
+        tasks = batch.get("tasks") if isinstance(batch.get("tasks"), list) else []
+        lines.append(
+            "next_batch="
+            + _clip_prompt_text(
+                f"id={batch.get('batch_id')} job_type={batch.get('job_type')} boundary={batch.get('boundary_stage')} tasks={len(tasks)} stop_after_batch={batch.get('stop_after_batch')}",
+                360,
+            )
+        )
+        _append_task_section(lines, "next_batch_tasks", tasks, limit=5)
+
+
+def _append_closure_edge_section(lines: list[str], action: dict[str, Any], *, limit: int = 6) -> None:
+    matrix = action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {}
+    if matrix:
+        total = int(matrix.get("total") or 0)
+        closed = int(matrix.get("closed") or 0)
+        lines.append(f"closure_matrix=open {max(total - closed, 0)}/{total}")
+    edges = action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else []
+    open_edges = [edge for edge in edges if isinstance(edge, dict) and str(edge.get("status") or "") != "closed"]
+    if not open_edges:
+        return
+    lines.append(f"closure_edges_open={len(open_edges)}")
+    for edge in open_edges[:limit]:
+        owner = str(edge.get("owner_module") or edge.get("owner_file") or "unknown")
+        evidence = _str_items(edge.get("required_evidence"))
+        criteria = _str_items(edge.get("criteria"))
+        parts = [
+            f"{edge.get('source')}->{edge.get('target')}",
+            f"owner={owner}",
+            f"approval_policy={edge.get('approval_policy') or 'evidence_required'}",
+        ]
+        if evidence:
+            parts.append(f"evidence={','.join(evidence[:3])}")
+        if criteria:
+            parts.append(f"criteria={'; '.join(criteria[:3])}")
+        lines.append("- " + _clip_prompt_text(" ".join(parts), 420))
+    if len(open_edges) > limit:
+        lines.append(f"- ... {len(open_edges) - limit} more")
 
 
 def _format_run_prompt_block(action: dict[str, Any]) -> str:
@@ -7948,6 +8487,12 @@ def _format_run_prompt_block(action: dict[str, Any]) -> str:
         lines.append(f"required_evidence={', '.join(required)}")
     if blockers:
         lines.append("blockers=" + "; ".join(str(item.get("text") or item.get("id") or item) for item in blockers if isinstance(item, dict)))
+    _append_closure_edge_section(lines, action)
+    _append_loop_section(lines, action)
+    _append_task_section(lines, "ready_tasks", action.get("ready_tasks"), limit=5)
+    _append_task_section(lines, "blocked_tasks", action.get("blocked_tasks"), limit=5)
+    _append_task_section(lines, "active_locks", action.get("active_locks"), limit=5)
+    _append_dispatch_candidates(lines, action.get("dispatch_command_candidates"), limit=3)
     commands = _str_items(next_action.get("commands"))
     if commands:
         lines.append("commands:")
@@ -8080,8 +8625,9 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             action = _graph_issue_action(ip, state, graph_status)
         else:
             action = _run_graph_action_from_state(ip, state)
-        action["prompt_block"] = _format_run_prompt_block(action)
+        action["run_iteration"] = int(state.get("iteration") or 0) + 1
         loop_plan = _apply_loop_projection(ip, arguments, action)
+        _refresh_loop_prompt(action)
         state["iteration"] = int(state.get("iteration") or 0) + 1
         state["status"] = str(action.get("status") or "in_progress")
         state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8107,6 +8653,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
             if isinstance(action.get("dispatch_command_candidates"), list)
             else [],
             "graph_status": action.get("graph_status") if isinstance(action.get("graph_status"), dict) else {},
+            "closure_matrix": action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {},
+            "closure_edges": action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else [],
             "next_action": action,
             "prompt_block": action["prompt_block"],
         }
@@ -8114,8 +8662,9 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         return result
     action_args = {**state, **arguments, "run_id": state["run_id"]}
     action = _run_action_from_state(ip, action_args, state)
-    action["prompt_block"] = _format_run_prompt_block(action)
+    action["run_iteration"] = int(state.get("iteration") or 0) + 1
     loop_plan = _apply_loop_projection(ip, arguments, action)
+    _refresh_loop_prompt(action)
     state["iteration"] = int(state.get("iteration") or 0) + 1
     state["status"] = str(action.get("status") or "in_progress")
     state["active_obligation"] = str(action.get("active_obligation") or "")
@@ -8131,6 +8680,8 @@ def _run_next(arguments: dict[str, Any]) -> dict[str, Any]:
         "status": state["status"],
         "state_path": str(_run_state_path(ip, str(state["run_id"]))),
         "next_action_path": str(_run_next_action_path(ip, str(state["run_id"]))),
+        "closure_matrix": action.get("closure_matrix") if isinstance(action.get("closure_matrix"), dict) else {},
+        "closure_edges": action.get("closure_edges") if isinstance(action.get("closure_edges"), list) else [],
         "next_action": action,
         "prompt_block": action["prompt_block"],
     }
@@ -8308,6 +8859,11 @@ def _run_checkpoint(arguments: dict[str, Any]) -> dict[str, Any]:
                 "action": str(arguments.get("action") or "claim_complete"),
                 "record_decision": arguments.get("record_decision", True),
                 "actor": actor,
+                "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+                "approved_by": arguments.get("approved_by"),
+                "approval_reason": arguments.get("approval_reason"),
+                "reason": arguments.get("reason"),
+                "summary": arguments.get("summary"),
             }
         )
         action = _run_graph_action_from_state(ip, state)
@@ -8320,6 +8876,11 @@ def _run_checkpoint(arguments: dict[str, Any]) -> dict[str, Any]:
                 "action": str(arguments.get("action") or "claim_complete"),
                 "record_decision": arguments.get("record_decision", True),
                 "actor": actor,
+                "approval": arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {},
+                "approved_by": arguments.get("approved_by"),
+                "approval_reason": arguments.get("approval_reason"),
+                "reason": arguments.get("reason"),
+                "summary": arguments.get("summary"),
             }
         )
         action_args = {**state, **arguments, "run_id": state["run_id"]}
@@ -8427,9 +8988,11 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
     if stored_action:
         loop_policy = _loop_policy_for_arguments(ip, arguments)
         if loop_policy.get("active"):
-            loop_plan = build_bounded_plan(ip, stored_action, loop_policy)
-            if not isinstance(loop_plan.get("recommended_batch"), dict):
-                return _bounded_loop_stop_response(ip, state, stored_action, loop_plan)
+            loop_action = dict(stored_action)
+            loop_action["run_iteration"] = int(state.get("iteration") or 0) + 1
+            loop_plan = _apply_loop_projection(ip, arguments, loop_action)
+            if isinstance(loop_plan, dict) and not isinstance(loop_plan.get("recommended_batch"), dict):
+                return _bounded_loop_stop_response(ip, state, loop_action, loop_plan)
         allowed, policy = _policy_allows_action(ip, stored_action)
         if not allowed:
             return {
@@ -8474,6 +9037,8 @@ def _stop_check(arguments: dict[str, Any]) -> dict[str, Any]:
         "reason": "run_incomplete",
         "next_action": next_action,
         "next_batch": next_response.get("next_batch") if isinstance(next_response.get("next_batch"), dict) else None,
+        "closure_matrix": next_response.get("closure_matrix") if isinstance(next_response.get("closure_matrix"), dict) else {},
+        "closure_edges": next_response.get("closure_edges") if isinstance(next_response.get("closure_edges"), list) else [],
         "prompt_block": next_response.get("prompt_block") or "",
         "policy": {
             **policy,

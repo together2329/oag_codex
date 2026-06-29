@@ -1,0 +1,63 @@
+schema_version: oag_wavefront_template.v1
+name: mctp_rx_pcie_vdm_overlong_repair
+description: MCTP RX PCIe VDM overlong TLP semantic-drop repair with parallel RTL and TB shards followed by review and sim integration.
+tasks:
+  - task_id: RTL_PCIE_VDM_OVERLONG_DROP
+    kind: write
+    phase: rtl
+    agent_type: oag-rtl-implementation-agent
+    depends_on: []
+    barrier_outputs:
+      - rtl_pcie_vdm_overlong_drop_ready
+    allowed_write_paths:
+      - rtl/mctp_rx_pcie_vdm_parser.sv
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_PCIE_VDM_OVERLONG_NEGATIVE
+    kind: write
+    phase: tb
+    agent_type: oag-tb-implementation-agent
+    depends_on: []
+    barrier_outputs:
+      - tb_pcie_vdm_overlong_negative_ready
+    allowed_write_paths:
+      - tb/uvm/mctp_rx_uvm_pkg.sv
+      - tb/uvm/mctp_rx_uvm_top.sv
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: REVIEW_PCIE_VDM_OVERLONG_CLOSURE
+    kind: read_only
+    phase: review
+    agent_type: oag-custom-reviewer
+    depends_on:
+      - RTL_PCIE_VDM_OVERLONG_DROP
+      - TB_PCIE_VDM_OVERLONG_NEGATIVE
+    barrier_inputs:
+      - rtl_pcie_vdm_overlong_drop_ready
+      - tb_pcie_vdm_overlong_negative_ready
+    barrier_outputs:
+      - review_pcie_vdm_overlong_closure_ready
+    allowed_write_paths: []
+    ownership_mode: none
+    may_claim_complete: false
+  - task_id: SIM_PCIE_VDM_OVERLONG_CANONICAL
+    kind: integration
+    phase: sim
+    agent_type: oag-sim-execution-agent
+    depends_on:
+      - REVIEW_PCIE_VDM_OVERLONG_CLOSURE
+    barrier_inputs:
+      - review_pcie_vdm_overlong_closure_ready
+    shared_artifacts:
+      - rtl/rtl_compile.json
+      - lint/dut_lint.json
+      - sim/uvm_status.json
+      - sim/uvm_results.xml
+      - sim/uvm_scoreboard_events.jsonl
+      - sim/uvm_scenario_mapping.json
+      - sim/uvm_verilator_build.log
+      - sim/uvm_run.log
+      - cov/coverage.json
+      - cov/verilator.coverage.json
+    ownership_mode: integration_owner
+    may_claim_complete: false
