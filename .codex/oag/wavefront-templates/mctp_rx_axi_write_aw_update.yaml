@@ -1,0 +1,63 @@
+schema_version: oag_wavefront_template.v1
+name: mctp_rx_axi_write_aw_update
+description: MCTP RX AXI write AWLEN/AWSIZE/AWBURST update with parallel RTL, TB, and formal shards followed by one sim/lint integration owner.
+tasks:
+  - task_id: RTL_AXI_WRITE_AW_PROFILE
+    kind: write
+    phase: rtl
+    agent_type: oag-rtl-implementation-agent
+    depends_on: []
+    barrier_outputs:
+      - rtl_axi_write_aw_profile_ready
+    allowed_write_paths:
+      - rtl/mctp_rx_axi_w_tlp_ingress.sv
+      - rtl/mctp_rx_assembler.sv
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_AXI_WRITE_AW_PROFILE
+    kind: write
+    phase: tb
+    agent_type: oag-tb-implementation-agent
+    depends_on: []
+    barrier_outputs:
+      - tb_axi_write_aw_profile_ready
+    allowed_write_paths:
+      - tb/mctp_rx_tb_top.sv
+      - tb/mctp_rx_tb_common.svh
+      - tb/mctp_rx_scenarios_basic.svh
+      - tb/mctp_rx_scoreboard.svh
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: FORMAL_AXI_WRITE_AW_PROFILE
+    kind: write
+    phase: formal
+    agent_type: oag-custom-worker
+    depends_on: []
+    barrier_outputs:
+      - formal_axi_write_aw_profile_ready
+    allowed_write_paths:
+      - formal/axi_ingress/axi_ingress_formal.sv
+      - formal/axi_ingress/axi_ingress_result.json
+      - formal/axi_ingress/axi_ingress_proof.log
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: SIM_AXI_WRITE_AW_INTEGRATION
+    kind: integration
+    phase: sim
+    agent_type: oag-sim-execution-agent
+    depends_on:
+      - RTL_AXI_WRITE_AW_PROFILE
+      - TB_AXI_WRITE_AW_PROFILE
+      - FORMAL_AXI_WRITE_AW_PROFILE
+    barrier_inputs:
+      - rtl_axi_write_aw_profile_ready
+      - tb_axi_write_aw_profile_ready
+      - formal_axi_write_aw_profile_ready
+    shared_artifacts:
+      - rtl/rtl_compile.json
+      - lint/dut_lint.json
+      - sim/results.xml
+      - sim/scoreboard_events.jsonl
+      - cov/coverage.json
+    ownership_mode: integration_owner
+    may_claim_complete: false
