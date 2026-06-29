@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/bin/sh -lc 'test -r .codex/hooks/codex_stop_gate.py || exit 0; PYTHONDONTWRITEBYTECODE=1 python3 .codex/hooks/codex_stop_gate.py || exit 0'",
+            "command": "python3 .codex/hooks/codex_stop_gate.py",
             "timeout": 10,
             "statusMessage": "OAG: checking active run completion"
           }

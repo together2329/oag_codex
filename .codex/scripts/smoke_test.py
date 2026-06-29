@@ -3062,9 +3062,8 @@ def main() -> int:
         assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         stop_command = stop_hooks[0]["command"]
-        assert "codex_stop_gate.py" in stop_command, hooks
-        assert "PYTHONDONTWRITEBYTECODE=1" in stop_command, hooks
-        assert "|| exit 0" in stop_command, hooks
+        assert stop_command == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        assert "/bin/sh" not in stop_command and "sh.exe" not in stop_command, hooks
         subagent_start_hooks = hooks["hooks"]["SubagentStart"][0]
         assert subagent_start_hooks["matcher"] == "^oag-", hooks
         assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks

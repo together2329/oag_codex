@@ -31,6 +31,8 @@ import sys
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 ROOT = Path(__file__).resolve().parents[1]  # .codex/
 PROJECT = ROOT.parent  # project root that holds the IP folders
 CACHE_PATH = Path(os.environ.get("OAG_STOP_GATE_CACHE") or ROOT / ".cache" / "stop_gate.json")
