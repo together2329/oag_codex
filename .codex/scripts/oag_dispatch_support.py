@@ -65,6 +65,13 @@ LOCK_REQUIRED_STAGES = {"rtl", "lint", "tb", "sim", "coverage", "cov", "formal",
 PACKET_GATED_AGENT_FRAGMENTS = ("rtl-implementation", "tb-implementation")
 PACKET_GATED_STAGE_PREFIXES = ("rtl", "tb")
 PACKET_GATED_WRITE_PREFIXES = ("rtl/", "tb/")
+AUTHORING_PACKET_COMPILE_RETRY_CODES = {
+    "COMPILE_MANIFEST_MISSING",
+    "COMPILE_MANIFEST_STATUS",
+    "COMPILE_MANIFEST_STALE_INPUT",
+    "RTL_PACKET_MISSING",
+    "TB_PACKET_MISSING",
+}
 
 
 class DispatchInputError(ValueError):
@@ -292,12 +299,7 @@ def dispatch_requires_authoring_packet_gate(agent_type: str, stage: str, allowed
     return any(stage_name == prefix or stage_name.startswith(f"{prefix}_") for prefix in PACKET_GATED_STAGE_PREFIXES)
 
 
-def enforce_authoring_packet_gate(ip_dir: Path) -> None:
-    import oag_authoring_packet_check  # noqa: WPS433
-
-    result = oag_authoring_packet_check.check(ip_dir, require_packets=True)
-    if result.get("status") == "pass":
-        return
+def render_authoring_packet_issues(result: JsonObject) -> str:
     issues = [item for item in result.get("issues", []) if isinstance(item, dict)]
     rendered = "; ".join(
         f"{item.get('code', '<issue>')}: {item.get('message', '')}"
@@ -306,7 +308,61 @@ def enforce_authoring_packet_gate(ip_dir: Path) -> None:
     )
     if len(issues) > 5:
         rendered += f"; ... {len(issues) - 5} more"
-    raise DispatchInputError(f"authoring packet hard gate failed before RTL/TB dispatch: {rendered or 'unknown issue'}")
+    return rendered or "unknown issue"
+
+
+def authoring_packet_gate_retryable(result: JsonObject) -> bool:
+    issues = [item for item in result.get("issues", []) if isinstance(item, dict)]
+    if not issues:
+        return False
+    codes = {str(item.get("code") or "") for item in issues}
+    return bool(codes) and codes <= AUTHORING_PACKET_COMPILE_RETRY_CODES
+
+
+def compile_for_authoring_packet_gate(ip_dir: Path) -> JsonObject:
+    import oag_cli  # noqa: WPS433
+
+    response = oag_cli.dispatch_call(
+        {
+            "tool": "oag.compile",
+            "arguments": {"ip_dir": str(ip_dir), "force": True},
+        }
+    )
+    result = response.get("result") if isinstance(response, dict) else {}
+    return result if isinstance(result, dict) else {}
+
+
+def enforce_authoring_packet_gate(ip_dir: Path) -> JsonObject:
+    import oag_authoring_packet_check  # noqa: WPS433
+
+    result = oag_authoring_packet_check.check(ip_dir, require_packets=True)
+    if result.get("status") == "pass":
+        return {"status": "pass", "compile_retry": False}
+    if authoring_packet_gate_retryable(result):
+        compile_result = compile_for_authoring_packet_gate(ip_dir)
+        if compile_result.get("status") != "pass":
+            raise DispatchInputError(
+                "authoring packet hard gate failed before RTL/TB dispatch; "
+                f"oag.compile retry did not pass: {compile_result.get('issues') or compile_result}"
+            )
+        retry_result = oag_authoring_packet_check.check(ip_dir, require_packets=True)
+        if retry_result.get("status") == "pass":
+            return {
+                "status": "pass",
+                "compile_retry": True,
+                "compile_status": compile_result.get("status"),
+                "initial_issue_codes": sorted(
+                    {str(item.get("code") or "") for item in result.get("issues", []) if isinstance(item, dict)}
+                ),
+            }
+        raise DispatchInputError(
+            "authoring packet hard gate failed after oag.compile retry before RTL/TB dispatch: "
+            + render_authoring_packet_issues(retry_result)
+        )
+    raise DispatchInputError(
+        "authoring packet hard gate failed before RTL/TB dispatch: "
+        + render_authoring_packet_issues(result)
+    )
 
 
 def path_matches(path: str, patterns: list[str]) -> bool:
@@ -376,8 +432,9 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         allowed_write_paths.append(str(Path(receipt_path).parent).replace("\\", "/") + "/")
     if dispatch_requires_lock(args.agent_type, args.stage, allowed_write_paths) and scope_lock_status(ip_dir).get("locked") is not True:
         raise DispatchInputError("scope lock required before implementation, validation, or gate dispatch; ask the user to confirm scope and run oag.lock")
+    authoring_packet_gate: JsonObject | None = None
     if dispatch_requires_authoring_packet_gate(args.agent_type, args.stage, allowed_write_paths, ip_rel):
-        enforce_authoring_packet_gate(ip_dir)
+        authoring_packet_gate = enforce_authoring_packet_gate(ip_dir)
 
     status_raw, status_paths = git_status_paths(ip_rel)
     oag_paths.state_path(ip_dir, "knowledge/dispatches").mkdir(parents=True, exist_ok=True)
@@ -418,5 +475,8 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         except FileExistsError:
             continue
         candidate["path"] = dispatch_rel
-        return {"schema_version": "oag_dispatch_create_result.v1", "status": "pass", "dispatch": candidate}
+        response: JsonObject = {"schema_version": "oag_dispatch_create_result.v1", "status": "pass", "dispatch": candidate}
+        if authoring_packet_gate:
+            response["authoring_packet_gate"] = authoring_packet_gate
+        return response
     raise DispatchInputError("could not allocate a unique dispatch id")

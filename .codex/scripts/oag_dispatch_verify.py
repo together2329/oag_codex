@@ -18,6 +18,7 @@ from oag_dispatch_support import (
     resolve_project_path,
     schema_issues,
 )
+import oag_paths
 from oag_dispatch_wavefront import (
     WAVEFRONT_FIELDS,
     collect_wavefront_claim_issues,
@@ -38,6 +39,7 @@ RECEIPT_SAFE_STATUSES = {
 }
 LEGACY_RECEIPT_STATUSES = {"PASS"}
 FORBIDDEN_STATUS_WORDS = ("COMPLETE", "DONE", "SIGNOFF", "RELEASED", "CLOSED")
+WAVEFRONT_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
 
 
 def string_list(payload: JsonObject, *fields: str) -> list[str]:
@@ -110,6 +112,47 @@ def load_json_object(path: Path, artifact_name: str, issue_code: str, issues: li
     return payload
 
 
+def wavefront_task_for_dispatch(dispatch: JsonObject) -> JsonObject:
+    run_id = str(dispatch.get("wavefront_run_id") or "")
+    task_id = str(dispatch.get("task_id") or "")
+    ip_rel = str(dispatch.get("ip_dir") or "")
+    if not run_id or not task_id or not ip_rel:
+        return {}
+    graph_path = oag_paths.legacy_or_hidden(resolve_project_path(ip_rel), f"ontology/runs/{run_id}/wavefront_task_graph.json")
+    try:
+        graph = load_json(graph_path)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(graph, dict):
+        return {}
+    for task in graph.get("tasks", []):
+        if isinstance(task, dict) and str(task.get("task_id") or "") == task_id:
+            return task
+    return {}
+
+
+def append_wavefront_abort_issues(issues: list[Issue], dispatch: JsonObject, receipt_path: Path) -> None:
+    task = wavefront_task_for_dispatch(dispatch)
+    if not task:
+        return
+    status = str(task.get("status") or "")
+    if status not in WAVEFRONT_ABORT_STATUSES:
+        return
+    recorded_receipt = normalize_rel(str(task.get("receipt_path") or "")) if task.get("receipt_path") else ""
+    current_receipt = project_rel(receipt_path)
+    if recorded_receipt and recorded_receipt == current_receipt:
+        return
+    marker = task.get("abort_marker") if isinstance(task.get("abort_marker"), dict) else {}
+    issues.append(
+        issue(
+            "WAVEFRONT_TASK_ABORTED",
+            "receipt arrived for a wavefront task already recorded as "
+            f"{status}; create a fresh dispatch from the current baseline instead of integrating late child output",
+            str(marker.get("receipt_path") or current_receipt),
+        )
+    )
+
+
 def verify_dispatch(args: argparse.Namespace) -> JsonObject:
     issues: list[Issue] = []
     dispatch_path = resolve_project_path(args.dispatch)
@@ -171,6 +214,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
                 elif receipt_value != dispatch_value:
                     issues.append(issue("WAVEFRONT_FIELD_MISMATCH", f"receipt.{field} does not match dispatch.{field}"))
             issues.extend(collect_wavefront_claim_issues(dispatch))
+            append_wavefront_abort_issues(issues, dispatch, receipt_path)
 
         status = str(receipt.get("status") or "")
         if status in LEGACY_RECEIPT_STATUSES:

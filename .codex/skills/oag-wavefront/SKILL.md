@@ -47,6 +47,18 @@ the child's RTL, TB, simulation, coverage, filelist, or signoff-owned files.
 Parent implementation after lock requires a human waiver decision and must be
 visible to the main-write gate.
 
+Use bounded handoff for stalled children. After the configured wait budget,
+request a minimal receipt with the current status, changed paths, commands, and
+blockers. If the child does not respond, close or park that child only after the
+wavefront task is recorded as `INCONCLUSIVE`, `BLOCKED`, or `failed` according
+to available evidence, then create a new dispatch from the current baseline.
+Do not keep an ownership lock open while starting an untracked replacement.
+Do not widen an old dispatch to absorb the replacement's paths or artifacts.
+When a task is recorded as `blocked`, `failed`, or `inconclusive`, treat the
+old dispatch as aborted. Late receipts from that dispatch are not valid
+handoffs; verify must reject them and the replacement must use a fresh dispatch
+from the current baseline.
+
 ## Commands
 
 Create a graph from a generic template:

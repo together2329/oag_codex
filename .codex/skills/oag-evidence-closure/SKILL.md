@@ -18,6 +18,11 @@ closure by itself.
 - Coverage contributes only when tied to passing checks and known contracts.
 - Evidence added after gate PASS makes the gate stale.
 - Gate review and completion decisions must use current artifact hashes.
+- Simulator-native evidence is not automatically canonical. When projecting
+  UVM, cocotb, formal, or custom logs into `scoreboard_rows.v1`, map only to
+  locked contract event IDs and registered coverage refs. Do not synthesize
+  PASS rows for events that lack direct or equivalently justified DUT-observed
+  evidence; add or rerun the owning TB/formal scenario instead.
 
 ## Commands
 

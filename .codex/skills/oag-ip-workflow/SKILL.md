@@ -167,6 +167,20 @@ The generated `ontology/generated/authoring_packets/rtl__*.json` and
 `tb__*.json` files are the role-specific implementation and proof inputs.
 RTL/TB agents should not reinterpret original prose once these packets exist.
 
+File-scoped repair prompts still enter OAG. If the user asks to find, fix,
+debug, test, or review a file reference such as `@ip_name/rtl/foo.sv`,
+`@ip_name/tb/bar.sv`, or an absolute path under an IP workspace, first resolve
+the owning IP root and run the same OAG context/lock/packet gates as if the user
+had named the IP explicitly. Do not wait for the prompt to contain the literal
+word `oag`. If multiple file references map to different IP roots, stop and
+split the work by IP instead of guessing.
+
+When RTL/TB dispatch creation fails only because the generated compile manifest
+is missing or stale, refresh it with `oag.compile` and retry the packet gate
+once. Treat schema, projection, lifecycle, decomposition, domain, or packet
+content failures as real blockers; do not hide them behind repeated compile
+loops.
+
 When multiple RTL/TB/sim tasks should run in parallel, use wavefront scheduling
 instead of unconstrained fan-out:
 

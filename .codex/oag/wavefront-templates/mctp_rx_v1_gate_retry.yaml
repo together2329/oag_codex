@@ -1,0 +1,18 @@
+schema_version: oag_wavefront_template.v1
+name: mctp_rx_v1_gate_retry
+description: Retry only the final development-closure gate review after post-projection evidence validation is clean. No evidence, RTL, TB, sim, cov, requirements, or ontology edits are allowed.
+tasks:
+  - task_id: GATE_REVIEW_POST_PROJECTION_RETRY
+    kind: integration
+    phase: gate
+    agent_type: oag-gate-reviewer
+    depends_on: []
+    barrier_inputs:
+      - evidence_validation_post_projection_ready
+    barrier_outputs:
+      - gate_review_post_projection_retry_ready
+    shared_artifacts:
+      - knowledge/gate_reviews/oag_gate_decision.json
+      - knowledge/subagents/
+    ownership_mode: integration_owner
+    may_claim_complete: false

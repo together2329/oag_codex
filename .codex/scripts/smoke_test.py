@@ -489,6 +489,34 @@ def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
     assert unclaimed_result["status"] == "fail", unclaimed_result
     assert any(item["code"] == "WAVEFRONT_TASK_UNCLAIMED" for item in unclaimed_result["issues"]), unclaimed_result
 
+    aborted_dispatch_path, aborted_receipt_path, aborted_dispatch = write_task5_dispatch(
+        project,
+        ip,
+        "aborted_late_receipt",
+        "TASK_ABORTED_LATE",
+        "exclusive_file",
+        worker_allowed,
+        run_id="RUN_ABORTED_LATE",
+    )
+    aborted_graph_path = ip / "ontology" / "runs" / "RUN_ABORTED_LATE" / "wavefront_task_graph.json"
+    aborted_graph = json.loads(aborted_graph_path.read_text(encoding="utf-8"))
+    aborted_task = aborted_graph["tasks"][0]
+    aborted_task["status"] = "failed"
+    aborted_task["recorded_at"] = "2026-01-01T00:00:02Z"
+    aborted_task["abort_marker"] = {
+        "status": "failed",
+        "recorded_at": "2026-01-01T00:00:02Z",
+        "dispatch_id": aborted_dispatch["dispatch_id"],
+        "receipt_path": "",
+        "reason": "wavefront task recorded terminal without approved handoff",
+    }
+    aborted_graph_path.write_text(json.dumps(aborted_graph, sort_keys=True) + "\n", encoding="utf-8")
+    write_task5_ownership_locks(ip, "RUN_ABORTED_LATE", "TASK_ABORTED_LATE", "DIFFERENT_REPLACEMENT_DISPATCH")
+    write_task5_receipt(aborted_receipt_path, aborted_dispatch, [task5_rel(project, worker_shard)])
+    aborted_result = verify_task5_dispatch(project, aborted_dispatch_path, aborted_receipt_path)
+    assert aborted_result["status"] == "fail", aborted_result
+    assert any(item["code"] == "WAVEFRONT_TASK_ABORTED" for item in aborted_result["issues"]), aborted_result
+
     compat_allowed = [task5_rel(project, ip / "knowledge" / "subagents")]
     compat_dispatch_path, compat_receipt_path, compat_dispatch = write_task5_dispatch(project, ip, "non_wavefront", "TASK_COMPAT", "none", compat_allowed, stage="draft", wavefront=False)
     write_task5_receipt(compat_receipt_path, compat_dispatch, [task5_rel(project, compat_receipt_path)], wavefront=False)
@@ -713,6 +741,31 @@ def test_dispatch_hardening_guards(tmp_root: Path) -> None:
     assert active_gate.returncode != 0, active_gate.stdout
     active_payload = json.loads(active_gate.stdout)
     assert any(item["code"] == "PARENT_WRITE_WITH_ACTIVE_DISPATCH" for item in active_payload["issues"]), active_payload
+
+
+def test_dispatch_authoring_packet_retry_classifier() -> None:
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    spec = importlib.util.spec_from_file_location("oag_dispatch_support_smoke", ROOT / "scripts" / "oag_dispatch_support.py")
+    assert spec and spec.loader, spec
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    retryable = {
+        "issues": [
+            {"code": "COMPILE_MANIFEST_STALE_INPUT", "message": "stale"},
+            {"code": "RTL_PACKET_MISSING", "message": "missing"},
+        ]
+    }
+    assert module.authoring_packet_gate_retryable(retryable) is True
+    structural = {
+        "issues": [
+            {"code": "COMPILE_MANIFEST_STALE_INPUT", "message": "stale"},
+            {"code": "MODULE_PACKET_INTERFACE_CONTRACT_REFS", "message": "projection missing"},
+        ]
+    }
+    assert module.authoring_packet_gate_retryable(structural) is False
+    assert module.authoring_packet_gate_retryable({"issues": []}) is False
 
 
 def test_canonical_run_evidence_archive_guard(tmp_root: Path) -> None:
@@ -3040,6 +3093,7 @@ def main() -> int:
         test_wavefront_scheduler(Path(tmp))
         test_task5_dispatch_wavefront_matrix(Path(tmp))
         test_dispatch_hardening_guards(Path(tmp))
+        test_dispatch_authoring_packet_retry_classifier()
         test_canonical_run_evidence_archive_guard(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
@@ -4472,17 +4526,31 @@ def main() -> int:
         for name, run_id in (("route_alpha", "RUN_ALPHA"), ("route_beta", "RUN_BETA")):
             route_ip = route_root / name
             (route_ip / "ontology" / "runs").mkdir(parents=True)
+            (route_ip / "rtl").mkdir(parents=True)
+            (route_ip / "tb" / "uvm").mkdir(parents=True)
             (route_ip / "ontology" / "ip.yaml").write_text(f"ip: {name}\n", encoding="utf-8")
+            (route_ip / "rtl" / "unit.sv").write_text(f"module {name}_unit; endmodule\n", encoding="utf-8")
+            (route_ip / "rtl" / f"{name}_only.sv").write_text(f"module {name}_only; endmodule\n", encoding="utf-8")
+            (route_ip / "tb" / "uvm" / "unit_tb.sv").write_text("module unit_tb; endmodule\n", encoding="utf-8")
             (route_ip / "ontology" / "runs" / "active_run.json").write_text(
                 json.dumps({"run_id": run_id, "status": "in_progress"}) + "\n",
                 encoding="utf-8",
             )
+        (route_root / "not_an_ip" / "rtl").mkdir(parents=True)
+        (route_root / "not_an_ip" / "rtl" / "unit.sv").write_text("module outside; endmodule\n", encoding="utf-8")
         assert hook_target_names(route_root, {"prompt": "승인", "context_pressure": "critical"}, require_signal=False) == []
         assert hook_target_names(route_root, {"prompt": "oag context"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "route OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "continue route_alpha OAG"}, require_signal=True) == ["route_alpha"]
         assert hook_target_names(route_root, {"prompt": "compare route_alpha and route_beta OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"ip_dir": str(route_root / "route_beta"), "prompt": "승인"}, require_signal=False) == ["route_beta"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @route_alpha/rtl/unit.sv"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in `route_alpha/tb/uvm/unit_tb.sv`"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": f"Find and fix a bug in @{route_root / 'route_beta' / 'rtl' / 'unit.sv'}"}, require_signal=True) == ["route_beta"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @route_alpha_only.sv"}, require_signal=True) == ["route_alpha"]
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @unit.sv"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "Fix @route_alpha/rtl/unit.sv and @route_beta/rtl/unit.sv"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "Find and fix a bug in @not_an_ip/rtl/unit.sv"}, require_signal=True) == []
         single_route_root = Path(tmp) / "single_hook_route_project"
         single_route_ip = single_route_root / "solo_route"
         (single_route_ip / "ontology" / "runs").mkdir(parents=True)

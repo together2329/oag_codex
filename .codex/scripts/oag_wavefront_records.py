@@ -37,6 +37,8 @@ from oag_wavefront_graph import (
 from oag_wavefront_core import graph_paths
 from oag_wavefront_validation import verify_invariants
 
+ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
+
 
 @dataclass(frozen=True)
 class RecordRequest:
@@ -96,6 +98,14 @@ def record_wavefront_task(request: RecordRequest) -> JsonObject:
         if decision_payload:
             task["decision_id"] = str(decision_payload.get("decision_id") or "")
             task["decision_type"] = str(decision_payload.get("decision_type") or "")
+        if request.status in ABORT_STATUSES:
+            task["abort_marker"] = {
+                "status": request.status,
+                "recorded_at": task["recorded_at"],
+                "dispatch_id": str(task.get("dispatch_id") or ""),
+                "receipt_path": ip_rel_path(request.receipt, request.run.ip_dir) if request.receipt else "",
+                "reason": "wavefront task recorded terminal without approved handoff",
+            }
         if request.status not in ACTIVE_STATUSES:
             locks["locks"] = [lock for lock in locks.get("locks", []) if not isinstance(lock, dict) or lock.get("task_id") != request.task_id]
             claim_file = graph_paths(request.run)["claims"] / f"{request.task_id}.lock"

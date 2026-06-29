@@ -27,6 +27,27 @@ STAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
 OAG_TRIGGER_KEYWORDS = (
     "oag",
 )
+PATH_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_./-])@?"
+    r"(?P<path>(?:~|/|\.{1,2}/)?[A-Za-z0-9_.+~-]+(?:/[A-Za-z0-9_.+~-]+)+)"
+)
+BARE_FILE_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_.+~-])@(?P<name>[A-Za-z0-9_.+~-]+\.[A-Za-z0-9_+~-]+)(?![A-Za-z0-9_.+~-])"
+)
+BARE_FILE_SEARCH_DIRS = (
+    "rtl",
+    "tb",
+    "list",
+    "ontology",
+    "req",
+    "formal",
+    "lint",
+    "cov",
+    "doc",
+    "sdc",
+    "syn",
+    "sim",
+)
 
 APPROVAL_ONLY_RE = re.compile(
     r"^\s*(승인|승인합니다|approve|approved|approval|ok|okay|yes|y|확인|동의|허가)\s*[.!?。]*\s*$",
@@ -182,6 +203,72 @@ def _ip_name_in_prompt(ip_name: str, prompt: str) -> bool:
     return re.search(pattern, prompt.lower()) is not None
 
 
+def prompt_path_refs(prompt: str) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for match in PATH_REF_RE.finditer(prompt or ""):
+        ref = match.group("path").strip().strip("`'\"<>()[]{}.,;:!?。")
+        if not ref or "://" in ref:
+            continue
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+    return refs
+
+
+def prompt_bare_file_refs(prompt: str) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for match in BARE_FILE_REF_RE.finditer(prompt or ""):
+        ref = match.group("name").strip()
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+    return refs
+
+
+def _path_under(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _ip_has_bare_file_ref(ip: Path, ref: str) -> bool:
+    if (ip / ref).is_file():
+        return True
+    for dirname in BARE_FILE_SEARCH_DIRS:
+        root = ip / dirname
+        if not root.is_dir():
+            continue
+        try:
+            next(root.rglob(ref))
+        except StopIteration:
+            continue
+        except OSError:
+            continue
+        return True
+    return False
+
+
+def _target_ip_dirs_from_paths(prompt: str, ips: list[Path]) -> list[Path]:
+    matches: list[Path] = []
+    for ref in prompt_path_refs(prompt):
+        try:
+            resolved = project_path(ref)
+        except (OSError, RuntimeError):
+            continue
+        for ip in ips:
+            if _path_under(resolved, ip) and ip not in matches:
+                matches.append(ip)
+    for ref in prompt_bare_file_refs(prompt):
+        for ip in ips:
+            if _ip_has_bare_file_ref(ip, ref) and ip not in matches:
+                matches.append(ip)
+    return matches if len(matches) == 1 else []
+
+
 def target_ip_dirs(payload: dict[str, Any], *, require_signal: bool = True) -> list[Path]:
     prompt = prompt_text(payload)
     explicit = str(payload.get("ip_dir") or os.environ.get("OAG_IP_DIR") or "").strip()
@@ -189,7 +276,12 @@ def target_ip_dirs(payload: dict[str, Any], *, require_signal: bool = True) -> l
         path = project_path(explicit)
         return [path] if path.exists() else []
 
-    matches = [ip for ip in scan_ip_dirs() if _ip_name_in_prompt(ip.name, prompt)]
+    ips = scan_ip_dirs()
+    path_matches = _target_ip_dirs_from_paths(prompt, ips)
+    if path_matches:
+        return path_matches
+
+    matches = [ip for ip in ips if _ip_name_in_prompt(ip.name, prompt)]
     if matches:
         return matches if len(matches) == 1 else []
 

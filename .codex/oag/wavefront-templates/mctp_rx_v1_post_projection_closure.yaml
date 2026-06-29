@@ -1,0 +1,36 @@
+schema_version: oag_wavefront_template.v1
+name: mctp_rx_v1_post_projection_closure
+description: Refresh ROCEV closure records against the post-projection canonical UVM evidence, then run a final OAG gate review. No RTL, TB, or simulation artifact edits are allowed in this wave.
+tasks:
+  - task_id: EVIDENCE_VALIDATION_POST_PROJECTION
+    kind: integration
+    phase: closure
+    agent_type: oag-evidence-validator
+    depends_on: []
+    barrier_inputs:
+      - uvm_oag_scoreboard_projection_locked_events_ready
+    barrier_outputs:
+      - evidence_validation_post_projection_ready
+    shared_artifacts:
+      - knowledge/records/
+      - knowledge/_index.json
+      - knowledge/ledger.jsonl
+      - knowledge/validations/oag_validation_report.json
+      - knowledge/subagents/
+    ownership_mode: integration_owner
+    may_claim_complete: false
+  - task_id: GATE_REVIEW_POST_PROJECTION
+    kind: integration
+    phase: gate
+    agent_type: oag-gate-reviewer
+    depends_on:
+      - EVIDENCE_VALIDATION_POST_PROJECTION
+    barrier_inputs:
+      - evidence_validation_post_projection_ready
+    barrier_outputs:
+      - gate_review_post_projection_ready
+    shared_artifacts:
+      - knowledge/gate_reviews/oag_gate_decision.json
+      - knowledge/subagents/
+    ownership_mode: integration_owner
+    may_claim_complete: false
