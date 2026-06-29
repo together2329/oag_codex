@@ -85,11 +85,12 @@ Allowed first actions for a short IP request:
   `oag_decision_matrix_generate.py` for profile-seeded decision rows when a
   protocol profile such as `protocol-packet-ip` applies.
 - for deep requirement interviews, use `oag-deep-interview`; it owns Round 0 topology,
-  one-question option-backed rounds, clarity scoring, weakest-dimension
-  targeting, decision-matrix handoff, evidence-cited brownfield questions,
-  closure audit, and one-sentence scope restatement. For lock-critical rounds,
-  use `oag_deep_interview_round.py` to rank candidate questions and validate
-  the option set.
+  document/spec/RTL-backed evidence intake, one-question option-backed rounds,
+  clarity scoring, weakest-dimension targeting, decision-matrix handoff,
+  evidence-cited brownfield questions, RTL-readiness audit, closure audit, and
+  one-sentence scope restatement. For lock-critical rounds, use
+  `oag_deep_interview_round.py` to rank candidate questions and validate the
+  option set.
 
 Forbidden until the user confirms scope or supplies a concrete spec:
 

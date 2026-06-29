@@ -1,4 +1,4 @@
 interface:
   display_name: "OAG Deep Interview"
   short_description: "Socratic OAG requirement interview"
-  default_prompt: "Use $oag-deep-interview to turn an ambiguous IP request into draft OAG scope with lock-impact-ranked one-question rounds, recommended option sets, decision-matrix handoff, and lock-ready acceptance criteria."
+  default_prompt: "Use $oag-deep-interview to turn an ambiguous IP request, spec document, or existing RTL into RTL-ready draft OAG scope with lock-impact-ranked one-question rounds, recommended option sets, decision-matrix handoff, and lock-ready acceptance criteria."

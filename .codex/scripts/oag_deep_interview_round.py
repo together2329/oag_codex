@@ -13,7 +13,7 @@ from typing import Any
 SCHEMA_VERSION = "oag_deep_interview_round.v1"
 CHECK_SCHEMA_VERSION = "oag_deep_interview_round_check.v1"
 RANK_SCHEMA_VERSION = "oag_deep_interview_rank.v1"
-VALID_DIMENSIONS = {"topology", "goal", "constraints", "criteria", "context", "closure"}
+VALID_DIMENSIONS = {"topology", "goal", "constraints", "criteria", "context", "rtl_readiness", "closure"}
 VALID_DECISION_EFFECTS = {"none", "unresolved", "proposed", "decided", "waiver_or_deferral", "free_text"}
 
 IMPORTANCE_WEIGHTS: tuple[tuple[str, float], ...] = (
@@ -63,11 +63,17 @@ OPTION_PATTERNS: dict[str, list[tuple[str, str, str]]] = {
         ("Defer until source review", "Avoids guessing while keeping the gap visible.", "waiver_or_deferral"),
         ("Other / refine", "Supply a different mapping.", "free_text"),
     ],
+    "rtl_readiness": [
+        ("Ready for RTL contract", "The behavior is concrete enough to seed RTL/TB authoring packets.", "proposed"),
+        ("Need cycle/interface detail", "Keep interviewing until timing, handshakes, and state effects are explicit.", "unresolved"),
+        ("Defer implementation detail", "Record a visible lock/readiness blocker before RTL dispatch.", "waiver_or_deferral"),
+        ("Custom / refine", "Supply the exact RTL-facing detail or correction.", "free_text"),
+    ],
     "closure": [
         ("Approve for lock-readiness review", "Proceed to readiness checks with current draft facts.", "proposed"),
         ("Adjust wording", "Fix the scope statement before closure.", "unresolved"),
         ("Missing scope", "Return to interview for the omitted behavior.", "unresolved"),
-        ("Other / refine", "Supply the exact closure correction.", "free_text"),
+        ("Custom / refine", "Supply the exact closure correction.", "free_text"),
     ],
 }
 
@@ -236,7 +242,16 @@ def validate_round(round_doc: dict[str, Any]) -> dict[str, Any]:
             issue("OPTION_DECISION_EFFECT", f"decision_effect must be one of {sorted(VALID_DECISION_EFFECTS)}", f"{path}.decision_effect")
         if bool(item.get("recommended")):
             recommended_ids.append(oid)
-        if "other" in label.lower() or "refine" in label.lower() or "기타" in label or "수정" in label:
+        label_lower = label.lower()
+        if (
+            "other" in label_lower
+            or "custom" in label_lower
+            or "refine" in label_lower
+            or "direct" in label_lower
+            or "기타" in label
+            or "수정" in label
+            or "직접" in label
+        ):
             has_free_text = True
         if label.endswith("?"):
             warn("OPTION_LOOKS_LIKE_QUESTION", "option labels should be answers, not new questions", f"{path}.label")
@@ -350,6 +365,12 @@ def render_round(round_doc: dict[str, Any]) -> str:
             continue
         suffix = " (Recommended)" if bool(item.get("recommended")) else ""
         lines.append(f"{_text(item.get('id'))}. {_text(item.get('label'))}{suffix} - {_text(item.get('tradeoff'))}")
+    lines.extend(
+        [
+            "",
+            "If none of the options fit, type a custom answer directly instead of choosing A-D.",
+        ]
+    )
     return "\n".join(lines).rstrip() + "\n"
 
 

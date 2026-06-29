@@ -1,13 +1,14 @@
 ---
 name: oag-deep-interview
-description: Use when a hardware IP request or change request is ambiguous enough that requirements must be interviewed before lock or implementation. Runs a Socratic OAG requirement interview with topology confirmation, one-question-per-round discipline, recommendation-backed option sets, ambiguity scoring, weakest-dimension targeting, brownfield evidence citations, closure audit, and draft persistence through OAG artifacts before any RTL, TB, validation, or gate work.
+description: Use when a hardware IP request, change request, spec document, or existing RTL must be interviewed into requirements before lock or implementation. Runs a Socratic OAG requirement interview with topology confirmation, one-question-per-round discipline, recommendation-backed option sets, ambiguity scoring, weakest-dimension targeting, document/RTL evidence citations, RTL-readiness audit, closure audit, and draft persistence through OAG artifacts before any RTL, TB, validation, or gate work.
 ---
 
 # OAG Deep Interview
 
-Use this skill to turn a vague IP request into draft OAG scope that is ready for
-lock-readiness review. It is a requirements workflow, not an implementation
-workflow.
+Use this skill to turn a vague IP request, a spec/document bundle, or existing
+RTL into draft OAG scope that is ready for lock-readiness review and RTL/TB
+authoring-packet preparation. It is a requirements workflow, not an
+implementation workflow.
 
 ## Operating Rules
 
@@ -24,6 +25,10 @@ workflow.
 - Preserve user language for user-facing questions and summaries.
 - Do focused repo/spec reading before asking about factual brownfield details.
   Cite the file, symbol, source claim, or pattern that triggered the question.
+- When the user provides documents, specifications, or RTL, treat them as
+  evidence inputs. Extract facts, contradictions, and implementation surfaces
+  first; ask the user only about unresolved choices, conflicts, missing
+  boundaries, or intent that cannot be derived from the material.
 - Route product/design choices to the user. Do not convert plausible defaults
   into locked truth.
 - Persist meaningful answers with `oag.draft` before context pressure, handoff,
@@ -56,7 +61,7 @@ python3 .codex/scripts/oag_deep_semantic_intake.py --ip-dir <ip> --topic "<topic
 python3 .codex/scripts/oag_deep_interview_round.py template \
   --round <n> \
   --component "<component>" \
-  --dimension <topology|goal|constraints|criteria|context|closure> \
+  --dimension <topology|goal|constraints|criteria|context|rtl_readiness|closure> \
   --ambiguity <score> \
   --why-now "<why this is the weakest target>" \
   --question "<one targeted question>"
@@ -86,6 +91,9 @@ that can succeed or fail independently:
 - storage/commit and firmware-visible APB/CSR surfaces;
 - interrupt/status/error/drop-policy surfaces;
 - verification proof surfaces.
+- RTL implementation surfaces: clock/reset, handshakes, state transitions,
+  datapath widths, parameterization, ordering, error recovery, and observable
+  outputs.
 
 Ask one topology question. The options are answers to that one topology
 confirmation question, not follow-up questions:
@@ -106,6 +114,13 @@ Options:
 4. Not sure / explain tradeoff - Ask for a short clarification before deciding.
 ```
 
+If the user supplied documents or RTL, include source-backed topology:
+
+- document/spec claims that define intended behavior;
+- RTL modules, ports, parameters, state machines, and register/CSR surfaces;
+- mismatches between written intent and implemented behavior;
+- unknown intent that cannot be safely inferred from the artifacts.
+
 Store confirmed topology and deferrals in draft notes. Deferred components stay
 visible in the final draft scope with user-confirmed reasons.
 
@@ -120,6 +135,10 @@ After every meaningful answer, score each active topology item across:
   or review evidence would prove it?
 - Protocol/context clarity: for brownfield work, how the request maps to
   existing files, interfaces, states, and assumptions.
+- RTL-readiness clarity: could an RTL agent implement from this without asking
+  another product/spec question? Are trigger, condition, response, timing,
+  interface handshake, reset/default behavior, state update priority, error
+  handling, parameter limits, and observable outputs concrete?
 
 Use weighted ambiguity:
 
@@ -153,6 +172,9 @@ blocking uncertainty across these factors:
 - upstream dependency: whether later questions depend on this answer;
 - researchable fact: subtract this. If repo/spec reading can answer it, read
   first instead of asking the user.
+- RTL readiness gap: treat this as a lock blocker when the missing answer would
+  leave an RTL/TB agent guessing about cycle behavior, interface semantics,
+  state ownership, or proof expectations.
 
 Tie-break in this order: lock blocker, SSOT required gap, downstream fanout,
 upstream dependency, lower researchable-fact score, then input order. For
@@ -193,6 +215,8 @@ A. <label> (Recommended) - <effect/tradeoff if selected>
 B. <conservative or narrower answer> - <effect/tradeoff>
 C. <explicit defer/waive/out-of-scope answer> - <effect/tradeoff>
 D. Other / refine - User supplies the exact answer or correction.
+
+If none of A-D fits, type a custom answer directly.
 ```
 
 Option labels should be concrete enough to select without reinterpreting the
@@ -221,6 +245,8 @@ Use these option families by default:
   review-only/waived proof with risk, supply another proof;
 - brownfield context: extend existing path, create new boundary, defer until
   source/spec review, supply another mapping.
+- RTL readiness: ready for RTL contract, need cycle/interface detail, defer
+  implementation detail, supply custom RTL-facing detail.
 
 For detailed scoring and output templates, read
 `references/scoring-and-output.md` when conducting a real interview.
@@ -234,6 +260,8 @@ For long free-text answers, refine before scoring:
 - Constraints: user-stated boundaries.
 - Non-goals: explicitly excluded scope.
 - Verified context: facts backed by repo/spec evidence.
+- RTL-facing detail: concrete trigger, condition, response, timing, interface,
+  reset/default, state update, error/drop, and proof implications.
 
 Ask the user to confirm the refined interpretation if it changes meaning or
 contains multiple decisions. Then persist with `oag.draft`.
@@ -335,6 +363,22 @@ closure audit first:
 - brownfield facts cite repo/spec evidence;
 - verification proof surfaces are concrete enough to seed contracts and
   authoring packets.
+- RTL readiness is concrete enough that an RTL/TB implementation agent can
+  produce code and tests from authoring packets without inventing product
+  behavior.
+
+Use this RTL-readiness checklist before closure:
+
+- trigger and condition are explicit;
+- response and externally visible outputs are explicit;
+- timing/cycle rule is explicit or intentionally unconstrained;
+- input/output handshake, backpressure, and ordering are explicit;
+- reset/default and state ownership are explicit;
+- error/drop/recovery behavior is explicit;
+- register/CSR side effects are explicit when firmware-visible;
+- proof shape identifies scoreboard/assertion/coverage expectations;
+- open assumptions are either resolved, decision-matrix rows, or named
+  deferrals.
 
 Then restate the intended scope in one sentence and ask the user to approve or
 correct it. Only after explicit approval should normal OAG lock flow begin.
@@ -348,7 +392,8 @@ Options:
 A. Approve for lock-readiness review (Recommended) - Run readiness gates next.
 B. Adjust wording - User supplies exact wording correction.
 C. Missing scope - Return to the weakest affected topology item.
-D. Continue interview - Ask another targeted round before lock discussion.
+D. Custom / continue interview - User supplies exact correction, or ask another
+targeted round before lock discussion.
 ```
 
 ## Output
@@ -362,6 +407,7 @@ End the interview with a draft scope package:
 - option history with selected choices, recommendations, and free-text
   refinements;
 - acceptance criteria and proof-shape notes;
+- RTL-readiness checklist status;
 - one-sentence scope restatement;
 - recommendation: continue interview, ready for lock-readiness review, or
   blocked on named user decisions.

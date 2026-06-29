@@ -3321,6 +3321,9 @@ def main() -> int:
         assert "Importance Ranking Protocol" in deep_interview_text, deep_interview_text
         assert "SSOT required gap" in deep_interview_text, deep_interview_text
         assert "oag_deep_interview_round.py rank" in deep_interview_text, deep_interview_text
+        assert "spec document, or existing RTL" in deep_interview_text, deep_interview_text
+        assert "RTL-readiness checklist" in deep_interview_text, deep_interview_text
+        assert "If none of A-D fits, type a custom answer directly" in deep_interview_text, deep_interview_text
         assert "Option Set Protocol" in deep_interview_text, deep_interview_text
         assert "Options:" in deep_interview_text, deep_interview_text
         assert "(Recommended)" in deep_interview_text, deep_interview_text
@@ -3334,12 +3337,16 @@ def main() -> int:
         deep_interview_openai = (OAG_DEEP_INTERVIEW_SKILL.parent / "agents" / "openai.yaml").read_text(encoding="utf-8")
         assert "$oag-deep-interview" in deep_interview_openai, deep_interview_openai
         assert "one-question rounds" in deep_interview_openai, deep_interview_openai
+        assert "RTL-ready draft OAG scope" in deep_interview_openai, deep_interview_openai
         deep_interview_ref = (OAG_DEEP_INTERVIEW_SKILL.parent / "references" / "scoring-and-output.md").read_text(encoding="utf-8")
         assert "ambiguity = 1 -" in deep_interview_ref, deep_interview_ref
         assert "Round Option Set Shape" in deep_interview_ref, deep_interview_ref
         assert "Recommendation policy" in deep_interview_ref, deep_interview_ref
         assert "Question selection policy" in deep_interview_ref, deep_interview_ref
         assert "Importance Ranking" in deep_interview_ref, deep_interview_ref
+        assert "Document And RTL Inputs" in deep_interview_ref, deep_interview_ref
+        assert "RTL Implementation Readiness" in deep_interview_ref, deep_interview_ref
+        assert "type a custom answer directly" in deep_interview_ref, deep_interview_ref
         assert "researchable_fact" in deep_interview_ref, deep_interview_ref
         assert "Option History" in deep_interview_ref, deep_interview_ref
         assert "Final Draft Scope Template" in deep_interview_ref, deep_interview_ref
@@ -3392,6 +3399,34 @@ def main() -> int:
         assert round_render.returncode == 0, round_render.stderr or round_render.stdout
         assert "Question: Which filtering boundary should v0 lock?" in round_render.stdout, round_render.stdout
         assert "A. Recommended boundary (Recommended)" in round_render.stdout, round_render.stdout
+        assert "type a custom answer directly" in round_render.stdout, round_render.stdout
+        rtl_round_template = subprocess.run(
+            [
+                sys.executable,
+                str(DEEP_INTERVIEW_ROUND),
+                "template",
+                "--round",
+                "4",
+                "--component",
+                "datapath-control",
+                "--dimension",
+                "rtl_readiness",
+                "--ambiguity",
+                "0.31",
+                "--why-now",
+                "The draft is not yet implementable by an RTL agent.",
+                "--question",
+                "Is this behavior ready for RTL contract generation, or which cycle/interface detail is missing?",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert rtl_round_template.returncode == 0, rtl_round_template.stderr or rtl_round_template.stdout
+        rtl_round_doc = json.loads(rtl_round_template.stdout)
+        assert rtl_round_doc["dimension"] == "rtl_readiness", rtl_round_doc
+        assert rtl_round_doc["options"][0]["label"] == "Ready for RTL contract", rtl_round_doc
         bad_round = {**round_doc, "options": round_doc["options"][:2]}
         round_bad_validate = subprocess.run(
             [sys.executable, str(DEEP_INTERVIEW_ROUND), "validate", "--json-file", "-"],
@@ -3686,8 +3721,11 @@ def main() -> int:
         assert "OAG DEEP INTERVIEW PROMPT GUARD" in deep_guard_context, deep_guard_on.stdout
         assert "Ask exactly one user-facing question" in deep_guard_context, deep_guard_on.stdout
         assert "Rank candidates by lock blocker" in deep_guard_context, deep_guard_on.stdout
+        assert "documents/specs/RTL" in deep_guard_context, deep_guard_on.stdout
         assert "four concise candidate answers" in deep_guard_context, deep_guard_on.stdout
         assert "Other / refine" in deep_guard_context, deep_guard_on.stdout
+        assert "custom answer directly" in deep_guard_context, deep_guard_on.stdout
+        assert "RTL/TB authoring packets" in deep_guard_context, deep_guard_on.stdout
         assert "decision matrix" in deep_guard_context, deep_guard_on.stdout
 
         hook_cwd = Path(tmp) / "subagent_hook_project"

@@ -14,7 +14,8 @@ Score each active topology item independently:
     "goal": {"score": 0.8, "gap": "Exact accept criteria still open"},
     "constraints": {"score": 0.6, "gap": "Broadcast behavior undecided"},
     "criteria": {"score": 0.7, "gap": "Scoreboard rows not concrete"},
-    "context": {"score": 0.9, "gap": ""}
+    "context": {"score": 0.9, "gap": ""},
+    "rtl_readiness": {"score": 0.5, "gap": "Cycle behavior and reset state are not yet implementable"}
   },
   "weakest_dimension": "constraints"
 }
@@ -39,6 +40,25 @@ ambiguity = 1 - (goal*0.30 + constraints*0.20 + criteria*0.25 + context*0.25)
 ```
 
 Recommended threshold is `0.10`; use `0.05` when lock risk is high.
+
+## Document And RTL Inputs
+
+When the user provides a document, spec excerpt, RTL file, or existing IP tree,
+run the interview as evidence-backed brownfield intake:
+
+- extract source claims from documents/specs before asking questions;
+- extract RTL facts from modules, ports, parameters, state machines, registers,
+  resets, handshakes, datapath widths, and observable outputs;
+- compare document intent against RTL behavior and mark mismatches as
+  ambiguity rows;
+- do not ask the user for facts visible in the artifacts;
+- ask the user about intent, policy choices, contradictions, missing
+  boundaries, and behavior that cannot be safely inferred;
+- cite file paths, symbols, sections, or source claims in `why_now`.
+
+The interview remains one-question-per-round. The artifacts narrow the question
+set; they do not remove the need for user decisions when implementation intent
+is genuinely ambiguous.
 
 ## Round Option Set Shape
 
@@ -95,6 +115,8 @@ Recommendation policy:
   genuinely insufficient;
 - the recommended option is a proposed answer, never locked truth;
 - `Other / refine` or equivalent free-text escape must always be present;
+- every rendered round should explicitly say that if A-D do not fit, the user
+  may type a custom answer directly;
 - each option must answer the same primary question; do not mix protocol,
   firmware, verification, and integration prompts in one option set;
 - if a Codex surface lacks popup question UI, render the same option set as a
@@ -218,6 +240,7 @@ Record trigger metadata in the draft:
 | Constraints | "Which boundary is fixed: `<A>`, `<B>`, or explicitly unsupported?" |
 | Success criteria | "What scoreboard/assertion/coverage row would prove this?" |
 | Context | "I found `<path/symbol>`. Should the new behavior extend it or create a new boundary?" |
+| RTL readiness | "Can an RTL agent implement this from trigger/condition/response/timing/interface facts, or which detail is still missing?" |
 | Ontology stress | "What is the core entity here, and which named objects are supporting views?" |
 
 ## Option Patterns By Dimension
@@ -229,6 +252,29 @@ Record trigger metadata in the draft:
 | Constraints | Narrow v0 boundary | Broader boundary | Waive/defer boundary | Other / refine |
 | Success criteria | Scoreboard-first proof | Assertion/coverage proof | Review-only with risk | Other proof |
 | Context | Extend existing path | Create new boundary | Defer until source review | Other mapping |
+| RTL readiness | Ready for RTL contract | Need cycle/interface detail | Defer implementation detail | Custom RTL-facing detail |
+
+## RTL Implementation Readiness
+
+Before recommending lock-readiness review, require enough detail for an RTL/TB
+agent to act without inventing product behavior. A draft is RTL-ready only when
+each active behavior has:
+
+- trigger and condition;
+- response and externally visible effect;
+- timing or cycle rule, or an explicit statement that timing is not constrained;
+- input/output interface semantics, including valid/ready, backpressure,
+  ordering, widths, and packet/beat boundaries when applicable;
+- reset/default behavior;
+- state ownership and same-cycle priority;
+- error/drop/recovery policy;
+- firmware-visible register/CSR side effects when present;
+- acceptance criteria tied to scoreboard, assertion, coverage, formal, or
+  review evidence.
+
+If any item is missing, continue the deep interview using `rtl_readiness` as the
+target dimension. Do not pass the scope to RTL/TB dispatch with a hidden
+assumption.
 
 ## Final Draft Scope Template
 
@@ -251,6 +297,11 @@ Record trigger metadata in the draft:
 ## Established Facts
 - <fact> (source: round/source claim/path)
 
+## Input Evidence
+- Documents/specs: <paths or sections reviewed>
+- RTL/source files: <paths or symbols reviewed>
+- Doc/RTL mismatches: <none or named ambiguity rows>
+
 ## Decisions
 | Decision | Status | Rationale | Blocks lock |
 | --- | --- | --- | --- |
@@ -265,6 +316,10 @@ Record trigger metadata in the draft:
 
 ## Acceptance Criteria / Proof Shape
 - <scoreboard/assertion/coverage/review evidence>
+
+## RTL Readiness
+| Component | Trigger/condition | Response/timing | Interface/state/reset | Proof | Status |
+| --- | --- | --- | --- | --- | --- |
 
 ## Brownfield Evidence
 - `<path>`: <why it matters>

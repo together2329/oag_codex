@@ -35,9 +35,12 @@ When the task enters a narrow lane, apply the matching skill:
 
 - `oag-deep-semantic-intake` for compressed source intent, source claims,
   hidden implications, ambiguity, and first decision candidates.
-- `oag-deep-interview` for ambiguous requirement interviews; keep each round
-  to the highest-impact single question with four candidate answers, one
-  `(Recommended)` option, and `Other / refine`. Use
+- `oag-deep-interview` for ambiguous requirement interviews, including when
+  the user provides documents, specs, or RTL to turn into OAG requirements. Read
+  supplied artifacts before asking factual questions. Keep each round to the
+  highest-impact single question with four candidate answers, one
+  `(Recommended)` option, `Other / refine`, and an explicit custom-answer
+  escape. Continue until RTL/TB authoring-packet inputs are concrete. Use
   `oag_deep_interview_round.py` for lock-critical round templates, validation,
   or candidate ranking. When hooks are enabled,
   `codex_deep_interview_prompt_guard.py` injects the same compact discipline

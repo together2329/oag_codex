@@ -432,13 +432,16 @@ The Codex deep-interview prompt guard in
 `UserPromptSubmit`, but stays silent unless an OAG deep interview is active or
 explicitly requested. It injects only a compact reminder: ask the single
 highest-impact ambiguity, present four candidate answers with one
-`(Recommended)` option, include `Other / refine`, and route implementation
-choices through the decision matrix. Use
+`(Recommended)` option, include `Other / refine`, tell the user they may type a
+custom answer if A-D do not fit, read supplied documents/specs/RTL before
+asking factual questions, and route implementation choices through the decision
+matrix. Use
 `scripts/oag_deep_interview_round.py` when a lock-critical round needs a
 deterministic template, validation, ranking, or chat rendering. The ranker
 prioritizes lock blockers, SSOT-required gaps, downstream fanout, ambiguity,
 proof gaps, and user value while down-ranking repo/spec facts Codex should
-research itself.
+research itself. Interview closure should reach RTL/TB authoring-packet
+readiness, not just a plausible product summary.
 Run `python3 .codex/scripts/oag_eval.py` for scenario-level evaluation of the
 run-loop, context injection dedup/recovery, draft pressure, reviewer
 independence, fault-model coverage, verification role decomposition, and hook
