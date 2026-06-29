@@ -6354,6 +6354,9 @@ def _scaffold(arguments: dict[str, Any]) -> dict[str, Any]:
         force=bool(arguments.get("force")),
         owner=str(arguments.get("owner") or "unassigned"),
         layout=str(arguments.get("layout") or "legacy"),
+        init_git=bool(arguments.get("init_git", True)),
+        initial_commit=bool(arguments.get("initial_commit", True)),
+        git_commit_message=str(arguments.get("git_commit_message") or "") or None,
     )
     return {
         "schema_version": "oag_scaffold_result.v1",
@@ -6363,6 +6366,8 @@ def _scaffold(arguments: dict[str, Any]) -> dict[str, Any]:
         "directories": manifest["directories"],
         "written_files": manifest["written_files"],
         "skipped_files": manifest["skipped_files"],
+        "ip_git": manifest.get("ip_git", {}),
+        "ip_git_metadata_checkpoint": manifest.get("ip_git_metadata_checkpoint", {}),
     }
 
 

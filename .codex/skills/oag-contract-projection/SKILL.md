@@ -5,9 +5,9 @@ description: Use when OAG requirements or requirement atoms must be projected in
 
 # OAG Contract Projection
 
-Use this skill after source claims, ambiguity, decision rows, and requirement
-atoms exist. Projection turns intent into obligations and closure-grade
-contracts.
+Use this skill after source claims, ambiguity, feature rows, decision rows, and
+requirement atoms exist. Projection turns intent into obligations and
+closure-grade contracts.
 
 ## Rules
 
@@ -20,6 +20,9 @@ contracts.
   observable response guarantees.
 - Verification projection must name scenarios and scoreboard/assertion/formal
   proof refs before closure.
+- Product-visible behavior should preserve feature refs through requirements,
+  obligations, contracts, verification objectives, and IP-XACT-style integration
+  projection links.
 
 ## Checks
 
@@ -39,6 +42,8 @@ Update authored truth only:
 
 - `ontology/obligations.yaml`
 - `ontology/contracts.yaml`
+- `ontology/features.yaml`
+- `ontology/ipxact_projection.yaml`
 - `ontology/modeling.yaml`
 - `req/evidence_plan.yaml`
 - `ontology/verification_plan.yaml`

@@ -5,8 +5,8 @@ description: Use when working on hardware IP requirements, RTL, testbench, simul
 
 # OAG IP Workflow
 
-Use this skill for hardware IP work where requirement, obligation, contract,
-evidence, and validation must stay explicit.
+Use this skill for hardware IP work where feature, requirement, obligation,
+contract, evidence, and validation must stay explicit.
 
 ## Skill Router
 
@@ -21,6 +21,9 @@ task enters one of these lanes:
   claims, hidden implications, ambiguity rows, and first decision candidates.
 - `oag-decision-matrix`: lock-blocking product/design choices, profile-seeded
   decisions, recommended/default separation, and unresolved decision audits.
+- `oag-lock-preview-frame`: pre-lock human review frames that render the
+  draft scope as formal HTML with verbatim source panels, hashes, readiness
+  issues, and no paraphrased replacement for authored truth.
 - `oag-contract-projection`: requirement atoms, obligations, assume/guarantee
   contracts, behavior/cycle refs, and proof projection.
 - `oag-authoring-packet`: post-lock `oag.compile`, role-specific `rtl__*.json`
@@ -39,6 +42,14 @@ feed RTL/TB subagents. Wavefront scheduling opens only safe parallel work
 boundaries. Evidence closure audits proof strength and decision freshness.
 IP versioning governs whether an approved baseline lineage is safe to consume
 or promote; it does not create design truth.
+
+For nontrivial IP work, use `ontology/features.yaml` as the product-visible
+scope layer before requirements. Use `ontology/ipxact_projection.yaml` for the
+IP-XACT-style integration projection: VLNV, bus interfaces, ports, memory maps,
+registers, address spaces, parameters, file sets, views, hierarchy,
+configuration, generator chains, and vendor-extension links back to OAG IDs.
+IP-XACT-style metadata is not the behavior oracle; OAG contracts and modeling
+files remain the behavior/cycle authority.
 
 Use the version checker when an IP baseline or golden version is being promoted
 or consumed:
@@ -108,6 +119,33 @@ For protocol IPs, ask or draft open questions for at least: spec version,
 transport boundary, input/output interfaces, supported feature scope, buffering
 and backpressure, filtering/addressing, and error/drop/status policy. Store
 unconfirmed answers only as draft knowledge.
+
+### Lock Preview Artifacts
+
+Before asking the user to lock scope, show the user what would be locked. For
+nontrivial IP work, prepare draft/proposed artifacts for source claims,
+ambiguity rows, feature rows, lock-blocking decision rows, requirement atoms,
+candidate obligations, candidate assume/guarantee contracts, verification
+intent, and IP-XACT-like integration metadata gaps. Verification intent should
+name proof objectives, scenarios, scoreboard refs, and coverage goals at the
+level needed for RTL/TB authoring packets.
+
+Render the preview as a formal HTML review frame before asking for lock:
+
+```bash
+python3 .codex/scripts/oag_lock_preview_frame.py --ip-dir <ip> --json
+```
+
+The frame is review UI, not source truth. It must preserve each source artifact
+in verbatim panels with file paths and SHA-256 hashes. If the user changes any
+answer after reading the frame, update draft/OAG source files and regenerate
+the frame before lock.
+
+These artifacts are a lock preview, not implementation permission. Until the
+user confirms lock, keep candidate obligations and contracts as draft/proposed
+data or under draft lifecycle state, and do not feed them to RTL/TB workers.
+After user lock, run the semantic gates, refresh `oag.compile`, and use the
+generated authoring packets as implementation inputs.
 
 ## Scope Lock
 
@@ -238,12 +276,30 @@ also creates `ontology/modeling.yaml` for micro behavior/cycle oracle truth and
 `ontology/domain_intent.yaml` for clock/reset-domain intent. It also creates
 `ontology/tb_methodology.yaml` for framework-neutral verification methodology
 intent, `req/source_claims.yaml` and `req/ambiguity_register.yaml` for deep
-semantic intake, `ontology/requirement_atoms.yaml` for semantic decomposition
-before obligations, and `ontology/decision_matrix.yaml` for decisions that must
-be resolved before lock-ready implementation. `oag.compile` also generates
+semantic intake, `ontology/features.yaml` for product-visible feature scope,
+`ontology/requirement_atoms.yaml` for semantic decomposition before
+obligations, and `ontology/decision_matrix.yaml` for decisions that must be
+resolved before lock-ready implementation. It also creates
+`ontology/ipxact_projection.yaml` for IP-XACT-style component/interface/register
+map/file-set/hierarchy projection linked back to OAG feature, requirement,
+obligation, and contract IDs. `oag.compile` also generates
 role-specific authoring packets under `ontology/generated/authoring_packets/`.
 For short IP intake, these scaffold files are placeholders for draft capture;
 do not enrich locked truth or canonical ontology from assumptions.
+The scaffold initializes an IP-local git repository and OAG-safe `.gitignore`
+by default. Record compact IP-local checkpoints after meaningful stage
+boundaries:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message "OAG <stage>: <meaningful summary>" --json
+```
+
+Checkpoints should capture scaffold state, interview drafts, decision matrix
+updates, requirement atom/obligation/contract projection, scope lock, RTL/TB
+handoff, evidence projection, validation/gate refresh, and baseline/version
+updates. Do not checkpoint large transient dumps; the managed IP-local
+`.gitignore` keeps waveforms, simulator build output, logs, and caches out of
+git.
 
 For legacy or partially implemented IP, scaffold is not required and should not
 reshape the source tree. Use the existing RTL/doc/filelist hierarchy as

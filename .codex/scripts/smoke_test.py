@@ -42,6 +42,7 @@ OAG_PATHS = ROOT / "scripts" / "oag_paths.py"
 PYSLANG_LINT = ROOT / "scripts" / "oag_pyslang_lint.py"
 REQ_QUALITY_CHECK = ROOT / "scripts" / "oag_req_quality_check.py"
 LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
+LOCK_PREVIEW_FRAME = ROOT / "scripts" / "oag_lock_preview_frame.py"
 CONTRACT_STRENGTH_CHECK = ROOT / "scripts" / "oag_contract_strength_check.py"
 AUTHORING_PACKET_CHECK = ROOT / "scripts" / "oag_authoring_packet_check.py"
 TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
@@ -54,6 +55,7 @@ STALE_CHECK = ROOT / "scripts" / "oag_stale_check.py"
 BASELINE_CUT = ROOT / "scripts" / "oag_baseline_cut.py"
 BASELINE_VERIFY = ROOT / "scripts" / "oag_baseline_verify.py"
 IP_VERSION_CHECK = ROOT / "scripts" / "oag_ip_version_check.py"
+IP_GIT = ROOT / "scripts" / "oag_ip_git.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -62,6 +64,7 @@ OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
 OAG_DEEP_INTERVIEW_SKILL = ROOT / "skills" / "oag-deep-interview" / "SKILL.md"
 OAG_DEEP_SEMANTIC_SKILL = ROOT / "skills" / "oag-deep-semantic-intake" / "SKILL.md"
 OAG_DECISION_MATRIX_SKILL = ROOT / "skills" / "oag-decision-matrix" / "SKILL.md"
+OAG_LOCK_PREVIEW_FRAME_SKILL = ROOT / "skills" / "oag-lock-preview-frame" / "SKILL.md"
 OAG_CONTRACT_PROJECTION_SKILL = ROOT / "skills" / "oag-contract-projection" / "SKILL.md"
 OAG_AUTHORING_PACKET_SKILL = ROOT / "skills" / "oag-authoring-packet" / "SKILL.md"
 OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.md"
@@ -70,6 +73,7 @@ OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_
 OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
 OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
 OAG_IP_VERSIONING_POLICY = ROOT / "oag" / "ip-versioning-policy.md"
+OAG_FEATURE_IPXACT_POLICY = ROOT / "oag" / "feature-ipxact-policy.md"
 OAG_IP_VERSIONING_SKILL = ROOT / "skills" / "oag-ip-versioning" / "SKILL.md"
 OAG_IP_VERSIONING_RULES = ROOT / "rules" / "oag-ip-versioning.rules.md"
 STOP_GATE = ROOT / "hooks" / "codex_stop_gate.py"
@@ -245,6 +249,18 @@ def run_decision_harness(*args: str, project_root: Path | None = None) -> subpro
         capture_output=True,
         check=False,
         cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_lock_preview_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(LOCK_PREVIEW_FRAME), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
         env=env,
     )
 
@@ -1232,6 +1248,18 @@ def run_ip_version_check(*args: str, cwd: Path | None = None) -> subprocess.Comp
     )
 
 
+def run_ip_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(IP_GIT), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=cwd or ROOT,
+        env=env,
+    )
+
+
 def run_main_write_gate(ip: Path, *, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     if project_root:
@@ -1555,10 +1583,33 @@ def make_ip(root: Path) -> Path:
     scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
     assert scaffold["ok"] is True, scaffold
     assert scaffold["result"]["schema_version"] == "oag_scaffold_result.v1", scaffold
+    ip_git = scaffold["result"].get("ip_git", {})
+    assert ip_git.get("status") == "pass", scaffold
+    metadata_checkpoint = scaffold["result"].get("ip_git_metadata_checkpoint", {})
+    assert metadata_checkpoint.get("status") == "pass", scaffold
+    assert metadata_checkpoint.get("commit", {}).get("committed") is True, scaffold
+    assert (ip / ".git").exists(), "scaffold should initialize IP-local git"
+    assert (ip / ".gitignore").is_file(), "scaffold should create IP-local .gitignore"
+    head = subprocess.run(["git", "-C", str(ip), "rev-parse", "--verify", "HEAD"], text=True, capture_output=True, check=False)
+    assert head.returncode == 0, head.stderr or head.stdout
+    clean = subprocess.run(["git", "-C", str(ip), "status", "--porcelain"], text=True, capture_output=True, check=False)
+    assert clean.returncode == 0 and clean.stdout == "", clean.stdout
+    waves = ip / "sim" / "waves"
+    waves.mkdir(parents=True, exist_ok=True)
+    (waves / "debug.fst").write_text("ignored waveform dump\n", encoding="utf-8")
+    ignored = subprocess.run(
+        ["git", "-C", str(ip), "status", "--porcelain", "--", "sim/waves/debug.fst"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert ignored.returncode == 0 and ignored.stdout == "", ignored.stdout
+    (waves / "debug.fst").unlink()
     assert (ip / "req" / "deep_semantic_intake").is_dir()
     assert (ip / "req" / "source_claims.yaml").is_file()
     assert (ip / "req" / "ambiguity_register.yaml").is_file()
     assert (ip / "ontology" / "ip.yaml").is_file()
+    assert (ip / "ontology" / "features.yaml").is_file()
     assert (ip / "ontology" / "requirements.yaml").is_file()
     assert (ip / "ontology" / "requirement_atoms.yaml").is_file()
     assert (ip / "ontology" / "decision_matrix.yaml").is_file()
@@ -1569,6 +1620,7 @@ def make_ip(root: Path) -> Path:
     assert (ip / "ontology" / "verification_plan.yaml").is_file()
     assert (ip / "ontology" / "tb_methodology.yaml").is_file()
     assert (ip / "ontology" / "structure.yaml").is_file()
+    assert (ip / "ontology" / "ipxact_projection.yaml").is_file()
     assert (ip / "ontology" / "decomposition.yaml").is_file()
     assert (ip / "ontology" / "design_rules.yaml").is_file()
     assert (ip / "ontology" / "drafts").is_dir()
@@ -1580,7 +1632,9 @@ def make_ip(root: Path) -> Path:
     assert "graph_policy:" in policy_text, policy_text
     assert "compile_skip_when_fresh: true" in policy_text, policy_text
     assert "requirement_quality_policy:" in policy_text, policy_text
+    assert "canonical_feature_file: ontology/features.yaml" in policy_text, policy_text
     assert "modeling_policy:" in policy_text, policy_text
+    assert "canonical_ipxact_projection_file: ontology/ipxact_projection.yaml" in policy_text, policy_text
     assert "requirement_decomposition_policy:" in policy_text, policy_text
     assert "decision_matrix_policy:" in policy_text, policy_text
     assert "contract_strength_policy:" in policy_text, policy_text
@@ -1706,6 +1760,31 @@ def make_ip(root: Path) -> Path:
     (ip / "cov" / "coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     (ip / "signoff" / "truth_coverage.json").write_text(json.dumps({"status": "pass"}), encoding="utf-8")
     return ip
+
+
+def test_lock_preview_frame_preserves_verbatim_source(tmp_root: Path) -> None:
+    ip = make_ip(tmp_root / "lock_preview_frame")
+    marker = "# RAW_MARKER <keep & exact>\n"
+    source_claims = ip / "req" / "source_claims.yaml"
+    source_claims.write_text(source_claims.read_text(encoding="utf-8") + marker, encoding="utf-8")
+    result = run_lock_preview_frame(ip, "--readiness-mode", "draft", "--json")
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "pass", payload
+    html_path = Path(payload["html"])
+    json_path = Path(payload["json"])
+    assert html_path.is_file(), payload
+    assert json_path.is_file(), payload
+    html_text = html_path.read_text(encoding="utf-8")
+    assert "OAG Pre-Lock Review Frame" in html_text, html_text
+    assert "req/source_claims.yaml" in html_text, html_text
+    assert "RAW_MARKER &lt;keep &amp; exact&gt;" in html_text, html_text
+    assert "The block below is the file content with HTML escaping only" in html_text, html_text
+    sidecar = json.loads(json_path.read_text(encoding="utf-8"))
+    assert sidecar["schema_version"] == "oag_lock_preview_frame.v1", sidecar
+    source_rows = {item["name"]: item for item in sidecar["sources"]}
+    assert source_rows["source_claims"]["sha256"] == sha256(source_claims), source_rows["source_claims"]
+    assert "raw_text" not in source_rows["source_claims"], source_rows["source_claims"]
 
 
 def test_pyslang_lint_runner() -> None:
@@ -2936,7 +3015,9 @@ def test_ip_version_policy_checker(tmp_root: Path) -> None:
     assert no_git.returncode != 0, no_git.stdout
     assert any(item["code"] == "IP_VERSION_LOCAL_GIT_MISSING" for item in json.loads(no_git.stdout)["issues"]), no_git.stdout
 
-    subprocess.run(["git", "init"], cwd=ip, text=True, capture_output=True, check=True)
+    init = run_ip_git("init", "--ip-dir", str(ip), "--json")
+    assert init.returncode == 0, init.stderr or init.stdout
+    assert json.loads(init.stdout)["status"] == "pass", init.stdout
     good = run_ip_version_check("--ip-dir", str(ip), "--require-ip-git", "--json")
     assert good.returncode == 0, good.stderr or good.stdout
     assert json.loads(good.stdout)["status"] == "pass", good.stdout
@@ -2946,6 +3027,61 @@ def test_ip_version_policy_checker(tmp_root: Path) -> None:
     bad_patch = run_ip_version_check("--ip-dir", str(ip), "--require-ip-git", "--json")
     assert bad_patch.returncode != 0, bad_patch.stdout
     assert any(item["code"] == "IP_VERSION_PATCH_TRUTH_CHANGE" for item in json.loads(bad_patch.stdout)["issues"]), bad_patch.stdout
+
+
+def test_ip_git_helper_checkpoint(tmp_root: Path) -> None:
+    ip = tmp_root / "git_helper_ip"
+    (ip / "req").mkdir(parents=True)
+    (ip / "req" / "intent.md").write_text("# Intent\n\nDraft.\n", encoding="utf-8")
+    init = run_ip_git(
+        "init",
+        "--ip-dir",
+        str(ip),
+        "--initial-commit",
+        "--message",
+        "OAG scaffold git helper",
+        "--json",
+    )
+    assert init.returncode == 0, init.stderr or init.stdout
+    init_doc = json.loads(init.stdout)
+    assert init_doc["status"] == "pass", init_doc
+    assert init_doc["commit"]["committed"] is True, init_doc
+    assert (ip / ".git").exists(), init_doc
+    assert "*.fst" in (ip / ".gitignore").read_text(encoding="utf-8")
+
+    (ip / "req" / "intent.md").write_text("# Intent\n\nRefined.\n", encoding="utf-8")
+    (ip / "sim" / "waves").mkdir(parents=True)
+    (ip / "sim" / "waves" / "debug.fst").write_text("ignored\n", encoding="utf-8")
+    checkpoint = run_ip_git(
+        "checkpoint",
+        "--ip-dir",
+        str(ip),
+        "--message",
+        "OAG draft: refine intent",
+        "--json",
+    )
+    assert checkpoint.returncode == 0, checkpoint.stderr or checkpoint.stdout
+    checkpoint_doc = json.loads(checkpoint.stdout)
+    assert checkpoint_doc["status"] == "pass", checkpoint_doc
+    assert checkpoint_doc["commit"]["committed"] is True, checkpoint_doc
+    log = subprocess.run(["git", "-C", str(ip), "log", "-1", "--pretty=%s"], text=True, capture_output=True, check=False)
+    assert log.stdout.strip() == "OAG draft: refine intent", log.stdout
+    status = subprocess.run(["git", "-C", str(ip), "status", "--porcelain"], text=True, capture_output=True, check=False)
+    assert status.stdout == "", status.stdout
+
+    noop = run_ip_git(
+        "checkpoint",
+        "--ip-dir",
+        str(ip),
+        "--message",
+        "OAG draft: no changes",
+        "--json",
+    )
+    assert noop.returncode == 0, noop.stderr or noop.stdout
+    noop_doc = json.loads(noop.stdout)
+    assert noop_doc["status"] == "pass", noop_doc
+    assert noop_doc["commit"]["committed"] is False, noop_doc
+    assert noop_doc["commit"]["reason"] == "no_changes", noop_doc
 
 
 def write_stage_receipt(ip: Path, stage: str) -> None:
@@ -3130,6 +3266,8 @@ def main() -> int:
         test_baseline_cut_helper(Path(tmp))
         test_baseline_verify_git_tag(Path(tmp))
         test_ip_version_policy_checker(Path(tmp))
+        test_ip_git_helper_checkpoint(Path(tmp))
+        test_lock_preview_frame_preserves_verbatim_source(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -3147,6 +3285,7 @@ def main() -> int:
         assert PYSLANG_LINT.is_file(), PYSLANG_LINT
         assert REQ_QUALITY_CHECK.is_file(), REQ_QUALITY_CHECK
         assert LOCK_READINESS_CHECK.is_file(), LOCK_READINESS_CHECK
+        assert LOCK_PREVIEW_FRAME.is_file(), LOCK_PREVIEW_FRAME
         assert CONTRACT_STRENGTH_CHECK.is_file(), CONTRACT_STRENGTH_CHECK
         assert AUTHORING_PACKET_CHECK.is_file(), AUTHORING_PACKET_CHECK
         assert TRACE_GRAPH_CHECK.is_file(), TRACE_GRAPH_CHECK
@@ -3158,6 +3297,7 @@ def main() -> int:
         assert BASELINE_CUT.is_file(), BASELINE_CUT
         assert BASELINE_VERIFY.is_file(), BASELINE_VERIFY
         assert IP_VERSION_CHECK.is_file(), IP_VERSION_CHECK
+        assert IP_GIT.is_file(), IP_GIT
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
@@ -3165,6 +3305,7 @@ def main() -> int:
         assert OAG_IP_WORKFLOW_SKILL.is_file(), OAG_IP_WORKFLOW_SKILL
         assert OAG_DEEP_SEMANTIC_SKILL.is_file(), OAG_DEEP_SEMANTIC_SKILL
         assert OAG_DECISION_MATRIX_SKILL.is_file(), OAG_DECISION_MATRIX_SKILL
+        assert OAG_LOCK_PREVIEW_FRAME_SKILL.is_file(), OAG_LOCK_PREVIEW_FRAME_SKILL
         assert OAG_CONTRACT_PROJECTION_SKILL.is_file(), OAG_CONTRACT_PROJECTION_SKILL
         assert OAG_AUTHORING_PACKET_SKILL.is_file(), OAG_AUTHORING_PACKET_SKILL
         assert OAG_EVIDENCE_CLOSURE_SKILL.is_file(), OAG_EVIDENCE_CLOSURE_SKILL
@@ -3173,6 +3314,7 @@ def main() -> int:
         assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
         assert OAG_BASELINE_GIT_POLICY.is_file(), OAG_BASELINE_GIT_POLICY
         assert OAG_IP_VERSIONING_POLICY.is_file(), OAG_IP_VERSIONING_POLICY
+        assert OAG_FEATURE_IPXACT_POLICY.is_file(), OAG_FEATURE_IPXACT_POLICY
         assert OAG_IP_VERSIONING_SKILL.is_file(), OAG_IP_VERSIONING_SKILL
         assert OAG_IP_VERSIONING_RULES.is_file(), OAG_IP_VERSIONING_RULES
         for schema_file in SCHEMA_FILES:
@@ -3504,13 +3646,18 @@ def main() -> int:
         assert "RULE-WAVE-001" in rule_index_text, rule_index_text
         assert "RULE-IPVER-001" in rule_index_text, rule_index_text
         decision_skill_text = OAG_DECISION_MATRIX_SKILL.read_text(encoding="utf-8")
+        lock_preview_skill_text = OAG_LOCK_PREVIEW_FRAME_SKILL.read_text(encoding="utf-8")
         contract_skill_text = OAG_CONTRACT_PROJECTION_SKILL.read_text(encoding="utf-8")
         packet_skill_text = OAG_AUTHORING_PACKET_SKILL.read_text(encoding="utf-8")
         wavefront_skill_text = OAG_WAVEFRONT_SKILL.read_text(encoding="utf-8")
         ip_versioning_skill_text = OAG_IP_VERSIONING_SKILL.read_text(encoding="utf-8")
+        feature_ipxact_policy_text = OAG_FEATURE_IPXACT_POLICY.read_text(encoding="utf-8")
         closure_skill_text = OAG_EVIDENCE_CLOSURE_SKILL.read_text(encoding="utf-8")
         assert "oag_decision_matrix_generate.py" in decision_skill_text, decision_skill_text
         assert "lock_required: true" in decision_skill_text, decision_skill_text
+        assert "oag_lock_preview_frame.py" in lock_preview_skill_text, lock_preview_skill_text
+        assert "verbatim" in lock_preview_skill_text, lock_preview_skill_text
+        assert "SHA-256" in lock_preview_skill_text, lock_preview_skill_text
         assert "assume" in contract_skill_text and "guarantee" in contract_skill_text, contract_skill_text
         assert "oag_contract_strength_check.py" in contract_skill_text, contract_skill_text
         assert "rtl__*.json" in packet_skill_text and "tb__*.json" in packet_skill_text, packet_skill_text
@@ -3518,7 +3665,14 @@ def main() -> int:
         assert "dependency" in wavefront_skill_text and "ownership" in wavefront_skill_text, wavefront_skill_text
         assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
         assert "oag_ip_version_check.py" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "oag_ip_git.py" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "checkpoint" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "PowerShell" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "IP-local" in ip_versioning_skill_text, ip_versioning_skill_text
+        assert "Feature -> Requirement" in feature_ipxact_policy_text, feature_ipxact_policy_text
+        assert "ontology/features.yaml" in feature_ipxact_policy_text, feature_ipxact_policy_text
+        assert "ontology/ipxact_projection.yaml" in feature_ipxact_policy_text, feature_ipxact_policy_text
+        assert "IP-XACT is not the behavior oracle" in feature_ipxact_policy_text, feature_ipxact_policy_text
         assert "oag_closure_check.py" in closure_skill_text, closure_skill_text
         assert "claim_complete" in closure_skill_text, closure_skill_text
         assert "Short IP requests are not implementation authorization" in agents_text, agents_text
@@ -3532,6 +3686,11 @@ def main() -> int:
         assert "oag_authoring_packet_check.py" in agents_text, agents_text
         assert "oag_wavefront.py" in agents_text, agents_text
         assert "oag_ip_version_check.py" in agents_text, agents_text
+        assert "oag_ip_git.py" in agents_text, agents_text
+        assert "feature-ipxact-policy.md" in agents_text, agents_text
+        assert "lock preview" in agents_text, agents_text
+        assert "oag_lock_preview_frame.py" in agents_text, agents_text
+        assert "verbatim source panels" in agents_text, agents_text
         assert "oag_trace_graph_check.py" in agents_text, agents_text
         assert "oag_deep_semantic_intake.py" in agents_text, agents_text
         assert "oag_decision_matrix_generate.py" in agents_text, agents_text
@@ -3543,6 +3702,13 @@ def main() -> int:
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
         assert "Round 0 topology confirmation" in directive_text, directive_text
         assert "one-sentence scope restatement" in directive_text, directive_text
+        assert "oag_ip_git.py" in directive_text, directive_text
+        assert "PowerShell-compatible" in directive_text, directive_text
+        assert "lock preview" in directive_text, directive_text
+        assert "oag_lock_preview_frame.py" in directive_text, directive_text
+        assert "verbatim panels" in directive_text, directive_text
+        assert "feature-ipxact-policy.md" in directive_text, directive_text
+        assert "IP-XACT" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
         assert "oag_req_quality_check.py" in directive_text, directive_text

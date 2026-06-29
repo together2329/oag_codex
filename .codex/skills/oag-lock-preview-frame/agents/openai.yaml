@@ -1,0 +1,4 @@
+interface:
+  display_name: "OAG Lock Preview Frame"
+  short_description: "Render lock-ready OAG scope into a reviewable frame."
+  default_prompt: "Create a pre-lock review frame for this IP so the user can see exactly what will be locked."

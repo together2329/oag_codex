@@ -9,12 +9,18 @@ contracts and evidence.
 Requirement quality uses:
 
 ```text
+ontology/features.yaml
 req/source_claims.yaml
 req/ambiguity_register.yaml
 ontology/decision_matrix.yaml
 ontology/requirements.yaml
 ontology/requirement_atoms.yaml
 ```
+
+For product-visible behavior, a requirement should trace to one or more
+features. The feature row defines user value and scope grouping; the requirement
+defines verifiable behavior. Do not use a feature label as a substitute for a
+requirement atom or contract.
 
 ## Required Requirement Shape
 
@@ -26,6 +32,8 @@ For lock-ready implementation, each requirement should include:
 - `requirement_type` or `type`
 - `source` or `source_refs`
 - `source_claim_refs` when derived from intake claims
+- `feature_refs` when the requirement is product-visible or changes an
+  integration surface
 - `decision_refs` when a product decision controls the requirement semantics
 - `verification_method`
 - `ambiguity_status`

@@ -138,6 +138,13 @@ unavailable, stop with BLOCKED unless the user records a human
 `main_agent_subagent_waiver` decision receipt. Requirement detail work before
 lock may stay with main, but read-heavy spec/reference/obligation research
 should use subagents when useful and remains draft evidence until lock.
+The parent or single integration owner should record IP-local git checkpoints
+with `python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message
+"OAG <stage>: <summary>" --json` after meaningful stage boundaries. Subagents
+should not independently create commits unless their dispatch explicitly owns
+that integration action. This keeps IP-local git history aligned with OAG
+handoffs while avoiding large transient artifacts through the managed
+`.gitignore`.
 
 Before spawning a write-capable subagent, the main agent must create a dispatch
 record and paste its fields into the child task:

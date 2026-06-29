@@ -5,7 +5,8 @@ Common-style SSOT projection becomes OAG ROCEV projection.
 Closure-grade contracts must project into evidence:
 
 ```text
-Requirement
+Feature
+  -> Requirement
   -> Obligation
     -> Contract
       -> behavior_model or cycle_rules or approved oracle with decision_receipt_id
@@ -13,9 +14,15 @@ Requirement
         -> planned scenario
           -> actual scenario mapping
             -> scoreboard row or formal assertion
-              -> validation record
-                -> gate decision
+      -> validation record
+        -> gate decision
 ```
+
+IP-XACT-style metadata sits beside the chain as integration projection. It may
+package interfaces, registers, memory maps, parameters, file sets, hierarchy,
+views, design configuration, and generator chains, with vendor-extension links
+back to OAG feature, requirement, obligation, and contract IDs. It does not
+replace behavior/cycle oracle refs.
 
 RTL and TB both consume the same contract oracle:
 

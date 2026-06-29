@@ -10,6 +10,26 @@ baseline manifest   = trust boundary linking truth, implementation, evidence,
                       external artifacts, validation, and gate decision
 ```
 
+## Routine Checkpoints vs Golden Baselines
+
+Routine IP-local commits are expected during development. They should happen
+after meaningful OAG stage boundaries with:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message "OAG <stage>: <meaningful summary>" --json
+```
+
+Those commits are not product signoff by themselves. They are a compact audit
+trail so draft intake, decision rows, contract projection, implementation
+handoffs, evidence refresh, and validation/gate artifacts can be recovered and
+reviewed. Golden or release baselines require the separate manifest/tag flow
+below and explicit approval.
+
+The IP-local `.gitignore` must keep large or rerunnable tool output out of
+routine commits. Do not bypass it by force-adding waveforms, simulator
+databases, object directories, logs, or bulky reports. Reference required
+external artifacts in the baseline manifest with `sha256` instead.
+
 ## Manifest and Git
 
 Baseline manifests must not embed their own concrete commit hash. The manifest

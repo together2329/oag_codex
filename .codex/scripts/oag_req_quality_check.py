@@ -188,7 +188,41 @@ def check_ambiguities(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, 
     return issues, ambiguity_ids, counts, blockers
 
 
-def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str]) -> tuple[list[dict[str, str]], dict[str, int]]:
+def check_features(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, str]], set[str], dict[str, int]]:
+    path = oag_paths.legacy_or_hidden(ip_dir, "ontology/features.yaml")
+    doc = read_yaml(path)
+    issues: list[dict[str, str]] = []
+    feature_ids: set[str] = set()
+    counts = {"features": 0}
+    if "__load_error__" in doc:
+        return [issue("FEATURE_FILE_INVALID", f"Cannot read features.yaml: {doc['__load_error__']}", str(path))], feature_ids, counts
+    if not doc:
+        return issues, feature_ids, counts
+    if doc.get("schema_version") != "oag_features.v1":
+        issues.append(issue("FEATURE_SCHEMA_VERSION", "features.yaml must use schema_version oag_features.v1.", str(path)))
+    for index, feature in enumerate(as_list(doc.get("features"))):
+        if not isinstance(feature, dict):
+            continue
+        counts["features"] += 1
+        base = f"features[{index}]"
+        fid = item_id(feature)
+        if not fid:
+            issues.append(issue("FEATURE_ID", "Feature row missing id.", base))
+        elif fid in feature_ids:
+            issues.append(issue("FEATURE_DUPLICATE_ID", f"Duplicate feature id {fid}.", base))
+        feature_ids.add(fid)
+        if hard_gate and not text(feature.get("status")):
+            issues.append(issue("FEATURE_STATUS", f"{fid or base} missing status.", base))
+        if hard_gate and not text(feature.get("name")):
+            issues.append(issue("FEATURE_NAME", f"{fid or base} missing name.", base))
+        if hard_gate and not as_list(feature.get("requirement_refs")):
+            issues.append(issue("FEATURE_REQUIREMENT_REFS", f"{fid or base} missing requirement_refs.", base))
+    if hard_gate and doc and not feature_ids:
+        issues.append(issue("FEATURE_REQUIRED", "features.yaml exists but has no feature rows.", str(path)))
+    return issues, feature_ids, counts
+
+
+def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str], feature_ids: set[str]) -> tuple[list[dict[str, str]], dict[str, int]]:
     path = oag_paths.legacy_or_hidden(ip_dir, "ontology/requirements.yaml")
     doc = read_yaml(path)
     issues: list[dict[str, str]] = []
@@ -226,6 +260,14 @@ def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str]) ->
             for ref in source_claim_refs:
                 if ref not in claim_ids:
                     issues.append(issue("REQ_SOURCE_CLAIM_UNKNOWN", f"{rid or base} references unknown source claim {ref}.", base))
+        feature_refs = [text(item) for item in as_list(req.get("feature_refs")) if text(item)]
+        if feature_ids:
+            if not feature_refs:
+                issues.append(issue("REQ_FEATURE_REFS", f"{rid or base} missing feature_refs while ontology/features.yaml is active.", base))
+            else:
+                for ref in feature_refs:
+                    if ref not in feature_ids:
+                        issues.append(issue("REQ_FEATURE_UNKNOWN", f"{rid or base} references unknown feature {ref}.", base))
         if not as_list(req.get("verification_method")):
             issues.append(issue("REQ_VERIFICATION_METHOD", f"{rid or base} missing verification_method.", base))
         ambiguity_status = text(req.get("ambiguity_status")).lower()
@@ -241,8 +283,9 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     hard_gate = require_locked or locked
     source_issues, claim_ids, source_counts = check_source_claims(ip_dir, hard_gate=hard_gate)
     ambiguity_issues, _ambiguity_ids, ambiguity_counts, blockers = check_ambiguities(ip_dir, hard_gate=hard_gate)
-    req_issues, req_counts = check_requirements(ip_dir, hard_gate=hard_gate, claim_ids=claim_ids)
-    issues = source_issues + ambiguity_issues + req_issues
+    feature_issues, feature_ids, feature_counts = check_features(ip_dir, hard_gate=hard_gate)
+    req_issues, req_counts = check_requirements(ip_dir, hard_gate=hard_gate, claim_ids=claim_ids, feature_ids=feature_ids)
+    issues = source_issues + ambiguity_issues + feature_issues + req_issues
     next_actions: list[str] = []
     if ambiguity_counts["unresolved_lock_ambiguities"]:
         next_actions.append("Resolve or waive lock-required ambiguities in req/ambiguity_register.yaml.")
@@ -260,6 +303,7 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         "counts": {
             **source_counts,
             **ambiguity_counts,
+            **feature_counts,
             **req_counts,
             "source_issues": len(source_issues),
             "ambiguity_issues": len(ambiguity_issues),

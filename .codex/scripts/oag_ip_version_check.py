@@ -19,10 +19,21 @@ VERSION_LEDGER = Path("ontology/ip_version.yaml")
 sys.path.insert(0, str(SCRIPTS_DIR))
 from oag_validate_json import validate_document  # pylint: disable=wrong-import-position
 import oag_paths  # noqa: E402
+import oag_ip_git  # noqa: E402
 
 
 SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 GOLDEN_CLASSES = {"golden", "release"}
+REQUIRED_GITIGNORE_PATTERNS = (
+    "*.vcd",
+    "*.fst",
+    "*.fsdb",
+    "sim/waves/*",
+    "sim/build/",
+    "work/",
+    "*.log",
+    ".cache/",
+)
 
 
 def issue(code: str, message: str, path: str = "") -> dict[str, str]:
@@ -76,9 +87,30 @@ def git_dir_exists(ip_dir: Path) -> bool:
     return git_path.exists()
 
 
+def check_gitignore(ip_dir: Path) -> list[dict[str, str]]:
+    path = ip_dir / ".gitignore"
+    if not path.is_file():
+        return [issue("IP_VERSION_GITIGNORE_MISSING", "IP-local .gitignore is required for version stewardship.", str(path))]
+    lines = {line.strip() for line in path.read_text(encoding="utf-8", errors="ignore").splitlines()}
+    issues: list[dict[str, str]] = []
+    for pattern in REQUIRED_GITIGNORE_PATTERNS:
+        if pattern not in lines:
+            issues.append(
+                issue(
+                    "IP_VERSION_GITIGNORE_PATTERN",
+                    f"IP-local .gitignore missing required transient pattern: {pattern}",
+                    str(path),
+                )
+            )
+    return issues
+
+
 def git_tag_type(ip_dir: Path, tag: str) -> str | None:
+    git = oag_ip_git.git_executable()
+    if git is None:
+        return None
     proc = subprocess.run(
-        ["git", "-C", str(ip_dir), "cat-file", "-t", tag],
+        [git, "-C", str(ip_dir), "cat-file", "-t", tag],
         text=True,
         capture_output=True,
         check=False,
@@ -203,6 +235,8 @@ def check_ip_version(ip_dir: Path, *, require_ip_git: bool = False, verify_git_t
         issues.append(issue("IP_VERSION_LOCAL_GIT_MISSING", "IP version stewardship requires an IP-local .git directory.", str(ip_root / ".git")))
     if verify_git_tag and not git_dir_exists(ip_root):
         issues.append(issue("IP_VERSION_LOCAL_GIT_MISSING", "Cannot verify git tags without an IP-local .git directory.", str(ip_root / ".git")))
+    if require_ip_git or verify_git_tag:
+        issues.extend(check_gitignore(ip_root))
 
     versions = [entry for entry in payload.get("versions", []) if isinstance(entry, dict)] if isinstance(payload.get("versions"), list) else []
     issues.extend(check_active_entry(payload))

@@ -18,6 +18,7 @@ Primary assets:
 - `oag/assume-guarantee-contracts.md`
 - `oag/contract-strength-policy.md`
 - `oag/phenomena-boundary-model.md`
+- `oag/feature-ipxact-policy.md`
 - `oag/decision-matrix-policy.md`
 - `oag/authoring-packet-policy.md`
 - `oag/traceability-policy.md`
@@ -107,6 +108,7 @@ Primary assets:
 - `scripts/oag_baseline_check.py`
 - `scripts/oag_baseline_cut.py`
 - `scripts/oag_baseline_verify.py`
+- `scripts/oag_ip_git.py`
 - `scripts/oag_ip_version_check.py`
 - `scripts/oag_stale_check.py`
 - `scripts/oag_trace_graph_check.py`
@@ -122,8 +124,8 @@ Primary assets:
 - `schemas/*.schema.json`
 - `config.toml`
 
-Use OAG as the common interface for Requirement -> Obligation -> Contract ->
-Evidence -> Validation IP work.
+Use OAG as the common interface for Feature -> Requirement -> Obligation ->
+Contract -> Evidence -> Validation IP work.
 Use the OAG principle documents as the reasoning layer, not as templates to
 fill. `oag/principles.md` defines design-truth preservation,
 `oag/modeling-policy.md` defines profile-based FL/CL and oracle depth,
@@ -136,7 +138,9 @@ environment assumptions versus DUT guarantees,
 `oag/contract-strength-policy.md` defines implementation-ready contract
 strength, oracle projection, and weak-contract blockers,
 `oag/phenomena-boundary-model.md` defines monitored/controlled phenomena and
-DUT boundary ownership, `oag/decision-matrix-policy.md` defines unresolved,
+DUT boundary ownership, `oag/feature-ipxact-policy.md` defines product-visible
+feature scope and IP-XACT-style integration projection without making IP-XACT
+the behavior oracle, `oag/decision-matrix-policy.md` defines unresolved,
 proposed, decided, waived, and blocked product decisions before lock-ready
 implementation, `oag/authoring-packet-policy.md` defines role-specific
 `rtl__*.json` and `tb__*.json` packets, `oag/traceability-policy.md` defines
@@ -183,9 +187,29 @@ The default OAG workflow is script/skill based, not MCP based. Keep MCP server
 registration out of `.codex/config.toml`, and do not ship `.codex/mcp.json` in
 the pack. Use `.codex/scripts/oag_cli.py`, `.codex/scripts/oag_dispatch.py`,
 hooks, and the `oag-ip-workflow` skill as the primary runtime surface.
+Before locking nontrivial IP scope, create a lock preview with draft/proposed
+requirement atoms, candidate obligations, candidate assume/guarantee contracts,
+decision rows, and verification intent. The preview lets the user review what
+will be locked; it must not feed RTL/TB workers until the user confirms scope
+and the post-lock authoring packets pass.
+Generate the formal review surface with
+`.codex/scripts/oag_lock_preview_frame.py`; it writes
+`<ip>/knowledge/lock_preview/index.html` with verbatim source panels, source
+paths, and SHA-256 hashes. The HTML is a review envelope only. Do not let a
+summary replace the original authored text when asking the user to lock.
+Use `ontology/features.yaml` for product-visible feature scope and
+`ontology/ipxact_projection.yaml` for IP-XACT-style integration metadata
+projection.
+Use `.codex/scripts/oag_ip_git.py` to initialize IP-local git repositories and
+record compact checkpoints at meaningful OAG stage boundaries. The helper calls
+`git` directly from Python, not `/bin/sh` or `sh.exe`, so it is compatible with
+PowerShell when Git for Windows is installed. Do not force-add large transient
+tool output; the managed IP-local `.gitignore` keeps waveforms, simulator
+builds, logs, caches, and bulky generated reports out of routine commits.
 `oag-ip-workflow` is the umbrella router skill. Use the narrower skills for
 their specific lanes: `oag-deep-semantic-intake` for source claims and
 ambiguity, `oag-decision-matrix` for lock-blocking decisions,
+`oag-lock-preview-frame` for formal verbatim HTML review before scope lock,
 `oag-contract-projection` for requirement atom to assume/guarantee contract
 projection, `oag-authoring-packet` for role-specific `rtl__*.json` and
 `tb__*.json` packet handoff, `oag-wavefront` for dependency-aware parallel

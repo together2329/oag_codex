@@ -15,6 +15,37 @@ The product pack may live in a separate development repository. A user's IP
 workspace may not have a parent git repository at all. For OAG baseline work,
 the stewarded repository is the IP folder itself.
 
+## IP-Local Repository Setup
+
+OAG scaffolding initializes the IP folder as its own git repository by default.
+For existing IP folders, initialize or repair the repository explicitly:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py init --ip-dir <ip> --initial-commit --message "OAG scaffold <ip>" --json
+```
+
+Record routine checkpoints after meaningful OAG stage boundaries:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message "OAG <stage>: <meaningful summary>" --json
+```
+
+These checkpoints are an audit trail, not golden baseline promotion. Golden or
+release promotion still requires a baseline manifest, validation/gate approval,
+and an annotated tag.
+
+The helper is shell-independent. It calls `git` directly from Python, so it is
+compatible with macOS/Linux shells and Windows PowerShell. On Windows, Git for
+Windows must be installed; `git.exe` on `PATH` is preferred, and common
+`Program Files/Git/.../git.exe` locations are searched as a fallback. Git Bash
+is optional.
+
+The IP-local `.gitignore` is part of version readiness. It must ignore
+rerunnable or large artifacts such as waveforms, simulator build directories,
+raw simulator databases, logs, caches, and generated report directories while
+keeping compact OAG, RTL, TB, script, filelist, SDC, and documentation
+source-of-record files trackable.
+
 ## Canonical Ledger
 
 The version steward reads and validates:

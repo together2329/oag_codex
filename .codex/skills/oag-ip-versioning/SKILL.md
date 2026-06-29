@@ -38,6 +38,41 @@ Read:
 For golden/release checks, use the IP-local `.git`, not the product-pack
 development repository.
 
+## IP-Local Git Discipline
+
+New OAG IP scaffolds initialize an IP-local `.git` repository and an OAG-safe
+`.gitignore` by default. Existing IP folders should be initialized before their
+artifacts become implementation or baseline inputs:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py init --ip-dir <ip> --initial-commit --message "OAG scaffold <ip>" --json
+```
+
+Record small, meaningful checkpoints after every stage boundary that changes
+source-of-record files:
+
+```bash
+python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message "OAG <stage>: <meaningful summary>" --json
+```
+
+Required checkpoint points:
+
+- scaffold creation;
+- deep interview or semantic-intake draft updates;
+- decision matrix, requirement atom, obligation, or contract projection;
+- user scope lock or post-lock truth refresh;
+- RTL/TB integration handoff;
+- simulation, evidence projection, validation, and gate refresh;
+- baseline manifest or version ledger update.
+
+The checkpoint helper uses Python `subprocess` with direct `git` invocation, not
+`/bin/sh` or `sh.exe`. On Windows it works from PowerShell when Git for Windows
+is installed and `git.exe` is on `PATH`; if not, it also tries common Git for
+Windows install locations such as `Program Files/Git/cmd/git.exe`. Large or
+rerunnable dumps stay out of git through the managed IP-local `.gitignore`.
+If a raw waveform, simulator database, or large report is needed for release,
+store it outside git and reference it from the baseline manifest with `sha256`.
+
 ## Required Checks
 
 Before treating a baseline as version-ready:

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import oag_ip_git
+
 
 SCHEMA_VERSION = "oag_ip_scaffold.v1"
 DEFAULT_DIRS = [
@@ -102,7 +104,16 @@ def _layout_target(ip_path: Path, rel: str, layout: str) -> Path:
     return ip_path / rel
 
 
-def scaffold(ip_path: Path, *, force: bool = False, owner: str = "unassigned", layout: str = "legacy") -> dict[str, Any]:
+def scaffold(
+    ip_path: Path,
+    *,
+    force: bool = False,
+    owner: str = "unassigned",
+    layout: str = "legacy",
+    init_git: bool = True,
+    initial_commit: bool = True,
+    git_commit_message: str | None = None,
+) -> dict[str, Any]:
     if layout not in SUPPORTED_LAYOUTS:
         raise ValueError(f"unsupported layout: {layout}")
     ip_name = slug(ip_path.name)
@@ -179,11 +190,24 @@ def scaffold(ip_path: Path, *, force: bool = False, owner: str = "unassigned", l
         "skipped_files": skipped_files,
     }
     write(ip_path / ".oag_scaffold.json", json_text(manifest), force=True)
+    if init_git:
+        manifest["ip_git"] = oag_ip_git.init_ip_git(
+            ip_path,
+            initial_commit=initial_commit,
+            message=git_commit_message or f"OAG scaffold {ip_name}",
+        )
+        write(ip_path / ".oag_scaffold.json", json_text(manifest), force=True)
+        if initial_commit and manifest["ip_git"].get("status") == "pass":
+            manifest["ip_git_metadata_checkpoint"] = oag_ip_git.checkpoint_ip_git(
+                ip_path,
+                message=f"OAG scaffold metadata {ip_name}",
+            )
     return manifest
 
 
 def build_templates(ip: str, owner: str) -> dict[str, str]:
     req_id = f"REQ_{ip.upper()}_001"
+    feature_id = f"FEAT_{ip.upper()}_PRIMARY_BEHAVIOR"
     obl_id = f"OBL_{ip.upper()}_RESET_KNOWN"
     contract_id = f"CONTRACT_{ip.upper()}_SIM_SCOREBOARD"
     scenario_id = f"SCN_{ip.upper()}_RESET_DEFAULTS"
@@ -200,12 +224,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "- `list/`: deterministic filelists for tools",
         ),
         ".gitignore": yaml_doc(
-            "sim/waves/*",
-            "lint/reports/*",
-            "cov/reports/*",
-            "syn/reports/*",
-            "syn/netlist/*",
-            "!*/.gitkeep",
+            *oag_ip_git.GITIGNORE_LINES,
         ),
         "req/locked_truth.md": yaml_doc(
             f"# {ip} Locked Truth",
@@ -230,6 +249,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             f"      - CLAIM_{ip.upper()}_PRIMARY_INTENT",
             "    decision_refs:",
             f"      - DEC_{ip.upper()}_RESET_BOUNDARY",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    verification_method:",
             "      - scoreboard",
             "    ambiguity_status: ambiguous",
@@ -254,9 +275,12 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "    status: draft",
             "    normalized_meaning: Primary externally visible behavior remains undefined until user/spec intake resolves it.",
             "    affected_layers:",
+            "      - features",
             "      - requirements",
             "      - requirement_atoms",
             "      - verification",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    requirement_refs:",
             f"      - {req_id}",
             "    decision_refs:",
@@ -280,6 +304,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "    decision_refs:",
             f"      - DEC_{ip.upper()}_RESET_BOUNDARY",
             "    affects:",
+            "      - features",
             "      - requirements",
             "      - requirement_atoms",
             "      - obligations",
@@ -357,12 +382,48 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             f"      - CLAIM_{ip.upper()}_PRIMARY_INTENT",
             "    decision_refs:",
             f"      - DEC_{ip.upper()}_RESET_BOUNDARY",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    status: draft",
             "    requirement_type: behavioral",
             "    verification_method:",
             "      - scoreboard",
             "    ambiguity_status: ambiguous",
             "    text: Define the primary externally visible behavior.",
+        ),
+        "ontology/features.yaml": yaml_doc(
+            "schema_version: oag_features.v1",
+            f"ip: {ip}",
+            "policy:",
+            "  status: draft",
+            "  purpose: Product-visible feature layer before requirements.",
+            "  lock_gate: Load-bearing features must trace to requirements, decisions, obligations, contracts, and verification intent before implementation.",
+            "features:",
+            f"  - id: {feature_id}",
+            "    status: draft",
+            "    name: Primary externally visible behavior",
+            "    summary: Scaffold placeholder for the first product-visible behavior.",
+            "    source_claim_refs:",
+            f"      - CLAIM_{ip.upper()}_PRIMARY_INTENT",
+            "    decision_refs:",
+            f"      - DEC_{ip.upper()}_RESET_BOUNDARY",
+            "    requirement_refs:",
+            f"      - {req_id}",
+            "    obligation_refs:",
+            f"      - {obl_id}",
+            "    contract_refs:",
+            f"      - {contract_id}",
+            "    verification_objective_refs:",
+            "      - VOBJ_RESET_KNOWN_STATE",
+            "    ipxact_refs:",
+            "      - IPXACT_COMPONENT_DRAFT",
+            "    user_value: TBD by deep interview or source specification.",
+            "    non_goals: []",
+            "    lock_readiness:",
+            "      ambiguity_status: ambiguous",
+            "      missing:",
+            "        - concrete externally visible behavior",
+            "        - interface/register/parameter surfaces affected by this feature",
         ),
         "ontology/requirement_atoms.yaml": yaml_doc(
             "schema_version: oag_requirement_atoms.v1",
@@ -374,6 +435,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "requirement_atoms:",
             f"  - id: ATOM_{ip.upper()}_RESET_KNOWN",
             f"    source_requirement_id: {req_id}",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    status: draft",
             "    normalized_text: Reset/default externally visible behavior must be specified before implementation.",
             "    pattern:",
@@ -423,12 +486,14 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "    decision: null",
             "    rationale: Scaffold seed cannot infer reset/default product semantics.",
             "    affects:",
+            "      - features",
             "      - requirements",
             "      - requirement_atoms",
             "      - obligations",
             "      - contracts",
             "      - verification",
             "    refs:",
+            "      - ontology/features.yaml",
             "      - ontology/requirement_atoms.yaml",
         ),
         "ontology/obligations.yaml": yaml_doc(
@@ -437,6 +502,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "obligations:",
             f"  - id: {obl_id}",
             f"    requirement: {req_id}",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    status: open",
             "    text: Reset/default observable state is known and mechanically checkable.",
             f"    contracts: [{contract_id}]",
@@ -447,6 +514,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "contracts:",
             f"  - id: {contract_id}",
             f"    obligation: {obl_id}",
+            "    feature_refs:",
+            f"      - {feature_id}",
             "    contract_type: behavioral",
             "    method: scoreboard",
             "    pass_condition: simulator-independent scoreboard rows prove expected vs DUT-observed behavior",
@@ -601,6 +670,57 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "notes:",
             "  - Structure is the single namespace for ports, registers, state, events, and derived signals.",
             "  - Contracts and modules reference structure ids instead of redeclaring names and widths.",
+        ),
+        "ontology/ipxact_projection.yaml": yaml_doc(
+            "schema_version: oag_ipxact_projection.v1",
+            f"ip: {ip}",
+            "policy:",
+            "  status: draft",
+            "  purpose: Map OAG truth into IP-XACT-like integration metadata without treating IP-XACT as the behavior source.",
+            "  export_target: IEEE_1685_component_or_vendor_extension",
+            "  source_of_truth:",
+            "    features: ontology/features.yaml",
+            "    requirements: ontology/requirements.yaml",
+            "    obligations: ontology/obligations.yaml",
+            "    contracts: ontology/contracts.yaml",
+            "    interfaces_registers_parameters_files: [ontology/structure.yaml, ontology/decomposition.yaml, list/rtl.f]",
+            "component:",
+            "  id: IPXACT_COMPONENT_DRAFT",
+            "  vlnv:",
+            "    vendor: TBD",
+            "    library: TBD",
+            f"    name: {ip}",
+            "    version: 0.0.0-draft",
+            "  feature_refs:",
+            f"    - {feature_id}",
+            "bus_interfaces: []",
+            "memory_maps: []",
+            "address_spaces: []",
+            "parameters: []",
+            "views:",
+            "  - name: rtl",
+            "    file_set_refs: [fs_rtl]",
+            "file_sets:",
+            "  - name: fs_rtl",
+            "    files:",
+            f"      - path: rtl/{ip}.sv",
+            "        file_type: systemVerilogSource",
+            "design: null",
+            "design_configuration: null",
+            "generator_chains: []",
+            "vendor_extensions:",
+            "  oag_trace:",
+            "    feature_refs:",
+            f"      - {feature_id}",
+            "    requirement_refs:",
+            f"      - {req_id}",
+            "    obligation_refs:",
+            f"      - {obl_id}",
+            "    contract_refs:",
+            f"      - {contract_id}",
+            "notes:",
+            "  - IP-XACT is the integration/package projection for interfaces, registers, memory maps, parameters, hierarchy, file sets, and generators.",
+            "  - OAG remains the behavior, requirement, obligation, contract, evidence, validation, and decision authority.",
         ),
         "ontology/decomposition.yaml": yaml_doc(
             "schema: oag_decomposition.v1",
@@ -840,7 +960,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  - id: req",
             "    owner: human-owner",
             "    inputs: [req/locked_truth.md, req/requirements.yaml, req/source_claims.yaml, req/ambiguity_register.yaml, req/evidence_plan.yaml]",
-            "    outputs: [ontology/requirements.yaml, ontology/requirement_atoms.yaml, ontology/decision_matrix.yaml, ontology/obligations.yaml, ontology/contracts.yaml, ontology/modeling.yaml, ontology/domain_intent.yaml, ontology/verification_plan.yaml, ontology/tb_methodology.yaml]",
+            "    outputs: [ontology/features.yaml, ontology/requirements.yaml, ontology/requirement_atoms.yaml, ontology/decision_matrix.yaml, ontology/obligations.yaml, ontology/contracts.yaml, ontology/modeling.yaml, ontology/domain_intent.yaml, ontology/verification_plan.yaml, ontology/tb_methodology.yaml, ontology/ipxact_projection.yaml]",
             "    gate: oag.compile",
             "  - id: rtl",
             "    owner: rtl",
@@ -875,6 +995,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  compile_skip_when_fresh: true",
             "  strict_fresh_on: [checkpoint, check, signoff]",
             "requirement_quality_policy:",
+            "  canonical_feature_file: ontology/features.yaml",
+            "  feature_refs_required_for_product_visible_requirements: true",
             "  canonical_source_claims_file: req/source_claims.yaml",
             "  canonical_ambiguity_register_file: req/ambiguity_register.yaml",
             "  canonical_intake_dir: req/deep_semantic_intake",
@@ -948,6 +1070,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  scoreboard_rows_required_after_sim: true",
             "  special_domain_sim_only_closure_allowed: false",
             "structure_policy:",
+            "  canonical_ipxact_projection_file: ontology/ipxact_projection.yaml",
+            "  ipxact_is_integration_projection_not_behavior_truth: true",
             "  default_profile: small_leaf_single_file",
             "  allowed_profiles: [greenfield_modular, small_leaf_single_file, legacy_preserve, wrapper_adapter]",
             "  single_file_allowed_when: small leaf IP with explicit rationale and module ownership",
@@ -1001,6 +1125,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  - req/source_claims.yaml",
             "  - req/ambiguity_register.yaml",
             "  - req/evidence_plan.yaml",
+            "  - ontology/features.yaml",
             "  - ontology/requirements.yaml",
             "  - ontology/requirement_atoms.yaml",
             "  - ontology/decision_matrix.yaml",
@@ -1011,6 +1136,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  - ontology/verification_plan.yaml",
             "  - ontology/tb_methodology.yaml",
             "  - ontology/structure.yaml",
+            "  - ontology/ipxact_projection.yaml",
             "  - ontology/decomposition.yaml",
             "  - ontology/policies.yaml",
             "protected_fields:",
@@ -1019,6 +1145,7 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "  - requirements[].source_refs",
             "  - requirements[].source_claim_refs",
             "  - requirements[].decision_refs",
+            "  - requirements[].feature_refs",
             "  - requirements[].verification_method",
             "  - requirements[].ambiguity_status",
             "  - claims[].quote",
@@ -1606,9 +1733,13 @@ def cmd_create(args: argparse.Namespace) -> int:
         force=args.force,
         owner=args.owner,
         layout="dot_oag" if args.dot_oag else "legacy",
+        init_git=not args.no_git,
+        initial_commit=not args.no_initial_commit,
+        git_commit_message=args.git_commit_message,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return 0
+    ip_git = manifest.get("ip_git") if isinstance(manifest.get("ip_git"), dict) else {}
+    return 1 if ip_git.get("status") == "fail" else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1619,6 +1750,9 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--owner", default="unassigned")
     create.add_argument("--force", action="store_true")
     create.add_argument("--dot-oag", action="store_true", help="create ontology/ and knowledge/ under <ip>/.oag/")
+    create.add_argument("--no-git", action="store_true", help="do not initialize IP-local git; intended only for exceptional migration/debug cases")
+    create.add_argument("--no-initial-commit", action="store_true", help="initialize git and .gitignore but skip the scaffold commit")
+    create.add_argument("--git-commit-message", default=None, help="initial IP-local git commit message")
     create.set_defaults(func=cmd_create)
     return parser
 

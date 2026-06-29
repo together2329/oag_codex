@@ -86,6 +86,7 @@ Before scoring, confirm the shape of the request. Enumerate top-level outcomes
 that can succeed or fail independently:
 
 - protocol boundary and supported spec profile;
+- feature list, non-goals, and product-visible value boundaries;
 - input, output, buffering, and backpressure surfaces;
 - packet/session/reassembly or ordering components;
 - storage/commit and firmware-visible APB/CSR surfaces;
@@ -159,8 +160,9 @@ blocking uncertainty across these factors:
 - lock blocker: whether the answer is required before scope lock or
   implementation dispatch;
 - SSOT required gap: whether a mandatory source-of-truth field, IP-XACT-like
-  section, interface contract, requirement atom, proof row, or lifecycle field
-  is missing;
+  section, feature row, interface/register/parameter/file-set projection,
+  interface contract, requirement atom, proof row, or lifecycle field is
+  missing;
 - downstream fanout: how many RTL, TB, firmware, integration, or evidence
   artifacts would change;
 - irreversibility: how costly it is to change later;
@@ -381,7 +383,17 @@ Use this RTL-readiness checklist before closure:
   deferrals.
 
 Then restate the intended scope in one sentence and ask the user to approve or
-correct it. Only after explicit approval should normal OAG lock flow begin.
+correct it. For nontrivial IP work, generate the formal pre-lock HTML frame
+before asking for final approval so the user can inspect the authored source
+artifacts verbatim:
+
+```bash
+python3 .codex/scripts/oag_lock_preview_frame.py --ip-dir <ip> --json
+```
+
+Treat the HTML as a review envelope only. If the user changes wording or scope
+after reading it, update the draft/OAG source files and regenerate the frame.
+Only after explicit approval should normal OAG lock flow begin.
 
 Use this final restatement option set:
 

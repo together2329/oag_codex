@@ -182,7 +182,7 @@ Scoring factors use a 0-3 scale:
 | Factor | Meaning |
 | --- | --- |
 | `lock_blocker` | The answer is required before lock or implementation dispatch. |
-| `ssot_required_gap` | A mandatory source-of-truth section is missing: function, performance, interface, register/CSR, error/IRQ, lifecycle, or proof. |
+| `ssot_required_gap` | A mandatory source-of-truth section is missing: feature, function, performance, interface, register/CSR, parameter/configuration, file-set/hierarchy, error/IRQ, lifecycle, IP-XACT-style projection, or proof. |
 | `downstream_fanout` | Number and importance of artifacts that would change. |
 | `irreversibility` | Cost of changing later after RTL/TB/evidence exists. |
 | `ambiguity_gap` or `clarity` | Current clarity weakness. If `clarity` is present, the ranker derives `ambiguity_gap = 3 * (1 - clarity)`. |
