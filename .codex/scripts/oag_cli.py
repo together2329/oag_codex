@@ -64,6 +64,9 @@ CANONICAL_AGGREGATE_REFS = {
     "cov/coverage.json": "cov",
     "formal/formal_status.json": "formal",
 }
+CANONICAL_RUN_ARCHIVE_REFS = {
+    "sim/uvm_status.json": "sim/runs/*/uvm_status.json",
+}
 SCOREBOARD_REQUIRED_FIELDS = {
     "goal_id",
     "scenario_id",
@@ -263,7 +266,13 @@ def _ip_dir(arguments: dict[str, Any]) -> Path:
     # Resolve here so the IP base is consistent with oag_paths.* (which resolve
     # internally); otherwise `<resolver_path>.relative_to(ip)` mismatches on
     # platforms where the temp/real root differs (e.g. macOS /var -> /private/var).
-    return oag_paths.ip_root(str(raw))
+    ip = oag_paths.ip_root(str(raw))
+    if ip.parent.name == ip.name and (ip.parent / "ontology").exists():
+        raise ValueError(
+            "NESTED_IP_DIR_GENERATED_ARTIFACT: resolved ip_dir points to a same-name nested IP under an existing "
+            f"OAG IP ({ip}); check cwd, OAG_PROJECT_ROOT, and --ip-dir"
+        )
+    return ip
 
 
 def _read_json_file(path: Path) -> Any:
@@ -4459,6 +4468,20 @@ def _record_evidence_issues(ip: Path) -> list[str]:
     return issues
 
 
+def _canonical_run_archive_issues(ip: Path) -> list[str]:
+    issues: list[str] = []
+    for canonical_rel, archive_glob in CANONICAL_RUN_ARCHIVE_REFS.items():
+        canonical = ip / canonical_rel
+        if not canonical.is_file():
+            continue
+        archives = sorted(ip.glob(archive_glob))
+        if not any(path.is_file() for path in archives):
+            issues.append(
+                f"canonical run evidence lacks immutable archive: {canonical_rel} requires at least one {archive_glob}"
+            )
+    return issues
+
+
 def _record_subjects(record: dict[str, Any], status: str) -> list[dict[str, str]]:
     subjects: list[dict[str, str]] = []
     rocev = record.get("rocev") if isinstance(record.get("rocev"), dict) else {}
@@ -6524,6 +6547,7 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
     issues.extend(_ledger_issues(ip))
     issues.extend(_monotonic_issues(ip))
     issues.extend(_record_evidence_issues(ip))
+    issues.extend(_canonical_run_archive_issues(ip))
     scoreboard = _scoreboard_summary(ip / SCOREBOARD_REL)
     if scoreboard.get("present"):
         issues.extend([f"scoreboard_rows.v1: {issue}" for issue in _as_list(scoreboard.get("issues"))])

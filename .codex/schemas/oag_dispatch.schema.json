@@ -20,6 +20,7 @@
     "receipt_path",
     "may_claim_complete",
     "baseline",
+    "dispatch_integrity",
     "created_at"
   ],
   "properties": {
@@ -104,6 +105,34 @@
     },
     "baseline": {
       "type": "object"
+    },
+    "dispatch_integrity": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "protected_fields",
+        "scope_hash_algorithm",
+        "scope_hash"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "oag_dispatch_integrity.v1"
+        },
+        "protected_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "scope_hash_algorithm": {
+          "const": "sha256:jcs-v1"
+        },
+        "scope_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
     },
     "created_at": {
       "type": "string"

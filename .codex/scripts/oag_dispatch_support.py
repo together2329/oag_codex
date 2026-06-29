@@ -173,6 +173,61 @@ def hash_known_paths(paths: list[str]) -> dict[str, str]:
     return hashes
 
 
+DISPATCH_INTEGRITY_FIELDS = [
+    "schema_version",
+    "dispatch_id",
+    "dispatch_path",
+    "agent_type",
+    "role_name",
+    "role_kind",
+    "registered_id",
+    "ip_id",
+    "ip_dir",
+    "stage",
+    "owned_obligations",
+    "contracts",
+    "allowed_write_paths",
+    "allowed_tool_side_effects",
+    "receipt_path",
+    "may_claim_complete",
+    "wavefront_run_id",
+    "task_id",
+    "ownership_mode",
+    "baseline",
+    "created_at",
+]
+
+
+def dispatch_scope_hash(dispatch: JsonObject) -> str:
+    payload = {field: dispatch.get(field) for field in DISPATCH_INTEGRITY_FIELDS}
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def dispatch_integrity(dispatch: JsonObject) -> JsonObject:
+    return {
+        "schema_version": "oag_dispatch_integrity.v1",
+        "protected_fields": DISPATCH_INTEGRITY_FIELDS,
+        "scope_hash_algorithm": "sha256:jcs-v1",
+        "scope_hash": dispatch_scope_hash(dispatch),
+    }
+
+
+def nested_ip_generated_artifact(path: str, ip_rel: str, ip_name: str) -> bool:
+    normalized = path.strip("/")
+    prefix = f"{ip_rel.strip('/')}/{ip_name}/ontology/generated".strip("/")
+    return normalized == prefix or normalized.startswith(prefix + "/")
+
+
+def reject_nested_ip_generated_artifacts(paths: list[str], *, ip_rel: str, ip_name: str, field: str) -> None:
+    for path in paths:
+        if nested_ip_generated_artifact(path, ip_rel, ip_name):
+            raise DispatchInputError(
+                f"NESTED_IP_DIR_GENERATED_ARTIFACT: {field} must not target nested generated output {path}; "
+                "check cwd and --ip-dir instead"
+            )
+
+
 def scope_lock_status(ip_dir: Path) -> JsonObject:
     path = oag_paths.legacy_or_hidden(ip_dir, "ontology/scope_lock.json")
     if not path.is_file():
@@ -302,6 +357,12 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         ensure_under_ip(item, ip_dir, field="allowed_tool_side_effect")
         for item in (args.allowed_tool_side_effect or [])
     ]
+    reject_nested_ip_generated_artifacts(
+        allowed_tool_side_effects,
+        ip_rel=ip_rel,
+        ip_name=ip_dir.name,
+        field="allowed_tool_side_effect",
+    )
     if args.wavefront_run_id and args.task_id:
         run_id = str(args.wavefront_run_id)
         allowed_tool_side_effects.extend(
@@ -349,6 +410,7 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
             "baseline": {"created_at": utc_now(), "git_status_raw": status_raw, "git_status_paths": status_paths, "file_hashes": hash_known_paths([ip_rel])},
             "created_at": utc_now(),
         }
+        candidate["dispatch_integrity"] = dispatch_integrity(candidate)
         candidate["prompt_contract"] = build_prompt_contract(candidate)
         try:
             with candidate_path.open("x", encoding="utf-8") as fh:

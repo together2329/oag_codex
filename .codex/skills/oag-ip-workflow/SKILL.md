@@ -428,6 +428,24 @@ python3 .codex/scripts/oag_dispatch.py verify \
 The verifier compares the child receipt and actual
 `git status --short -uall -- <ip>` delta against the dispatch baseline. Reject or explain any path outside
 the child scope.
+Dispatch records are immutable after creation. Do not edit
+`allowed_write_paths`, `allowed_tool_side_effects`, baseline fields, receipt
+path, wavefront fields, or ownership mode to make a failed verifier pass. If
+the scope or baseline was wrong, mark the worker receipt
+`INCONCLUSIVE`/`BLOCKED`, route cleanup or reconciliation separately, and create
+a new dispatch from the clean baseline. Nested same-name generated artifacts
+such as `<ip>/<ip>/ontology/generated` are cwd contamination, not valid tool
+side effects; clean or rebaseline them through a separate route.
+Use schema preflight before full path verification when repairing receipt
+shape:
+
+```bash
+python3 .codex/scripts/oag_dispatch.py verify \
+  --dispatch <ip>/knowledge/dispatches/<dispatch>.json \
+  --receipt <ip>/knowledge/subagents/<receipt>.json \
+  --schema-only \
+  --json
+```
 
 Subagent receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 `RTL_HANDOFF_PASS` for a bounded worker result. Do not use `PASS`, `COMPLETE`,
@@ -681,6 +699,10 @@ inferred intent alone.
 current closure artifacts, and no custom subagent final closure claim. If RTL,
 lint, simulation, scoreboard, coverage, validation, or generated evidence
 changes after gate PASS, the gate decision is stale and must be re-run.
+Canonical run summaries that are overwritten by reruns, such as
+`sim/uvm_status.json`, must also be preserved under an immutable run directory
+such as `sim/runs/<timestamp>_<scenario>/uvm_status.json` before they support
+closure or repair receipts.
 
 For `action=signoff`, OAG requires `ontology/policies.yaml` to use
 `closure_profile: signoff`, a compiled truth graph, a closed closure matrix,

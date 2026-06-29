@@ -350,8 +350,43 @@ def write_task5_dispatch(
         },
         "created_at": "2026-01-01T00:00:00Z",
     }
+    dispatch["dispatch_integrity"] = task5_dispatch_integrity(dispatch)
     dispatch_path.write_text(json.dumps(dispatch, sort_keys=True) + "\n", encoding="utf-8")
     return dispatch_path, receipt_path, dispatch
+
+
+def task5_dispatch_integrity(dispatch: dict) -> dict:
+    protected_fields = [
+        "schema_version",
+        "dispatch_id",
+        "dispatch_path",
+        "agent_type",
+        "role_name",
+        "role_kind",
+        "registered_id",
+        "ip_id",
+        "ip_dir",
+        "stage",
+        "owned_obligations",
+        "contracts",
+        "allowed_write_paths",
+        "allowed_tool_side_effects",
+        "receipt_path",
+        "may_claim_complete",
+        "wavefront_run_id",
+        "task_id",
+        "ownership_mode",
+        "baseline",
+        "created_at",
+    ]
+    payload = {field: dispatch.get(field) for field in protected_fields}
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {
+        "schema_version": "oag_dispatch_integrity.v1",
+        "protected_fields": protected_fields,
+        "scope_hash_algorithm": "sha256:jcs-v1",
+        "scope_hash": digest,
+    }
 
 
 def write_task5_receipt(
@@ -475,6 +510,234 @@ def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
     malformed_receipt_result = json.loads(malformed_receipt_verify.stdout)
     assert malformed_receipt_result["status"] == "fail", malformed_receipt_result
     assert any(item["code"] == "RECEIPT_LOAD_SHAPE" for item in malformed_receipt_result["issues"]), malformed_receipt_result
+
+
+def test_dispatch_hardening_guards(tmp_root: Path) -> None:
+    project = tmp_root / "dispatch_hardening_project"
+    project.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, text=True, capture_output=True, check=True)
+    ip = project / "hardening_ip"
+    (ip / "ontology").mkdir(parents=True, exist_ok=True)
+    (ip / "rtl").mkdir(parents=True, exist_ok=True)
+    (ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+    (ip / "ontology" / "scope_lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_scope_lock.v1",
+                "ip": ip.name,
+                "state": "locked",
+                "summary": "Dispatch hardening smoke scope.",
+                "confirmed_scope": ["dispatch hardening"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_minimal_rtl_dispatch_readiness(
+        ip,
+        module_id="smoke",
+        rtl_file="rtl/smoke.sv",
+        contract_id="CONTRACT_SMOKE",
+        obligation_id="OBL_SMOKE",
+    )
+    create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "rtl",
+        "--owned-obligation",
+        "OBL_SMOKE",
+        "--contract",
+        "CONTRACT_SMOKE",
+        "--allowed-write-path",
+        str(ip / "rtl" / "smoke.sv"),
+        "--allowed-write-path",
+        str(ip / "knowledge" / "subagents"),
+        "--allowed-tool-side-effect",
+        str(ip / "ontology" / "generated"),
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "smoke.json"),
+        "--json",
+        project_root=project,
+    )
+    assert create.returncode == 0, create.stderr or create.stdout
+    dispatch = json.loads(create.stdout)["dispatch"]
+    assert dispatch["dispatch_integrity"]["scope_hash"], dispatch
+    dispatch_path = project / dispatch["dispatch_path"]
+    receipt_path = project / dispatch["receipt_path"]
+    (ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_subagent_receipt.v1",
+                "product_name": "IP Dev Agent",
+                "internal_gateway": "Ontology Agent Gateway",
+                "dispatch_id": dispatch["dispatch_id"],
+                "dispatch_path": dispatch["dispatch_path"],
+                "role_name": "oag-custom-worker",
+                "shard_scope": "smoke",
+                "stage": "rtl",
+                "status": "STATIC_HANDOFF_PASS",
+                "owned_obligations": ["OBL_SMOKE"],
+                "contracts": ["CONTRACT_SMOKE"],
+                "allowed_write_paths": dispatch["allowed_write_paths"],
+                "changed_paths": [f"{ip.name}/rtl/smoke.sv"],
+                "generated_side_effects": [],
+                "evidence_outputs": [dispatch["receipt_path"]],
+                "may_claim_complete": False,
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    clean_verify = run_dispatch("verify", "--dispatch", str(dispatch_path), "--receipt", str(receipt_path), "--json", project_root=project)
+    assert clean_verify.returncode == 0, clean_verify.stderr or clean_verify.stdout
+    schema_preflight = run_dispatch(
+        "verify",
+        "--dispatch",
+        str(dispatch_path),
+        "--receipt",
+        str(receipt_path),
+        "--schema-only",
+        "--json",
+        project_root=project,
+    )
+    assert schema_preflight.returncode == 0, schema_preflight.stderr or schema_preflight.stdout
+    schema_preflight_payload = json.loads(schema_preflight.stdout)
+    assert schema_preflight_payload["schema_only"] is True, schema_preflight_payload
+
+    mutated = json.loads(dispatch_path.read_text(encoding="utf-8"))
+    mutated["allowed_tool_side_effects"].append(f"{ip.name}/mctp_rx_assembler/ontology/generated")
+    dispatch_path.write_text(json.dumps(mutated, sort_keys=True) + "\n", encoding="utf-8")
+    mutated_verify = run_dispatch("verify", "--dispatch", str(dispatch_path), "--receipt", str(receipt_path), "--json", project_root=project)
+    assert mutated_verify.returncode != 0, mutated_verify.stdout
+    mutated_payload = json.loads(mutated_verify.stdout)
+    assert any(item["code"] == "DISPATCH_MUTATED_AFTER_CREATE" for item in mutated_payload["issues"]), mutated_payload
+
+    nested_create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "draft",
+        "--allowed-write-path",
+        str(ip / "knowledge" / "subagents"),
+        "--allowed-tool-side-effect",
+        str(ip / ip.name / "ontology" / "generated"),
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "nested.json"),
+        "--json",
+        project_root=project,
+    )
+    assert nested_create.returncode != 0, nested_create.stdout
+    assert "NESTED_IP_DIR_GENERATED_ARTIFACT" in (nested_create.stderr + nested_create.stdout), nested_create.stderr or nested_create.stdout
+    nested_compile = subprocess.run(
+        [
+            sys.executable,
+            str(OAG),
+            "call",
+            "--json",
+            json.dumps({"tool": "oag.compile", "arguments": {"ip_dir": ip.name}}),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ip,
+        env={**os.environ, "OAG_DISABLE_BACKEND": "1", "OAG_PROJECT_ROOT": ""},
+    )
+    assert nested_compile.returncode != 0, nested_compile.stderr or nested_compile.stdout
+    nested_compile_payload = json.loads(nested_compile.stdout)
+    assert nested_compile_payload["ok"] is False, nested_compile_payload
+    assert "NESTED_IP_DIR_GENERATED_ARTIFACT" in " ".join(nested_compile_payload["errors"]), nested_compile_payload
+    assert not (ip / ip.name / "ontology" / "generated").exists(), nested_compile_payload
+
+    active_ip = project / "active_dispatch_ip"
+    (active_ip / "ontology").mkdir(parents=True, exist_ok=True)
+    (active_ip / "rtl").mkdir(parents=True, exist_ok=True)
+    (active_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
+    (active_ip / "ontology" / "scope_lock.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_scope_lock.v1",
+                "ip": active_ip.name,
+                "state": "locked",
+                "summary": "Active dispatch smoke scope.",
+                "confirmed_scope": ["active dispatch parent write"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_minimal_rtl_dispatch_readiness(
+        active_ip,
+        module_id="smoke",
+        rtl_file="rtl/smoke.sv",
+        contract_id="CONTRACT_SMOKE",
+        obligation_id="OBL_SMOKE",
+    )
+    active_create = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(active_ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--role-kind",
+        "custom",
+        "--stage",
+        "rtl",
+        "--owned-obligation",
+        "OBL_SMOKE",
+        "--contract",
+        "CONTRACT_SMOKE",
+        "--allowed-write-path",
+        str(active_ip / "rtl" / "smoke.sv"),
+        "--receipt-path",
+        str(active_ip / "knowledge" / "subagents" / "active.json"),
+        "--json",
+        project_root=project,
+    )
+    assert active_create.returncode == 0, active_create.stderr or active_create.stdout
+    (active_ip / "rtl" / "smoke.sv").write_text("module smoke; endmodule\n", encoding="utf-8")
+    active_gate = run_main_write_gate(active_ip, project_root=project)
+    assert active_gate.returncode != 0, active_gate.stdout
+    active_payload = json.loads(active_gate.stdout)
+    assert any(item["code"] == "PARENT_WRITE_WITH_ACTIVE_DISPATCH" for item in active_payload["issues"]), active_payload
+
+
+def test_canonical_run_evidence_archive_guard(tmp_root: Path) -> None:
+    ip = make_ip(tmp_root / "archive_guard")
+    (ip / "sim").mkdir(parents=True, exist_ok=True)
+    (ip / "sim" / "uvm_status.json").write_text(
+        json.dumps({"schema_version": "mctp_rx_uvm_status.v1", "status": "pass"}) + "\n",
+        encoding="utf-8",
+    )
+    missing_archive = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    assert missing_archive["ok"] is True, missing_archive
+    assert any(
+        "canonical run evidence lacks immutable archive: sim/uvm_status.json" in issue
+        for issue in missing_archive["result"]["issues"]
+    ), missing_archive
+
+    archive = ip / "sim" / "runs" / "20260101T000000Z_uvm" / "uvm_status.json"
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    archive.write_text((ip / "sim" / "uvm_status.json").read_text(encoding="utf-8"), encoding="utf-8")
+    archived = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    assert archived["ok"] is True, archived
+    assert not any(
+        "canonical run evidence lacks immutable archive: sim/uvm_status.json" in issue
+        for issue in archived["result"]["issues"]
+    ), archived
 
 
 def run_lifecycle_check(*args: str) -> subprocess.CompletedProcess[str]:
@@ -2776,6 +3039,8 @@ def main() -> int:
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
         test_task5_dispatch_wavefront_matrix(Path(tmp))
+        test_dispatch_hardening_guards(Path(tmp))
+        test_canonical_run_evidence_archive_guard(Path(tmp))
         test_artifact_lifecycle_checker(Path(tmp))
         test_authoring_packet_lifecycle_firewall(Path(tmp))
         test_stale_propagation_checker(Path(tmp))

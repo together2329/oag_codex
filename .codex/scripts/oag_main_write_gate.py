@@ -227,6 +227,77 @@ def receipt_covered_paths(ip_dir: Path) -> tuple[set[str], list[dict[str, Any]]]
     return covered, receipts
 
 
+def safe_receipt_dispatch_ids(ip_dir: Path) -> set[str]:
+    dispatch_ids: set[str] = set()
+    for path in sorted(oag_paths.legacy_or_hidden(ip_dir, "knowledge/subagents").glob("*.json")):
+        try:
+            receipt = load_json(path)
+        except Exception:
+            continue
+        if not isinstance(receipt, dict):
+            continue
+        role = str(receipt.get("role_name") or "")
+        if not role.startswith("oag-") or not any(fragment in role for fragment in SUBAGENT_ROLE_FRAGMENTS):
+            continue
+        if receipt.get("schema_version") != "oag_subagent_receipt.v1":
+            continue
+        if receipt.get("may_claim_complete") is not False or receipt.get("status") not in SAFE_RECEIPT_STATUSES:
+            continue
+        dispatch_id = str(receipt.get("dispatch_id") or "").strip()
+        if dispatch_id:
+            dispatch_ids.add(dispatch_id)
+    return dispatch_ids
+
+
+def active_dispatch_conflicts(ip_dir: Path, changes: list[str], completed_dispatch_ids: set[str]) -> list[dict[str, str]]:
+    conflicts: list[dict[str, str]] = []
+    dispatch_dir = oag_paths.legacy_or_hidden(ip_dir, "knowledge/dispatches")
+    for path in sorted(dispatch_dir.glob("*.json")):
+        try:
+            dispatch = load_json(path)
+        except Exception:
+            continue
+        if not isinstance(dispatch, dict) or dispatch.get("schema_version") != "oag_dispatch.v1":
+            continue
+        dispatch_id = str(dispatch.get("dispatch_id") or "").strip()
+        if dispatch_id and dispatch_id in completed_dispatch_ids:
+            continue
+        allowed = [str(item) for item in dispatch.get("allowed_write_paths") or [] if isinstance(item, str)]
+        for changed in changes:
+            if path_matches(changed, allowed):
+                conflicts.append({"path": changed, "dispatch_id": dispatch_id, "dispatch_path": project_rel(path)})
+    return conflicts
+
+
+def active_lock_conflicts(ip_dir: Path, changes: list[str]) -> list[dict[str, str]]:
+    conflicts: list[dict[str, str]] = []
+    runs_dir = oag_paths.legacy_or_hidden(ip_dir, "ontology/runs")
+    for locks_path in sorted(runs_dir.glob("*/ownership_locks.json")):
+        try:
+            payload = load_json(locks_path)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for lock in payload.get("locks", []):
+            if not isinstance(lock, dict):
+                continue
+            lock_path = str(lock.get("path") or "").strip()
+            if not lock_path:
+                continue
+            for changed in changes:
+                if path_matches(ip_relative(changed, ip_dir), [lock_path]):
+                    conflicts.append(
+                        {
+                            "path": changed,
+                            "task_id": str(lock.get("task_id") or ""),
+                            "dispatch_id": str(lock.get("dispatch_id") or ""),
+                            "lock_path": project_rel(locks_path),
+                        }
+                    )
+    return conflicts
+
+
 def check_ip(ip_dir: Path) -> dict[str, Any]:
     ip_dir = ip_dir.expanduser().resolve()
     issues: list[dict[str, str]] = []
@@ -244,6 +315,23 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
         return build_result(ip_dir, locked=locked, changes=changes, receipts=[], waiver=waiver, issues=issues)
 
     covered, receipts = receipt_covered_paths(ip_dir)
+    completed_dispatch_ids = safe_receipt_dispatch_ids(ip_dir)
+    for conflict in active_dispatch_conflicts(ip_dir, changes, completed_dispatch_ids):
+        issues.append(
+            issue(
+                "PARENT_WRITE_WITH_ACTIVE_DISPATCH",
+                "Locked implementation/verification artifact changed while an unfinished OAG dispatch owns the same path; wait for the native child receipt or close it as INCONCLUSIVE/BLOCKED.",
+                conflict["path"],
+            )
+        )
+    for conflict in active_lock_conflicts(ip_dir, changes):
+        issues.append(
+            issue(
+                "PARENT_WRITE_WITH_ACTIVE_CHILD_DISPATCH",
+                "Locked implementation/verification artifact changed while a wavefront ownership lock is active for the same path.",
+                conflict["path"],
+            )
+        )
     uncovered = []
     for path in changes:
         if path in covered:

@@ -40,6 +40,13 @@ are satisfied.
     rejected, before opening another fan-out batch.
 15. Let parent/gate decide closure.
 
+Child runtime latency is not implementation failure. If a write-capable child
+has not produced artifacts yet, steer it for status or let a timeout policy
+route `INCONCLUSIVE`/`BLOCKED`; do not close the child and have the parent edit
+the child's RTL, TB, simulation, coverage, filelist, or signoff-owned files.
+Parent implementation after lock requires a human waiver decision and must be
+visible to the main-write gate.
+
 ## Commands
 
 Create a graph from a generic template:
@@ -152,3 +159,5 @@ or whose target artifacts overlap within the batch.
   integration.
 - Do not record `handoff_pass` before the child receipt has passed the stop
   hook or has been routed as a bounded `INCONCLUSIVE`/`BLOCKED`/`FAIL` receipt.
+- Do not widen a dispatch or baseline after verifier failure. Create a new
+  dispatch from a clean baseline instead.
