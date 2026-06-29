@@ -13,6 +13,10 @@ evidence, and validation must stay explicit.
 Treat this skill as the umbrella workflow. Use the narrower OAG skills when a
 task enters one of these lanes:
 
+- `oag-deep-interview`: ambiguous IP/change requests that need Socratic
+  requirement interview, topology confirmation, ambiguity scoring,
+  one-question-per-round discipline, decision-matrix handoff, and closure
+  restatement before lock.
 - `oag-deep-semantic-intake`: compressed natural-language intent, source
   claims, hidden implications, ambiguity rows, and first decision candidates.
 - `oag-decision-matrix`: lock-blocking product/design choices, profile-seeded
@@ -47,7 +51,7 @@ python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --
 
 ### New IP Intake Guard
 
-If the user gives only a short IP request, such as "I need mctp rx ip",
+If the user gives only a short IP request, such as "make packet rx ip",
 "make uart", or "create dma ip", do not treat that as permission to decide the
 architecture. Enter requirement interview mode.
 
@@ -79,7 +83,10 @@ Allowed first actions for a short IP request:
   unresolved or blocked instead of architecture decisions.
 - use `oag_deep_semantic_intake.py` for compressed natural-language intent and
   `oag_decision_matrix_generate.py` for profile-seeded decision rows when a
-  protocol profile such as `mctp-rx` applies.
+  protocol profile such as `protocol-packet-ip` applies.
+- for deep requirement interviews, use `oag-deep-interview`; it owns Round 0 topology,
+  clarity scoring, weakest-dimension targeting, decision-matrix
+  handoff, evidence-cited brownfield questions, closure audit, and one-sentence scope restatement.
 
 Forbidden until the user confirms scope or supplies a concrete spec:
 
@@ -308,6 +315,9 @@ preserve draft knowledge. After each meaningful user answer or before a long
 context transition, call `oag.draft` with the current facts, decisions,
 assumptions, and open questions. Drafts are not locked truth; they are captured
 under `req/interview_draft.md`, `ontology/drafts/`, and `knowledge/records/`.
+Do not batch unrelated interview questions. If the user gives a broad answer,
+refine it into decision, rationale, constraints, non-goals, and verified context
+before promoting it from chat into durable draft knowledge.
 
 ## Subagents
 

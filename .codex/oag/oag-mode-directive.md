@@ -374,7 +374,7 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
 ## Stop Rules
 
 - A short IP request is requirement-interview input, not product authorization.
-  For prompts like "I need mctp rx ip", create at most a draft workspace and
+  For prompts like "make packet rx ip", create at most a draft workspace and
   `oag.draft` notes; do not edit locked truth, canonical ontology, RTL, TB,
   tests, filelists, or signoff evidence until scope is confirmed.
 - Short-request drafts should produce `req/source_claims.yaml`,
@@ -382,6 +382,11 @@ Worker receipts should use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or
   and `ontology/decision_matrix.yaml` rows. They must not silently decide
   transport binding, reassembly depth, buffering, backpressure, filtering,
   output interface, storage/commit, firmware ownership, or error/drop policy.
+- Requirement interviews must use one-question-per-round discipline, begin with
+  a Round 0 topology confirmation, track goal/constraints/success-criteria and
+  protocol/context clarity, cite repo/spec evidence for factual brownfield
+  confirmations, and require a closure audit plus one-sentence scope restatement
+  before scope lock.
 - `ontology/scope_lock.json` must be `locked` before implementation,
   validation, gate review, or closure. `draft` means interview only.
 - Locked scopes must pass `oag_req_quality_check.py`; requirements without

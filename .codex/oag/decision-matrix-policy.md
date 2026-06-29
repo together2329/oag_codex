@@ -62,7 +62,7 @@ means requirements are specific enough to dispatch implementation work.
 
 ## Short Request Rule
 
-For prompts like "I need mctp rx ip", create or update draft decision rows
+For prompts like "make packet rx ip", create or update draft decision rows
 instead of picking defaults. Unknown transport binding, packet scope,
 buffering, filtering, ordering, backpressure, output, storage, or error policy
 must stay unresolved until confirmed by the user or a concrete source.

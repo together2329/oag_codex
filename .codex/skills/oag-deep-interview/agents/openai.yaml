@@ -1,0 +1,4 @@
+interface:
+  display_name: "OAG Deep Interview"
+  short_description: "Socratic OAG requirement interview"
+  default_prompt: "Use $oag-deep-interview to turn an ambiguous IP request into draft OAG scope, topology, questions, and lock-ready acceptance criteria."

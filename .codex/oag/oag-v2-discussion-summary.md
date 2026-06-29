@@ -95,7 +95,7 @@ authority.
 Short requests such as:
 
 ```text
-I need mctp rx ip
+make packet rx ip
 ```
 
 must not authorize architecture, RTL, TB, or closure.
@@ -130,11 +130,11 @@ Instead it should create rows such as:
 
 ```yaml
 decisions:
-  - id: DEC_MCTP_RX_CONTEXT_KEY
-    question: What fields form the MCTP assembly context key?
+  - id: DEC_PACKET_RX_CONTEXT_KEY
+    question: What fields form the packet assembly context key?
     status: unresolved
     lock_required: true
-    recommended: Source EID + TO + Msg Tag
+    recommended: Source endpoint + transaction/order tag
     decision: null
     rationale: Context key changes ordering, buffering, scoreboard, and RTL.
     affects: [requirements, obligations, contracts, modeling, verification]
@@ -420,7 +420,7 @@ Adding the semantic layer improves OAG in seven ways:
 5. It reduces circular verification where TB follows RTL.
 6. It makes bug triage clearer: requirement ambiguity, bad decomposition, weak
    contract, RTL bug, or TB expected-source bug.
-7. It scales from simple timer/GPIO IP to UART, SPI, DMA, MCTP, packet parser,
+7. It scales from simple timer/GPIO IP to UART, SPI, DMA, packet parser,
    bridge, and other complex stateful IP.
 
 ## Recommended Thin V2 Extension

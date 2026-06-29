@@ -673,8 +673,8 @@ def case_trace_graph_scaffold_seed(root: Path) -> dict[str, Any]:
     return {"ip": str(ip), "draft_counts": draft["counts"], "hard_counts": hard["counts"]}
 
 
-def case_decision_matrix_generator_mctp_profile(root: Path) -> dict[str, Any]:
-    ip = root / "mctp_profile_seed" / "mctp_rx"
+def case_decision_matrix_generator_protocol_packet_profile(root: Path) -> dict[str, Any]:
+    ip = root / "protocol_packet_profile_seed" / "packet_rx"
     scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "eval"}})
     assert scaffold["ok"] is True, scaffold
     proc = subprocess.run(
@@ -684,7 +684,7 @@ def case_decision_matrix_generator_mctp_profile(root: Path) -> dict[str, Any]:
             "--ip-dir",
             str(ip),
             "--profile",
-            "mctp-rx",
+            "protocol-packet-ip",
             "--owner",
             "eval",
             "--write",
@@ -697,17 +697,17 @@ def case_decision_matrix_generator_mctp_profile(root: Path) -> dict[str, Any]:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     result = json.loads(proc.stdout)
-    assert result["counts"]["added"] >= 13, result
+    assert result["counts"]["added"] >= 4, result
     matrix = _read_yaml(oag_paths.legacy_or_hidden(ip, "ontology/decision_matrix.yaml"))
     rows = {item["id"]: item for item in matrix["decisions"]}
-    assert rows["D003_TLP_BOUNDARY"]["status"] == "unresolved", rows["D003_TLP_BOUNDARY"]
-    assert rows["D003_TLP_BOUNDARY"]["decision"] is None, rows["D003_TLP_BOUNDARY"]
-    assert "WLAST" in rows["D003_TLP_BOUNDARY"]["recommended"], rows["D003_TLP_BOUNDARY"]
+    assert rows["D002_PACKET_BOUNDARY"]["status"] == "unresolved", rows["D002_PACKET_BOUNDARY"]
+    assert rows["D002_PACKET_BOUNDARY"]["decision"] is None, rows["D002_PACKET_BOUNDARY"]
+    assert "framing" in rows["D002_PACKET_BOUNDARY"]["recommended"], rows["D002_PACKET_BOUNDARY"]
     return {"ip": str(ip), "added": result["counts"]["added"], "decision_count": len(rows)}
 
 
-def case_deep_semantic_intake_mctp_profile(root: Path) -> dict[str, Any]:
-    ip = root / "mctp_intake_seed" / "mctp_rx"
+def case_deep_semantic_intake_protocol_packet_profile(root: Path) -> dict[str, Any]:
+    ip = root / "protocol_packet_intake_seed" / "packet_rx"
     scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "eval"}})
     assert scaffold["ok"] is True, scaffold
     proc = subprocess.run(
@@ -717,11 +717,11 @@ def case_deep_semantic_intake_mctp_profile(root: Path) -> dict[str, Any]:
             "--ip-dir",
             str(ip),
             "--topic",
-            "mctp rx request",
+            "packet rx request",
             "--prompt",
-            "I need mctp rx ip. AXI WDATA carries full PCIe TLP and completed messages are stored in SRAM.",
+            "I need packet rx ip. AXI WDATA carries the full protocol frame and completed messages are stored in SRAM.",
             "--profile",
-            "mctp-rx",
+            "protocol-packet-ip",
             "--owner",
             "eval",
             "--json",
@@ -735,9 +735,9 @@ def case_deep_semantic_intake_mctp_profile(root: Path) -> dict[str, Any]:
     result = json.loads(proc.stdout)
     report = Path(result["path"])
     assert report.is_file(), report
-    assert any("TLP boundary" in item for item in result["hidden_implications"]), result
+    assert any("header fields" in item for item in result["hidden_implications"]), result
     decision_ids = {row["id"] for row in result["decision_seed"]["rows"]}
-    assert "D007_CONTEXT_KEY" in decision_ids, result
+    assert "D002_PACKET_BOUNDARY" in decision_ids, result
     return {"ip": str(ip), "report": str(report), "decision_count": len(decision_ids)}
 
 
@@ -2148,8 +2148,8 @@ CASES: list[tuple[str, CaseFn]] = [
     ("contract_strength_scaffold_seed", case_contract_strength_scaffold_seed),
     ("authoring_packet_scaffold_seed", case_authoring_packet_scaffold_seed),
     ("trace_graph_scaffold_seed", case_trace_graph_scaffold_seed),
-    ("decision_matrix_generator_mctp_profile", case_decision_matrix_generator_mctp_profile),
-    ("deep_semantic_intake_mctp_profile", case_deep_semantic_intake_mctp_profile),
+    ("decision_matrix_generator_protocol_packet_profile", case_decision_matrix_generator_protocol_packet_profile),
+    ("deep_semantic_intake_protocol_packet_profile", case_deep_semantic_intake_protocol_packet_profile),
     ("skill_router_split_contract", case_skill_router_split_contract),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),

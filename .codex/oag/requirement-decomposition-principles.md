@@ -22,7 +22,7 @@ the event, condition, response, timing, responsible boundary, observable
 phenomena, and ambiguity status before an obligation or contract becomes
 closure-grade.
 
-For short IP requests such as `I need mctp rx ip`, the correct behavior is:
+For short IP requests such as `make packet rx ip`, the correct behavior is:
 
 1. create at most a draft workspace;
 2. write draft knowledge and open questions;

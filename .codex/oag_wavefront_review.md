@@ -158,7 +158,7 @@ Creates a task graph from a template.
 
 ```bash
 python3 .codex/scripts/oag_wavefront.py plan \
-  --ip-dir mctp_rx_assembler \
+  --ip-dir packet_rx_ip \
   --run-id RUN_TB_001 \
   --template .codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml \
   --json
@@ -170,7 +170,7 @@ Returns only tasks whose dependencies and barrier inputs are satisfied.
 
 ```bash
 python3 .codex/scripts/oag_wavefront.py ready \
-  --ip-dir mctp_rx_assembler \
+  --ip-dir packet_rx_ip \
   --run-id RUN_TB_001 \
   --json
 ```
@@ -195,7 +195,7 @@ Example:
 
 ```bash
 python3 .codex/scripts/oag_wavefront.py record \
-  --ip-dir mctp_rx_assembler \
+  --ip-dir packet_rx_ip \
   --run-id RUN_TB_001 \
   --task-id TB_COMMON_API \
   --status handoff_pass \
@@ -356,4 +356,3 @@ Use this checklist to review whether Wavefront stays in the right lane.
 OAG contracts tell agents what correct means.
 Wavefront tells agents when they may safely work.
 ```
-

@@ -273,7 +273,7 @@ source claim -> requirement -> atom -> obligation -> contract -> scenario ->
 evidence trace graph.
 Use `.codex/scripts/oag_deep_semantic_intake.py` and
 `.codex/scripts/oag_decision_matrix_generate.py` to seed draft intake reports
-and unresolved profile-driven decision rows such as the `mctp-rx` profile. Seed
+and unresolved profile-driven decision rows such as the `protocol-packet-ip` profile. Seed
 recommendations are not locked truth.
 Use `.codex/scripts/oag_workflow_whole_db.py` to generate a single Markdown
 review bundle of the `.codex` workflow pack as `oag_workflow_whole_db.md`.

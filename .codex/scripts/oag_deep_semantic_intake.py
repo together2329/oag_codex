@@ -65,11 +65,11 @@ def hidden_implications(prompt: str, *, profile: str) -> list[str]:
                 "PCIe transport binding support profile must be separated from unsupported/out-of-v0 features.",
             ]
         )
-    if "mctp" in lower or profile == "mctp-rx":
+    if "packet" in lower or "message" in lower or "parser" in lower or profile == "protocol-packet-ip":
         implications.extend(
             [
-                "MCTP header version, EID acceptance, Source EID/TO/MsgTag context key, sequence policy, and interleaving policy must be explicit.",
-                "Single-packet and multi-packet assembly support must be separately locked.",
+                "Packet/message header fields, acceptance filters, context key, ordering policy, and interleaving policy must be explicit.",
+                "Single-unit and multi-unit assembly support must be separately locked.",
             ]
         )
     if "sram" in lower:
@@ -87,14 +87,15 @@ def hidden_implications(prompt: str, *, profile: str) -> list[str]:
 
 
 def ambiguity_questions(prompt: str, *, profile: str) -> list[str]:
-    if profile == "mctp-rx" or "mctp" in prompt.lower():
+    lower = prompt.lower()
+    if profile == "protocol-packet-ip" or any(token in lower for token in ["packet", "message", "parser", "rx"]):
         return [
-            "Which AXI profile, data width, address width, and ingress region are in scope?",
-            "Does one AXI write burst represent exactly one PCIe TLP, and does WLAST mark TLP end?",
-            "Which DSP0238 support subset is in v0 scope?",
-            "Is assembly context key Source EID + TO + Msg Tag after destination acceptance?",
-            "What is the 16th-context overflow policy?",
-            "What SRAM descriptor/payload layout and FW ownership model is locked?",
+            "Which ingress and egress interface profiles, data widths, address widths, and regions are in scope?",
+            "Does one ingress transaction represent exactly one packet/message, and what marks packet/message end?",
+            "Which protocol feature subset is in v0 scope?",
+            "What fields key any assembly or ordering context?",
+            "What is the context overflow, backpressure, or drop policy?",
+            "What storage descriptor/payload layout and firmware ownership model is locked?",
             "What IRQ/status/error/drop matrix is locked?",
         ]
     return [

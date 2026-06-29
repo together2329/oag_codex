@@ -70,7 +70,7 @@ assignment explicitly allows oag.compile, it may refresh
 effects separately from owned changed paths and do not claim ownership of them.
 
 Short IP intake guard: if your assignment is based only on a short new-IP
-request such as "I need mctp rx ip" and does not include confirmed scope or a
+request such as "make packet rx ip" and does not include confirmed scope or a
 concrete spec, do not implement, enrich locked truth, or edit canonical
 ontology. Return only draft requirement questions, assumptions, and blockers.
 Protocol IP scope must be explicit for spec version, transport boundary,

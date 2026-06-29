@@ -58,6 +58,7 @@ OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 OAG_RULE_INDEX = ROOT / "rules" / "oag-rule-index.yaml"
 OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
+OAG_DEEP_INTERVIEW_SKILL = ROOT / "skills" / "oag-deep-interview" / "SKILL.md"
 OAG_DEEP_SEMANTIC_SKILL = ROOT / "skills" / "oag-deep-semantic-intake" / "SKILL.md"
 OAG_DECISION_MATRIX_SKILL = ROOT / "skills" / "oag-decision-matrix" / "SKILL.md"
 OAG_CONTRACT_PROJECTION_SKILL = ROOT / "skills" / "oag-contract-projection" / "SKILL.md"
@@ -642,7 +643,7 @@ def test_dispatch_hardening_guards(tmp_root: Path) -> None:
     assert schema_preflight_payload["schema_only"] is True, schema_preflight_payload
 
     mutated = json.loads(dispatch_path.read_text(encoding="utf-8"))
-    mutated["allowed_tool_side_effects"].append(f"{ip.name}/mctp_rx_assembler/ontology/generated")
+    mutated["allowed_tool_side_effects"].append(f"{ip.name}/nested_packet_ip/ontology/generated")
     dispatch_path.write_text(json.dumps(mutated, sort_keys=True) + "\n", encoding="utf-8")
     mutated_verify = run_dispatch("verify", "--dispatch", str(dispatch_path), "--receipt", str(receipt_path), "--json", project_root=project)
     assert mutated_verify.returncode != 0, mutated_verify.stdout
@@ -772,7 +773,7 @@ def test_canonical_run_evidence_archive_guard(tmp_root: Path) -> None:
     ip = make_ip(tmp_root / "archive_guard")
     (ip / "sim").mkdir(parents=True, exist_ok=True)
     (ip / "sim" / "uvm_status.json").write_text(
-        json.dumps({"schema_version": "mctp_rx_uvm_status.v1", "status": "pass"}) + "\n",
+        json.dumps({"schema_version": "uvm_status.v1", "status": "pass"}) + "\n",
         encoding="utf-8",
     )
     missing_archive = call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
@@ -1589,9 +1590,19 @@ def make_ip(root: Path) -> Path:
     assert (ip / "knowledge" / "_index.json").is_file()
     assert (ip / "knowledge" / "ledger.jsonl").is_file()
     assert (ip / "list" / "rtl.f").is_file()
-    run_lint_text = (ip / "scripts" / "run_lint.sh").read_text(encoding="utf-8")
-    assert "OAG_LINT_BACKEND" in run_lint_text, run_lint_text
-    assert "oag_pyslang_lint.py" in run_lint_text, run_lint_text
+    run_lint_py = (ip / "scripts" / "run_lint.py").read_text(encoding="utf-8")
+    run_lint_sh = (ip / "scripts" / "run_lint.sh").read_text(encoding="utf-8")
+    run_sim_py = (ip / "scripts" / "run_sim.py").read_text(encoding="utf-8")
+    run_sim_sh = (ip / "scripts" / "run_sim.sh").read_text(encoding="utf-8")
+    assert "OAG_LINT_BACKEND" in run_lint_py, run_lint_py
+    assert "oag_pyslang_lint.py" in run_lint_py, run_lint_py
+    assert "subprocess.run(cmd" in run_lint_py, run_lint_py
+    assert "shell=True" not in run_lint_py, run_lint_py
+    assert "run_lint.py" in run_lint_sh, run_lint_sh
+    assert "run_sim.py" in run_sim_sh, run_sim_sh
+    assert "BASH_SOURCE" not in run_lint_sh, run_lint_sh
+    assert "/bin/sh" not in run_lint_sh, run_lint_sh
+    assert "Path(__file__).resolve().parents[1]" in run_sim_py, run_sim_py
     lock_status = call({"tool": "oag.lock_status", "arguments": {"ip_dir": str(ip)}})
     assert lock_status["result"]["state"] == "draft", lock_status
     locked = call(
@@ -3260,6 +3271,7 @@ def main() -> int:
         assert "python3 .codex/scripts/oag_verification_plan_check.py" in skill_text, skill_text
         assert "oag_pyslang_lint.py" in skill_text, skill_text
         assert "Skill Router" in skill_text, skill_text
+        assert "oag-deep-interview" in skill_text, skill_text
         assert "oag-deep-semantic-intake" in skill_text, skill_text
         assert "oag-decision-matrix" in skill_text, skill_text
         assert "oag-contract-projection" in skill_text, skill_text
@@ -3277,8 +3289,31 @@ def main() -> int:
         assert "After user lock, main agent orchestrates" in skill_text, skill_text
         assert "oag_main_write_gate.py" in skill_text, skill_text
         assert "short IP request" in skill_text, skill_text
+        assert "Round 0 topology" in skill_text, skill_text
+        assert "one-question-per-round discipline" in skill_text, skill_text
+        assert "decision-matrix handoff" in skill_text, skill_text
+        assert "one-sentence scope restatement" in skill_text, skill_text
         assert "do not enrich or rewrite `req/locked_truth.md`" in skill_text, skill_text
         assert "single-packet versus multi-packet" in skill_text, skill_text
+        deep_interview_text = OAG_DEEP_INTERVIEW_SKILL.read_text(encoding="utf-8")
+        assert "name: oag-deep-interview" in deep_interview_text, deep_interview_text
+        assert "Phase 1: Round 0 Topology" in deep_interview_text, deep_interview_text
+        assert "weakest score next" in deep_interview_text, deep_interview_text
+        assert "Ambiguity is bidirectional" in deep_interview_text, deep_interview_text
+        assert "Decision Matrix Handoff" in deep_interview_text, deep_interview_text
+        assert "oag_lock_readiness_check.py" in deep_interview_text, deep_interview_text
+        assert "oag.draft" in deep_interview_text, deep_interview_text
+        assert "one-sentence scope restatement" in deep_interview_text, deep_interview_text
+        deep_interview_openai = (OAG_DEEP_INTERVIEW_SKILL.parent / "agents" / "openai.yaml").read_text(encoding="utf-8")
+        assert "$oag-deep-interview" in deep_interview_openai, deep_interview_openai
+        deep_interview_ref = (OAG_DEEP_INTERVIEW_SKILL.parent / "references" / "scoring-and-output.md").read_text(encoding="utf-8")
+        assert "ambiguity = 1 -" in deep_interview_ref, deep_interview_ref
+        assert "Final Draft Scope Template" in deep_interview_ref, deep_interview_ref
+        intake_skill_text = OAG_DEEP_SEMANTIC_SKILL.read_text(encoding="utf-8")
+        assert "Deep Interview Discipline" in intake_skill_text, intake_skill_text
+        assert "Round 0 topology check" in intake_skill_text, intake_skill_text
+        assert "weakest clarity dimension" in intake_skill_text, intake_skill_text
+        assert "oag-decision-matrix" in intake_skill_text, intake_skill_text
         rule_index_text = OAG_RULE_INDEX.read_text(encoding="utf-8")
         assert "RULE-LOCK-003" in rule_index_text, rule_index_text
         assert "RULE-CONTRACT-AG-001" in rule_index_text, rule_index_text
@@ -3324,6 +3359,8 @@ def main() -> int:
         assert "oag_main_write_gate.py" in agents_text, agents_text
         assert "oag_exec_auto_research.py" in agents_text, agents_text
         assert "A short IP request is requirement-interview input" in directive_text, directive_text
+        assert "Round 0 topology confirmation" in directive_text, directive_text
+        assert "one-sentence scope restatement" in directive_text, directive_text
         assert "oag.lock_status" in directive_text, directive_text
         assert "No lock, no RTL" in directive_text, directive_text
         assert "oag_req_quality_check.py" in directive_text, directive_text

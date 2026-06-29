@@ -27,7 +27,6 @@ python3 .codex/scripts/oag_decision_matrix_generate.py --ip-dir <ip> --profile <
 ```
 
 For protocol packet IPs, start with `--profile protocol-packet-ip`.
-For MCTP RX, use `--profile mctp-rx`.
 
 Audit lock readiness:
 

@@ -79,7 +79,6 @@ REQUIRED_FILES = (
     CODEX_ROOT / "oag" / "wavefront-templates" / "rtl_module_fanout.yaml",
     CODEX_ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml",
     CODEX_ROOT / "oag" / "profiles" / "protocol-packet-ip.yaml",
-    CODEX_ROOT / "oag" / "profiles" / "mctp-rx.yaml",
     CODEX_ROOT / "rules" / "oag-invariants.rules.md",
     CODEX_ROOT / "rules" / "oag-rule-index.yaml",
     CODEX_ROOT / "rules" / "oag-requirements-quality.rules.md",
