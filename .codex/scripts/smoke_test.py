@@ -46,6 +46,7 @@ CONTRACT_STRENGTH_CHECK = ROOT / "scripts" / "oag_contract_strength_check.py"
 AUTHORING_PACKET_CHECK = ROOT / "scripts" / "oag_authoring_packet_check.py"
 TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
 DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
+DEEP_INTERVIEW_ROUND = ROOT / "scripts" / "oag_deep_interview_round.py"
 DECISION_MATRIX_GENERATE = ROOT / "scripts" / "oag_decision_matrix_generate.py"
 LIFECYCLE_CHECK = ROOT / "scripts" / "oag_lifecycle_check.py"
 BASELINE_CHECK = ROOT / "scripts" / "oag_baseline_check.py"
@@ -76,6 +77,7 @@ SUBAGENT_START = ROOT / "hooks" / "codex_subagent_oag_start.py"
 SUBAGENT_GATE = ROOT / "hooks" / "codex_subagent_oag_gate.py"
 OAG_MODE_TRIGGER = ROOT / "hooks" / "codex_oag_mode_trigger.py"
 NATIVE_SUBAGENT_GUARD = ROOT / "hooks" / "codex_native_subagent_guard.py"
+DEEP_INTERVIEW_GUARD = ROOT / "hooks" / "codex_deep_interview_prompt_guard.py"
 OAG_SESSION_START = ROOT / "hooks" / "codex_oag_session_start.py"
 CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
@@ -1359,6 +1361,19 @@ def native_subagent_guard(payload: dict) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
         [sys.executable, str(NATIVE_SUBAGENT_GUARD)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT.parent,
+        env=env,
+    )
+
+
+def deep_interview_prompt_guard(payload: dict) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(DEEP_INTERVIEW_GUARD)],
         input=json.dumps(payload),
         text=True,
         capture_output=True,
@@ -3069,8 +3084,9 @@ def main() -> int:
         user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
         assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_mode_trigger.py", hooks
         assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_native_subagent_guard.py", hooks
-        assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
-        assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
+        assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_deep_interview_prompt_guard.py", hooks
+        assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[4]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         stop_command = stop_hooks[0]["command"]
         assert stop_command == "python3 .codex/hooks/codex_stop_gate.py", hooks
@@ -3090,9 +3106,11 @@ def main() -> int:
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
         assert OAG_MODE_TRIGGER.is_file(), OAG_MODE_TRIGGER
         assert NATIVE_SUBAGENT_GUARD.is_file(), NATIVE_SUBAGENT_GUARD
+        assert DEEP_INTERVIEW_GUARD.is_file(), DEEP_INTERVIEW_GUARD
         assert OAG_SESSION_START.is_file(), OAG_SESSION_START
         assert CONTEXT_HOOK.is_file(), CONTEXT_HOOK
         assert DRAFT_HOOK.is_file(), DRAFT_HOOK
+        assert DEEP_INTERVIEW_ROUND.is_file(), DEEP_INTERVIEW_ROUND
         assert PORTABLE_DB.is_file(), PORTABLE_DB
         assert OKF.is_file(), OKF
         assert EVAL.is_file(), EVAL
@@ -3299,6 +3317,15 @@ def main() -> int:
         assert "name: oag-deep-interview" in deep_interview_text, deep_interview_text
         assert "Phase 1: Round 0 Topology" in deep_interview_text, deep_interview_text
         assert "weakest score next" in deep_interview_text, deep_interview_text
+        assert "highest-impact ambiguity" in deep_interview_text, deep_interview_text
+        assert "Importance Ranking Protocol" in deep_interview_text, deep_interview_text
+        assert "SSOT required gap" in deep_interview_text, deep_interview_text
+        assert "oag_deep_interview_round.py rank" in deep_interview_text, deep_interview_text
+        assert "Option Set Protocol" in deep_interview_text, deep_interview_text
+        assert "Options:" in deep_interview_text, deep_interview_text
+        assert "(Recommended)" in deep_interview_text, deep_interview_text
+        assert "Other / refine" in deep_interview_text, deep_interview_text
+        assert "native question UI" in deep_interview_text, deep_interview_text
         assert "Ambiguity is bidirectional" in deep_interview_text, deep_interview_text
         assert "Decision Matrix Handoff" in deep_interview_text, deep_interview_text
         assert "oag_lock_readiness_check.py" in deep_interview_text, deep_interview_text
@@ -3306,9 +3333,129 @@ def main() -> int:
         assert "one-sentence scope restatement" in deep_interview_text, deep_interview_text
         deep_interview_openai = (OAG_DEEP_INTERVIEW_SKILL.parent / "agents" / "openai.yaml").read_text(encoding="utf-8")
         assert "$oag-deep-interview" in deep_interview_openai, deep_interview_openai
+        assert "one-question rounds" in deep_interview_openai, deep_interview_openai
         deep_interview_ref = (OAG_DEEP_INTERVIEW_SKILL.parent / "references" / "scoring-and-output.md").read_text(encoding="utf-8")
         assert "ambiguity = 1 -" in deep_interview_ref, deep_interview_ref
+        assert "Round Option Set Shape" in deep_interview_ref, deep_interview_ref
+        assert "Recommendation policy" in deep_interview_ref, deep_interview_ref
+        assert "Question selection policy" in deep_interview_ref, deep_interview_ref
+        assert "Importance Ranking" in deep_interview_ref, deep_interview_ref
+        assert "researchable_fact" in deep_interview_ref, deep_interview_ref
+        assert "Option History" in deep_interview_ref, deep_interview_ref
         assert "Final Draft Scope Template" in deep_interview_ref, deep_interview_ref
+        round_template = subprocess.run(
+            [
+                sys.executable,
+                str(DEEP_INTERVIEW_ROUND),
+                "template",
+                "--round",
+                "2",
+                "--component",
+                "packet-filter",
+                "--dimension",
+                "constraints",
+                "--ambiguity",
+                "0.42",
+                "--why-now",
+                "The boundary is the weakest lock-blocking dimension.",
+                "--question",
+                "Which filtering boundary should v0 lock?",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert round_template.returncode == 0, round_template.stderr or round_template.stdout
+        round_doc = json.loads(round_template.stdout)
+        assert round_doc["schema_version"] == "oag_deep_interview_round.v1", round_doc
+        assert len(round_doc["options"]) == 4, round_doc
+        assert sum(1 for option in round_doc["options"] if option.get("recommended")) == 1, round_doc
+        round_validate = subprocess.run(
+            [sys.executable, str(DEEP_INTERVIEW_ROUND), "validate", "--json-file", "-"],
+            input=json.dumps(round_doc),
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert round_validate.returncode == 0, round_validate.stderr or round_validate.stdout
+        assert json.loads(round_validate.stdout)["status"] == "pass", round_validate.stdout
+        round_render = subprocess.run(
+            [sys.executable, str(DEEP_INTERVIEW_ROUND), "render", "--json-file", "-"],
+            input=json.dumps(round_doc),
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert round_render.returncode == 0, round_render.stderr or round_render.stdout
+        assert "Question: Which filtering boundary should v0 lock?" in round_render.stdout, round_render.stdout
+        assert "A. Recommended boundary (Recommended)" in round_render.stdout, round_render.stdout
+        bad_round = {**round_doc, "options": round_doc["options"][:2]}
+        round_bad_validate = subprocess.run(
+            [sys.executable, str(DEEP_INTERVIEW_ROUND), "validate", "--json-file", "-"],
+            input=json.dumps(bad_round),
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert round_bad_validate.returncode != 0, round_bad_validate.stdout
+        assert json.loads(round_bad_validate.stdout)["status"] == "fail", round_bad_validate.stdout
+        rank_payload = {
+            "schema_version": "oag_deep_interview_candidates.v1",
+            "candidates": [
+                {
+                    "id": "C_PERF_BOUNDARY",
+                    "component": "performance-contract",
+                    "dimension": "constraints",
+                    "question": "Should latency be hard, target-only, or out of v0 closure?",
+                    "clarity": 0.2,
+                    "lock_blocker": 3,
+                    "ssot_required_gap": 3,
+                    "downstream_fanout": 3,
+                    "irreversibility": 2,
+                    "proof_gap": 3,
+                    "contradiction_risk": 1,
+                    "user_value": 3,
+                    "brownfield_risk": 1,
+                    "upstream_dependency": 2,
+                    "researchable_fact": 0,
+                },
+                {
+                    "id": "C_STATUS_DETAIL",
+                    "component": "status-reporting",
+                    "dimension": "context",
+                    "question": "Which existing status signal should carry this observation?",
+                    "clarity": 0.45,
+                    "lock_blocker": 1,
+                    "ssot_required_gap": 1,
+                    "downstream_fanout": 1,
+                    "irreversibility": 1,
+                    "proof_gap": 1,
+                    "contradiction_risk": 0,
+                    "user_value": 1,
+                    "brownfield_risk": 1,
+                    "upstream_dependency": 1,
+                    "researchable_fact": 2,
+                },
+            ],
+        }
+        rank_proc = subprocess.run(
+            [sys.executable, str(DEEP_INTERVIEW_ROUND), "rank", "--json-file", "-"],
+            input=json.dumps(rank_payload),
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert rank_proc.returncode == 0, rank_proc.stderr or rank_proc.stdout
+        rank_doc = json.loads(rank_proc.stdout)
+        assert rank_doc["schema_version"] == "oag_deep_interview_rank.v1", rank_doc
+        assert rank_doc["selected_id"] == "C_PERF_BOUNDARY", rank_doc
+        assert "ambiguity_gap" in rank_doc["selected"]["score_breakdown"], rank_doc
+        assert "researchable_fact" in rank_doc["selected"]["score_breakdown"], rank_doc
         intake_skill_text = OAG_DEEP_SEMANTIC_SKILL.read_text(encoding="utf-8")
         assert "Deep Interview Discipline" in intake_skill_text, intake_skill_text
         assert "Round 0 topology check" in intake_skill_text, intake_skill_text
@@ -3529,6 +3676,19 @@ def main() -> int:
         assert "oag.lock_status" in trigger_context, trigger_on.stdout
         assert "No lock, no RTL" in trigger_context, trigger_on.stdout
         assert "record_decision=true" in trigger_context, trigger_on.stdout
+
+        deep_guard_silent = deep_interview_prompt_guard({"prompt": "please run a normal lint check"})
+        assert deep_guard_silent.returncode == 0, deep_guard_silent.stderr or deep_guard_silent.stdout
+        assert deep_guard_silent.stdout == "", deep_guard_silent.stdout
+        deep_guard_on = deep_interview_prompt_guard({"prompt": "Use oag-deep-interview for this ambiguous IP requirement"})
+        assert deep_guard_on.returncode == 0, deep_guard_on.stderr or deep_guard_on.stdout
+        deep_guard_context = hook_context(deep_guard_on)
+        assert "OAG DEEP INTERVIEW PROMPT GUARD" in deep_guard_context, deep_guard_on.stdout
+        assert "Ask exactly one user-facing question" in deep_guard_context, deep_guard_on.stdout
+        assert "Rank candidates by lock blocker" in deep_guard_context, deep_guard_on.stdout
+        assert "four concise candidate answers" in deep_guard_context, deep_guard_on.stdout
+        assert "Other / refine" in deep_guard_context, deep_guard_on.stdout
+        assert "decision matrix" in deep_guard_context, deep_guard_on.stdout
 
         hook_cwd = Path(tmp) / "subagent_hook_project"
         hook_cwd.mkdir(parents=True, exist_ok=True)

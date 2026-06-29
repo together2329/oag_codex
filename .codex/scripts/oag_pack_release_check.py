@@ -131,12 +131,14 @@ REQUIRED_FILES = (
     SCRIPTS_DIR / "oag_trace_graph_check.py",
     SCRIPTS_DIR / "oag_wavefront.py",
     SCRIPTS_DIR / "oag_deep_semantic_intake.py",
+    SCRIPTS_DIR / "oag_deep_interview_round.py",
     SCRIPTS_DIR / "oag_decision_matrix_generate.py",
     SCRIPTS_DIR / "oag_verification_plan_check.py",
     SCRIPTS_DIR / "oag_validate_json.py",
     SCRIPTS_DIR / "oag_workflow_whole_db.py",
     SCRIPTS_DIR / "smoke_test.py",
     HOOKS_DIR / "codex_context_inject.py",
+    HOOKS_DIR / "codex_deep_interview_prompt_guard.py",
     HOOKS_DIR / "codex_draft_pressure.py",
     HOOKS_DIR / "codex_native_subagent_guard.py",
     HOOKS_DIR / "codex_oag_mode_trigger.py",
@@ -260,6 +262,7 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_stale_check.py",
         "oag_trace_graph_check.py",
         "oag_deep_semantic_intake.py",
+        "oag_deep_interview_round.py",
         "oag_decision_matrix_generate.py",
         "oag-deep-semantic-intake",
         "oag-decision-matrix",
@@ -289,6 +292,7 @@ REQUIRED_DOC_SNIPPETS = {
         "After user lock, main agent orchestrates",
         "SubagentStart",
         "SubagentStop",
+        "codex_deep_interview_prompt_guard.py",
         "schema",
     ),
     CODEX_ROOT / "oag" / "oag-mode-directive.md": (
@@ -321,6 +325,7 @@ REQUIRED_DOC_SNIPPETS = {
         "oag_wavefront.py",
         "oag_ip_version_check.py",
         "oag_deep_semantic_intake.py",
+        "oag_deep_interview_round.py",
         "oag_decision_matrix_generate.py",
         "oag-deep-semantic-intake",
         "oag-decision-matrix",
@@ -344,6 +349,7 @@ REQUIRED_DOC_SNIPPETS = {
         "checked_artifact_hashes",
         "generated tool output",
         "STATIC_HANDOFF_PASS",
+        "codex_deep_interview_prompt_guard.py",
         "oag.lock_status",
         "No lock, no RTL",
         "After user lock, main agent orchestrates",
@@ -538,6 +544,8 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     user_prompt_commands = [str(item.get("command") or "") for item in user_prompt_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_commands:
         issues.append(issue("NATIVE_SUBAGENT_GUARD_MISSING", "UserPromptSubmit must enforce native-only subagent requests.", CODEX_ROOT / "hooks.json"))
+    if "python3 .codex/hooks/codex_deep_interview_prompt_guard.py" not in user_prompt_commands:
+        issues.append(issue("DEEP_INTERVIEW_PROMPT_GUARD_MISSING", "UserPromptSubmit must keep OAG deep interviews to one question with recommended options.", CODEX_ROOT / "hooks.json"))
     subagent_start = (((hooks.get("hooks") or {}).get("SubagentStart") or [{}])[0])
     start_matcher = str(subagent_start.get("matcher") or "")
     start_hooks = subagent_start.get("hooks") if isinstance(subagent_start, dict) else []

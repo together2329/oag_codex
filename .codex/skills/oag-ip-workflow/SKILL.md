@@ -85,8 +85,11 @@ Allowed first actions for a short IP request:
   `oag_decision_matrix_generate.py` for profile-seeded decision rows when a
   protocol profile such as `protocol-packet-ip` applies.
 - for deep requirement interviews, use `oag-deep-interview`; it owns Round 0 topology,
-  clarity scoring, weakest-dimension targeting, decision-matrix
-  handoff, evidence-cited brownfield questions, closure audit, and one-sentence scope restatement.
+  one-question option-backed rounds, clarity scoring, weakest-dimension
+  targeting, decision-matrix handoff, evidence-cited brownfield questions,
+  closure audit, and one-sentence scope restatement. For lock-critical rounds,
+  use `oag_deep_interview_round.py` to rank candidate questions and validate
+  the option set.
 
 Forbidden until the user confirms scope or supplies a concrete spec:
 
@@ -280,7 +283,9 @@ inspection is read-only: do not create scaffold directories unless the user is
 creating a new IP or explicitly asks for an OAG overlay. Use `oag.compile` after
 ontology edits. Use `oag.context` for prompt-ready ontology records. When Codex
 hooks are enabled, `codex_context_inject.py` can inject this context
-automatically on relevant UserPromptSubmit events.
+automatically on relevant UserPromptSubmit events. `codex_deep_interview_prompt_guard.py`
+stays silent for normal work and injects a compact one-question/four-option
+reminder only when OAG deep interview wording is present or recently active.
 
 For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:

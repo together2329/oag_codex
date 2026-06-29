@@ -74,6 +74,7 @@ Primary assets:
 - `hooks/oag_stop_check.py`
 - `hooks/oag_hook_utils.py`
 - `hooks/codex_context_inject.py`
+- `hooks/codex_deep_interview_prompt_guard.py`
 - `hooks/codex_draft_pressure.py`
 - `hooks/codex_native_subagent_guard.py`
 - `hooks/codex_stop_gate.py`
@@ -84,6 +85,7 @@ Primary assets:
 - `scripts/oag_loop_core.py`
 - `scripts/oag_loop_hook.py`
 - `scripts/oag_loop_runner.py`
+- `scripts/oag_deep_interview_round.py`
 - `scripts/oag_scaffold_ip.py`
 - `scripts/oag_graph.py`
 - `scripts/oag_portable_db.py`
@@ -425,6 +427,18 @@ The Codex context hook in `hooks/codex_context_inject.py` adapts
 hash under `.codex/.cache/`. The PostCompact hook stays silent for Codex's
 stateless output contract and records a recovery marker that the next
 UserPromptSubmit consumes to force one context re-injection.
+The Codex deep-interview prompt guard in
+`hooks/codex_deep_interview_prompt_guard.py` also runs from
+`UserPromptSubmit`, but stays silent unless an OAG deep interview is active or
+explicitly requested. It injects only a compact reminder: ask the single
+highest-impact ambiguity, present four candidate answers with one
+`(Recommended)` option, include `Other / refine`, and route implementation
+choices through the decision matrix. Use
+`scripts/oag_deep_interview_round.py` when a lock-critical round needs a
+deterministic template, validation, ranking, or chat rendering. The ranker
+prioritizes lock blockers, SSOT-required gaps, downstream fanout, ambiguity,
+proof gaps, and user value while down-ranking repo/spec facts Codex should
+research itself.
 Run `python3 .codex/scripts/oag_eval.py` for scenario-level evaluation of the
 run-loop, context injection dedup/recovery, draft pressure, reviewer
 independence, fault-model coverage, verification role decomposition, and hook

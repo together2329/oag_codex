@@ -40,6 +40,153 @@ ambiguity = 1 - (goal*0.30 + constraints*0.20 + criteria*0.25 + context*0.25)
 
 Recommended threshold is `0.10`; use `0.05` when lock risk is high.
 
+## Round Option Set Shape
+
+Each round should carry a compact option set so the user can answer without
+inventing phrasing from scratch. A round has exactly one primary question: the
+highest-impact ambiguity for the current component/dimension. The options are
+candidate answers to that question, not a menu of different questions.
+
+```json
+{
+  "round": 3,
+  "component_id": "packet-filter",
+  "target_dimension": "constraints",
+  "recommendation": {
+    "option_id": "A",
+    "rationale": "It keeps v0 small while preserving a visible future path."
+  },
+  "options": [
+    {
+      "id": "A",
+      "label": "Accept exact-match filtering",
+      "recommended": true,
+      "tradeoff": "Smallest RTL/TB scope; wildcard behavior remains out of scope.",
+      "decision_effect": "proposed"
+    },
+    {
+      "id": "B",
+      "label": "Support exact-match plus wildcard",
+      "recommended": false,
+      "tradeoff": "More flexible but increases parser, storage, and coverage scope.",
+      "decision_effect": "unresolved"
+    },
+    {
+      "id": "C",
+      "label": "Defer filtering",
+      "recommended": false,
+      "tradeoff": "Simplifies v0 but records integration risk.",
+      "decision_effect": "waiver_or_deferral"
+    },
+    {
+      "id": "D",
+      "label": "Other / refine",
+      "recommended": false,
+      "tradeoff": "User supplies exact behavior.",
+      "decision_effect": "free_text"
+    }
+  ]
+}
+```
+
+Recommendation policy:
+
+- exactly one option should be marked recommended unless the facts are
+  genuinely insufficient;
+- the recommended option is a proposed answer, never locked truth;
+- `Other / refine` or equivalent free-text escape must always be present;
+- each option must answer the same primary question; do not mix protocol,
+  firmware, verification, and integration prompts in one option set;
+- if a Codex surface lacks popup question UI, render the same option set as a
+  chat block and wait for one selection or free-text refinement;
+- if an option changes implementation, verification, firmware, or integration
+  semantics, map it to an ambiguity row or decision-matrix row;
+- do not improve clarity scores from an option until the user selects it or a
+  concrete source/spec confirms it.
+
+Question selection policy:
+
+- pick the weakest clarity dimension for the active topology component;
+- when dimensions tie, ask the question that blocks lock readiness or later
+  implementation dispatch most directly;
+- cite the brownfield path/source that makes the question necessary when
+  available;
+- defer lower-impact follow-ups to later rounds rather than bundling them.
+
+## Importance Ranking
+
+The weakest dimension is the starting point, not the whole decision. Rank
+candidate next questions with a transparent lock-impact score before asking.
+This imports the Gajae-style discipline into OAG: ask the question that removes
+the current bottleneck, explain why it is the bottleneck, and do not ask the
+user for facts the repo or spec can answer.
+
+Recommended candidate shape:
+
+```json
+{
+  "schema_version": "oag_deep_interview_candidates.v1",
+  "candidates": [
+    {
+      "id": "C_PERF_BOUNDARY",
+      "component": "performance-contract",
+      "dimension": "constraints",
+      "question": "Should latency be a hard requirement, a target, or explicitly out of v0 closure?",
+      "clarity": 0.25,
+      "lock_blocker": 3,
+      "ssot_required_gap": 3,
+      "downstream_fanout": 3,
+      "irreversibility": 2,
+      "proof_gap": 3,
+      "contradiction_risk": 1,
+      "user_value": 2,
+      "brownfield_risk": 1,
+      "upstream_dependency": 2,
+      "researchable_fact": 0,
+      "why": "Hard-vs-target latency changes buffering, acceptance criteria, and closure evidence."
+    }
+  ]
+}
+```
+
+Run the deterministic ranker for complex or lock-blocking interviews:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py rank --json-file <candidates.json>
+```
+
+Scoring factors use a 0-3 scale:
+
+| Factor | Meaning |
+| --- | --- |
+| `lock_blocker` | The answer is required before lock or implementation dispatch. |
+| `ssot_required_gap` | A mandatory source-of-truth section is missing: function, performance, interface, register/CSR, error/IRQ, lifecycle, or proof. |
+| `downstream_fanout` | Number and importance of artifacts that would change. |
+| `irreversibility` | Cost of changing later after RTL/TB/evidence exists. |
+| `ambiguity_gap` or `clarity` | Current clarity weakness. If `clarity` is present, the ranker derives `ambiguity_gap = 3 * (1 - clarity)`. |
+| `proof_gap` | Missing or weak closure method. |
+| `contradiction_risk` | Risk that current draft facts conflict. |
+| `user_value` | Product-visible value impact. |
+| `brownfield_risk` | Risk of violating existing files, interfaces, states, or assumptions. |
+| `upstream_dependency` | Whether later questions depend on this answer. |
+| `researchable_fact` | Subtracted from the score; high values mean read repo/spec before asking. |
+
+Tie-breakers are: highest lock blocker, highest SSOT required gap, highest
+downstream fanout, highest upstream dependency, lowest researchable fact, then
+input order. The selected candidate becomes the next one-question round; the
+other candidates remain in the ambiguity register or option history.
+
+For complex or lock-blocking rounds, validate the round JSON before asking:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py validate --json-file <round.json>
+```
+
+The validator enforces the Gajae-style core shape inside OAG: one primary
+question, roughly four candidate answers, exactly one recommendation, a
+free-text escape, and warnings when implementation-affecting options are not
+linked to the decision matrix.
+
 ## Ambiguity-Raising Triggers
 
 Treat these as score-lowering triggers, not as separate penalty terms:
@@ -73,6 +220,16 @@ Record trigger metadata in the draft:
 | Context | "I found `<path/symbol>`. Should the new behavior extend it or create a new boundary?" |
 | Ontology stress | "What is the core entity here, and which named objects are supporting views?" |
 
+## Option Patterns By Dimension
+
+| Dimension | Option A | Option B | Option C | Option D |
+| --- | --- | --- | --- | --- |
+| Topology | Looks right (Recommended when complete) | Add/remove/merge | Defer component | Other / explain |
+| Goal | Minimal required behavior | Broader behavior | Explicitly unsupported | Other / refine |
+| Constraints | Narrow v0 boundary | Broader boundary | Waive/defer boundary | Other / refine |
+| Success criteria | Scoreboard-first proof | Assertion/coverage proof | Review-only with risk | Other proof |
+| Context | Extend existing path | Create new boundary | Defer until source review | Other mapping |
+
 ## Final Draft Scope Template
 
 ```markdown
@@ -97,6 +254,10 @@ Record trigger metadata in the draft:
 ## Decisions
 | Decision | Status | Rationale | Blocks lock |
 | --- | --- | --- | --- |
+
+## Option History
+| Round | Target | Recommended | Selected | Effect |
+| --- | --- | --- | --- | --- |
 
 ## Ambiguities
 | Ambiguity | Component | Dimension | Required owner/action |

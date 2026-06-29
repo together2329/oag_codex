@@ -1,6 +1,6 @@
 ---
 name: oag-deep-interview
-description: Use when a hardware IP request or change request is ambiguous enough that requirements must be interviewed before lock or implementation. Runs a Socratic OAG requirement interview with topology confirmation, one-question-per-round discipline, ambiguity scoring, weakest-dimension targeting, brownfield evidence citations, closure audit, and draft persistence through OAG artifacts before any RTL, TB, validation, or gate work.
+description: Use when a hardware IP request or change request is ambiguous enough that requirements must be interviewed before lock or implementation. Runs a Socratic OAG requirement interview with topology confirmation, one-question-per-round discipline, recommendation-backed option sets, ambiguity scoring, weakest-dimension targeting, brownfield evidence citations, closure audit, and draft persistence through OAG artifacts before any RTL, TB, validation, or gate work.
 ---
 
 # OAG Deep Interview
@@ -11,8 +11,16 @@ workflow.
 
 ## Operating Rules
 
-- Ask one question per round. Do not batch unrelated protocol, storage, IRQ,
+- Ask one question per round: choose the highest-impact ambiguity at that
+  moment and ask only that. Do not batch unrelated protocol, storage, IRQ,
   firmware, and verification decisions.
+- Present roughly four options with every user-facing round. Put the
+  recommended option first, mark it `(Recommended)`, explain its tradeoff, and
+  always allow free-text correction. The options answer the one question; they
+  must not smuggle in extra questions.
+- Prefer a native question UI when the Codex surface provides one. If no popup
+  or `ask`-style control is available, render the same single-question option
+  block as normal chat and wait for one selection or free-text refinement.
 - Preserve user language for user-facing questions and summaries.
 - Do focused repo/spec reading before asking about factual brownfield details.
   Cite the file, symbol, source claim, or pattern that triggered the question.
@@ -41,6 +49,31 @@ python3 .codex/scripts/oag_deep_semantic_intake.py --ip-dir <ip> --topic "<topic
 
 4. Set the interview threshold. Default to `0.10` ambiguity. Use `0.05` for
    lock-critical or safety-critical scope, or a user-specified stricter value.
+5. For lock-critical interviews, use the deterministic round helper to build or
+   validate the next option set before asking:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py template \
+  --round <n> \
+  --component "<component>" \
+  --dimension <topology|goal|constraints|criteria|context|closure> \
+  --ambiguity <score> \
+  --why-now "<why this is the weakest target>" \
+  --question "<one targeted question>"
+```
+
+Validate or render an edited round payload:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py validate --json-file <round.json>
+python3 .codex/scripts/oag_deep_interview_round.py render --json-file <round.json>
+```
+
+Rank candidate next questions when several gaps look important:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py rank --json-file <candidates.json>
+```
 
 ## Phase 1: Round 0 Topology
 
@@ -54,7 +87,8 @@ that can succeed or fail independently:
 - interrupt/status/error/drop-policy surfaces;
 - verification proof surfaces.
 
-Ask one topology question:
+Ask one topology question. The options are answers to that one topology
+confirmation question, not follow-up questions:
 
 ```text
 Round 0 | Topology confirmation | Ambiguity: not scored
@@ -64,6 +98,12 @@ I read this as these top-level IP components:
 2. ...
 
 Should any component be added, removed, merged, split, or explicitly deferred?
+
+Options:
+1. Looks right (Recommended) - Use the listed components as draft topology.
+2. Add/remove/merge components - Revise topology before scoring starts.
+3. Defer one or more components - Keep deferrals visible with reasons.
+4. Not sure / explain tradeoff - Ask for a short clarification before deciding.
 ```
 
 Store confirmed topology and deferrals in draft notes. Deferred components stay
@@ -88,7 +128,36 @@ Use weighted ambiguity:
 
 Target the active component and dimension with the weakest score next. When
 multiple components tie, rotate across components so a detailed component does
-not hide ambiguous siblings.
+not hide ambiguous siblings. The next round should always ask the single
+question that most reduces lock-blocking uncertainty right now.
+
+### Importance Ranking Protocol
+
+Use Gajae-style weakest-dimension targeting, then rank the candidate questions
+by lock impact. The highest-impact question is the one that best reduces a
+blocking uncertainty across these factors:
+
+- lock blocker: whether the answer is required before scope lock or
+  implementation dispatch;
+- SSOT required gap: whether a mandatory source-of-truth field, IP-XACT-like
+  section, interface contract, requirement atom, proof row, or lifecycle field
+  is missing;
+- downstream fanout: how many RTL, TB, firmware, integration, or evidence
+  artifacts would change;
+- irreversibility: how costly it is to change later;
+- ambiguity gap: how weak the current clarity score is;
+- proof gap: whether the closure method is unknown or weak;
+- contradiction risk: whether current facts may conflict;
+- user value: whether the answer changes the product-visible value;
+- brownfield risk: whether existing code/spec assumptions could be violated;
+- upstream dependency: whether later questions depend on this answer;
+- researchable fact: subtract this. If repo/spec reading can answer it, read
+  first instead of asking the user.
+
+Tie-break in this order: lock blocker, SSOT required gap, downstream fanout,
+upstream dependency, lower researchable-fact score, then input order. For
+complex interviews, express candidate questions as JSON and run
+`oag_deep_interview_round.py rank`; ask only the selected top candidate.
 
 Ambiguity is bidirectional. Increase ambiguity when an answer:
 
@@ -106,6 +175,53 @@ Weakest target: <component> / <dimension>.
 Remaining gap: <one sentence>.
 ```
 
+### Option Set Protocol
+
+Every user-facing round must include an option set, not just a prose question.
+Keep the round to one question, but make answering easy. The four choices are
+candidate answers to that one question:
+
+```text
+Round N | Component: <component> | Targeting: <dimension> | Ambiguity: <score>
+Why now: <one sentence>
+Recommendation: <Option A> because <short rationale>.
+
+Question: <single targeted question>
+
+Options:
+A. <label> (Recommended) - <effect/tradeoff if selected>
+B. <conservative or narrower answer> - <effect/tradeoff>
+C. <explicit defer/waive/out-of-scope answer> - <effect/tradeoff>
+D. Other / refine - User supplies the exact answer or correction.
+```
+
+Option labels should be concrete enough to select without reinterpreting the
+question. Recommendations are draft guidance only; they become decisions only
+after explicit user/spec confirmation. If an option affects RTL, TB,
+firmware-visible behavior, integration assumptions, or proof obligations, link
+it to `ontology/decision_matrix.yaml`.
+
+Do not list multiple prompts such as "A. answer protocol, B. answer IRQ, C.
+answer storage". That violates the interview rhythm. Instead, pick the weakest
+dimension, ask the one most important question, and make A/B/C/D the plausible
+answers to that question.
+
+When the next round is complex or lock-blocking, draft the round as JSON and run
+`oag_deep_interview_round.py validate` before showing it. If validation fails,
+fix the option set instead of asking the user a bundled question.
+
+Use these option families by default:
+
+- topology: looks right, edit topology, defer scope, ask for clarification;
+- goal: recommended behavior, narrower behavior, explicitly unsupported,
+  refine in user's words;
+- constraints: recommended boundary, stricter boundary, defer/waive boundary,
+  supply another boundary;
+- success criteria: scoreboard-first proof, assertion/coverage proof,
+  review-only/waived proof with risk, supply another proof;
+- brownfield context: extend existing path, create new boundary, defer until
+  source/spec review, supply another mapping.
+
 For detailed scoring and output templates, read
 `references/scoring-and-output.md` when conducting a real interview.
 
@@ -121,6 +237,18 @@ For long free-text answers, refine before scoring:
 
 Ask the user to confirm the refined interpretation if it changes meaning or
 contains multiple decisions. Then persist with `oag.draft`.
+
+Use a refinement option set when free text contains multiple decisions:
+
+```text
+Recommendation: Send structured interpretation as-is.
+
+Options:
+A. Send as-is (Recommended) - Use the structured interpretation for scoring.
+B. Add a constraint - User supplies the missing boundary.
+C. Mark something out of scope - User supplies the excluded behavior.
+D. Rewrite / other - User replaces the interpretation.
+```
 
 For brownfield facts, prefer evidence-backed confirmation:
 
@@ -211,6 +339,18 @@ closure audit first:
 Then restate the intended scope in one sentence and ask the user to approve or
 correct it. Only after explicit approval should normal OAG lock flow begin.
 
+Use this final restatement option set:
+
+```text
+Recommendation: Approve for lock-readiness review if the sentence is complete.
+
+Options:
+A. Approve for lock-readiness review (Recommended) - Run readiness gates next.
+B. Adjust wording - User supplies exact wording correction.
+C. Missing scope - Return to the weakest affected topology item.
+D. Continue interview - Ask another targeted round before lock discussion.
+```
+
 ## Output
 
 End the interview with a draft scope package:
@@ -219,6 +359,8 @@ End the interview with a draft scope package:
 - established facts and source claims;
 - open ambiguity rows;
 - lock-blocking decision matrix status;
+- option history with selected choices, recommendations, and free-text
+  refinements;
 - acceptance criteria and proof-shape notes;
 - one-sentence scope restatement;
 - recommendation: continue interview, ready for lock-readiness review, or

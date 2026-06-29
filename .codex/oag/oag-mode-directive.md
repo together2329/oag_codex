@@ -35,6 +35,13 @@ When the task enters a narrow lane, apply the matching skill:
 
 - `oag-deep-semantic-intake` for compressed source intent, source claims,
   hidden implications, ambiguity, and first decision candidates.
+- `oag-deep-interview` for ambiguous requirement interviews; keep each round
+  to the highest-impact single question with four candidate answers, one
+  `(Recommended)` option, and `Other / refine`. Use
+  `oag_deep_interview_round.py` for lock-critical round templates, validation,
+  or candidate ranking. When hooks are enabled,
+  `codex_deep_interview_prompt_guard.py` injects the same compact discipline
+  on relevant `UserPromptSubmit` events.
 - `oag-decision-matrix` for lock-blocking product/design decisions and
   profile-seeded unresolved/proposed rows.
 - `oag-contract-projection` for requirement atoms, obligations, and
