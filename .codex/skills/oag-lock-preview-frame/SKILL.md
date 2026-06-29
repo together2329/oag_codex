@@ -37,6 +37,18 @@ Use draft mode only when intentionally showing an early preview:
 python3 .codex/scripts/oag_lock_preview_frame.py --ip-dir <ip> --readiness-mode draft --json
 ```
 
+The same rendering engine can be used after lock for formal review surfaces:
+
+```bash
+python3 .codex/scripts/oag_review_frame.py --ip-dir <ip> --mode pre-dispatch --json
+python3 .codex/scripts/oag_review_frame.py --ip-dir <ip> --mode post-evidence --json
+python3 .codex/scripts/oag_review_frame.py --ip-dir <ip> --mode gate --json
+```
+
+These modes do not create truth. They preserve the same raw source panels and
+hashes while changing the review instructions for dispatch, evidence, or gate
+approval.
+
 ## What The Frame Must Contain
 
 The frame must show:

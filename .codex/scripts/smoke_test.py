@@ -56,6 +56,11 @@ BASELINE_CUT = ROOT / "scripts" / "oag_baseline_cut.py"
 BASELINE_VERIFY = ROOT / "scripts" / "oag_baseline_verify.py"
 IP_VERSION_CHECK = ROOT / "scripts" / "oag_ip_version_check.py"
 IP_GIT = ROOT / "scripts" / "oag_ip_git.py"
+RUN_FRAME = ROOT / "scripts" / "oag_run_frame.py"
+ORCHESTRATION_GUARD = ROOT / "scripts" / "oag_orchestration_guard.py"
+REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
+GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
+SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
@@ -1260,6 +1265,68 @@ def run_ip_git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProce
     )
 
 
+def run_oag_run_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(RUN_FRAME), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_review_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(REVIEW_FRAME), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_gate_frame(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(GATE_FRAME), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_ssot_section_check(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(SSOT_SECTION_CHECK), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_orchestration_guard(*args: str, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if project_root:
+        env["OAG_PROJECT_ROOT"] = str(project_root)
+    return subprocess.run(
+        [sys.executable, str(ORCHESTRATION_GUARD), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
 def run_main_write_gate(ip: Path, *, project_root: Path | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     if project_root:
@@ -1785,6 +1852,270 @@ def test_lock_preview_frame_preserves_verbatim_source(tmp_root: Path) -> None:
     source_rows = {item["name"]: item for item in sidecar["sources"]}
     assert source_rows["source_claims"]["sha256"] == sha256(source_claims), source_rows["source_claims"]
     assert "raw_text" not in source_rows["source_claims"], source_rows["source_claims"]
+
+
+def test_oag_run_control_layer(tmp_root: Path) -> None:
+    project = tmp_root / "run_control_project"
+    ip = make_ip(project)
+
+    run_frame = run_oag_run_frame(ip, "--json")
+    assert run_frame.returncode == 0, run_frame.stderr or run_frame.stdout
+    run_payload = json.loads(run_frame.stdout)
+    assert run_payload["schema_version"] == "oag_run_frame_result.v1", run_payload
+    assert run_payload["status"] == "pass", run_payload
+    assert Path(run_payload["html"]).is_file(), run_payload
+    assert Path(run_payload["json"]).is_file(), run_payload
+    run_sidecar = json.loads(Path(run_payload["json"]).read_text(encoding="utf-8"))
+    assert run_sidecar["schema_version"] == "oag_run_frame.v1", run_sidecar
+    assert len(run_sidecar["next_actions"]) == 4, run_sidecar
+    assert sum(1 for action in run_sidecar["next_actions"] if action.get("recommended")) == 1, run_sidecar
+    assert run_payload["recommended_action"]["id"] in {action["id"] for action in run_sidecar["next_actions"]}, run_payload
+
+    review_frame = run_oag_review_frame(ip, "--mode", "pre-dispatch", "--readiness-mode", "draft", "--json")
+    assert review_frame.returncode == 0, review_frame.stderr or review_frame.stdout
+    review_payload = json.loads(review_frame.stdout)
+    assert review_payload["schema_version"] == "oag_review_frame_result.v1", review_payload
+    assert review_payload["frame_mode"] == "pre-dispatch", review_payload
+    review_html = Path(review_payload["html"]).read_text(encoding="utf-8")
+    assert "OAG Pre-Dispatch Review Frame" in review_html, review_html
+    assert "verbatim" in review_html.lower(), review_html
+
+    planning_ssot = run_oag_ssot_section_check(ip, "--stage", "planning", "--json")
+    assert planning_ssot.returncode == 0, planning_ssot.stderr or planning_ssot.stdout
+    planning_payload = json.loads(planning_ssot.stdout)
+    assert planning_payload["status"] == "pass", planning_payload
+    closure_ssot = run_oag_ssot_section_check(ip, "--stage", "closure", "--json")
+    assert closure_ssot.returncode != 0, closure_ssot.stdout
+    closure_payload = json.loads(closure_ssot.stdout)
+    assert closure_payload["status"] == "fail", closure_payload
+    assert any(item["code"] == "SSOT_GATE_DECISION_MISSING" for item in closure_payload["issues"]), closure_payload
+
+    gate_create = run_oag_gate_frame(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--stage",
+        "deep-interview",
+        "--kind",
+        "question",
+        "--prompt",
+        "Which implementation boundary should the smoke IP use?",
+        "--option",
+        "recommended|Recommended boundary|Use the smallest concrete RTL-ready scope.",
+        "--option",
+        "narrow|Narrow boundary|Reduce scope until all implementation-facing details are explicit.",
+        "--option",
+        "defer|Defer boundary|Keep the decision visible and block dispatch.",
+        "--option",
+        "custom|Other / custom|User supplies the exact correction.",
+        "--json",
+    )
+    assert gate_create.returncode == 0, gate_create.stderr or gate_create.stdout
+    gate_payload = json.loads(gate_create.stdout)
+    assert gate_payload["status"] == "pass", gate_payload
+    gate_id = gate_payload["gate_id"]
+    assert Path(gate_payload["gate_path"]).is_file(), gate_payload
+    assert Path(gate_payload["markdown"]).is_file(), gate_payload
+
+    gate_list = run_oag_gate_frame("list", "--ip-dir", str(ip), "--json")
+    assert gate_list.returncode == 0, gate_list.stderr or gate_list.stdout
+    gate_list_payload = json.loads(gate_list.stdout)
+    assert gate_list_payload["pending_gate_count"] == 1, gate_list_payload
+    gated_frame = run_oag_run_frame(ip, "--json")
+    assert gated_frame.returncode == 0, gated_frame.stderr or gated_frame.stdout
+    gated_payload = json.loads(gated_frame.stdout)
+    assert gated_payload["run_status"] == "blocked", gated_payload
+    assert gated_payload["recommended_action"]["id"] == "answer-pending-gate", gated_payload
+
+    gate_render = run_oag_gate_frame("render", "--ip-dir", str(ip), "--gate-id", gate_id, "--json")
+    assert gate_render.returncode == 0, gate_render.stderr or gate_render.stdout
+    assert "A. Recommended boundary (Recommended)" in json.loads(gate_render.stdout)["markdown"], gate_render.stdout
+    gate_answer = run_oag_gate_frame("answer", "--ip-dir", str(ip), "--gate-id", gate_id, "--answer", "recommended", "--json")
+    assert gate_answer.returncode == 0, gate_answer.stderr or gate_answer.stdout
+    gate_answer_payload = json.loads(gate_answer.stdout)
+    assert gate_answer_payload["status"] == "pass", gate_answer_payload
+    resolved_list = run_oag_gate_frame("list", "--ip-dir", str(ip), "--json")
+    assert resolved_list.returncode == 0, resolved_list.stderr or resolved_list.stdout
+    resolved_payload = json.loads(resolved_list.stdout)
+    assert resolved_payload["pending_gate_count"] == 0 and len(resolved_payload["resolved_gates"]) == 1, resolved_payload
+
+    guard_clean = run_oag_orchestration_guard("audit", "--ip-dir", str(ip), "--json", project_root=project)
+    assert guard_clean.returncode == 0, guard_clean.stderr or guard_clean.stdout
+    assert json.loads(guard_clean.stdout)["status"] == "pass", guard_clean.stdout
+
+    guard_template = project / "run_control_guard_template.json"
+    guard_template.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_wavefront_template.v1",
+                "tasks": [
+                    {
+                        "task_id": "WRITE_GUARD_SMOKE",
+                        "kind": "write",
+                        "phase": "tb",
+                        "depends_on": [],
+                        "allowed_write_paths": ["tb/run_control_guard_smoke.sv"],
+                        "ownership_mode": "exclusive_file",
+                        "may_claim_complete": False,
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    run_id = "RUN_CONTROL_GUARD_SMOKE"
+    plan = run_wavefront("plan", "--ip-dir", str(ip), "--run-id", run_id, "--template", str(guard_template), "--json", project_root=project)
+    assert plan.returncode == 0, plan.stderr or plan.stdout
+    dispatch = run_dispatch(
+        "create",
+        "--ip-dir",
+        str(ip),
+        "--agent-type",
+        "oag-custom-worker",
+        "--stage",
+        "run_control_guard_smoke",
+        "--receipt-path",
+        str(ip / "knowledge" / "subagents" / "WRITE_GUARD_SMOKE.json"),
+        "--wavefront-run-id",
+        run_id,
+        "--task-id",
+        "WRITE_GUARD_SMOKE",
+        "--ownership-mode",
+        "exclusive_file",
+        "--json",
+        project_root=project,
+    )
+    assert dispatch.returncode == 0, dispatch.stderr or dispatch.stdout
+    dispatch_id = json.loads(dispatch.stdout)["dispatch"]["dispatch_id"]
+    claim = run_wavefront(
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "WRITE_GUARD_SMOKE",
+        "--dispatch-id",
+        dispatch_id,
+        "--claimed-by",
+        "smoke-guard",
+        "--json",
+        project_root=project,
+    )
+    assert claim.returncode == 0, claim.stderr or claim.stdout
+    guard_locked = run_oag_orchestration_guard(
+        "audit",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--stale-seconds",
+        "0",
+        "--json",
+        project_root=project,
+    )
+    assert guard_locked.returncode != 0, guard_locked.stdout
+    guard_locked_payload = json.loads(guard_locked.stdout)
+    assert any(item["code"] == "STALE_ACTIVE_LOCK" for item in guard_locked_payload["issues"]), guard_locked_payload
+    assert guard_locked_payload["recommendations"][0]["id"] == "do-not-open-new-dispatch", guard_locked_payload
+
+    abort = run_oag_orchestration_guard(
+        "abort-task",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        "WRITE_GUARD_SMOKE",
+        "--status",
+        "failed",
+        "--json",
+        project_root=project,
+    )
+    assert abort.returncode == 0, abort.stderr or abort.stdout
+    abort_payload = json.loads(abort.stdout)
+    assert abort_payload["status"] == "pass", abort_payload
+    status = run_wavefront("status", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert status.returncode == 0, status.stderr or status.stdout
+    assert json.loads(status.stdout)["active_locks"] == [], status.stdout
+
+
+def test_deep_interview_handoff_persists_decision_rows(tmp_root: Path) -> None:
+    ip = make_ip(tmp_root / "deep_interview_handoff")
+    round_doc = {
+        "schema_version": "oag_deep_interview_round.v1",
+        "round": 7,
+        "component": "control-boundary",
+        "dimension": "rtl_readiness",
+        "question": "Which control boundary should be locked for RTL dispatch?",
+        "source_refs": ["req/source_claims.yaml#seed"],
+        "options": [
+            {
+                "id": "A",
+                "label": "Ready single-cycle control",
+                "description": "Lock the single-cycle externally visible control response.",
+                "recommended": True,
+                "decision_matrix_ref": "DEC_SMOKE_CONTROL_BOUNDARY",
+                "affects": ["rtl", "tb", "evidence"],
+            },
+            {
+                "id": "B",
+                "label": "Add handshake detail",
+                "description": "Continue the interview before lock.",
+                "recommended": False,
+            },
+            {
+                "id": "C",
+                "label": "Defer control boundary",
+                "description": "Keep dispatch blocked.",
+                "recommended": False,
+            },
+            {
+                "id": "D",
+                "label": "Other / custom",
+                "description": "User supplies the exact correction.",
+                "recommended": False,
+            },
+        ],
+    }
+    round_path = ip / "req" / "deep_semantic_intake" / "round_7.json"
+    round_path.write_text(json.dumps(round_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    handoff = subprocess.run(
+        [
+            sys.executable,
+            str(DEEP_INTERVIEW_ROUND),
+            "handoff",
+            "--ip-dir",
+            str(ip),
+            "--json-file",
+            str(round_path),
+            "--selected-option",
+            "A",
+            "--confirmed",
+            "--write-decision-matrix",
+            "--write-source-claim",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+    )
+    assert handoff.returncode == 0, handoff.stderr or handoff.stdout
+    payload = json.loads(handoff.stdout)
+    assert payload["schema_version"] == "oag_deep_interview_handoff_result.v1", payload
+    assert payload["status"] == "pass", payload
+    assert payload["decision_matrix_ref"] == "DEC_SMOKE_CONTROL_BOUNDARY", payload
+    assert Path(payload["handoff_path"]).is_file(), payload
+    decision_text = (ip / "ontology" / "decision_matrix.yaml").read_text(encoding="utf-8")
+    assert "DEC_SMOKE_CONTROL_BOUNDARY" in decision_text, decision_text
+    assert "status: decided" in decision_text, decision_text
+    assert "Ready single-cycle control" in decision_text, decision_text
+    claims_text = (ip / "req" / "source_claims.yaml").read_text(encoding="utf-8")
+    assert "Ready single-cycle control" in claims_text, claims_text
+    assert "source_type: user_interview" in claims_text, claims_text
 
 
 def test_pyslang_lint_runner() -> None:
@@ -3268,6 +3599,8 @@ def main() -> int:
         test_ip_version_policy_checker(Path(tmp))
         test_ip_git_helper_checkpoint(Path(tmp))
         test_lock_preview_frame_preserves_verbatim_source(Path(tmp))
+        test_oag_run_control_layer(Path(tmp))
+        test_deep_interview_handoff_persists_decision_rows(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
         assert MAIN_WRITE_GATE.is_file(), MAIN_WRITE_GATE
@@ -3298,6 +3631,11 @@ def main() -> int:
         assert BASELINE_VERIFY.is_file(), BASELINE_VERIFY
         assert IP_VERSION_CHECK.is_file(), IP_VERSION_CHECK
         assert IP_GIT.is_file(), IP_GIT
+        assert RUN_FRAME.is_file(), RUN_FRAME
+        assert ORCHESTRATION_GUARD.is_file(), ORCHESTRATION_GUARD
+        assert REVIEW_FRAME.is_file(), REVIEW_FRAME
+        assert GATE_FRAME.is_file(), GATE_FRAME
+        assert SSOT_SECTION_CHECK.is_file(), SSOT_SECTION_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS

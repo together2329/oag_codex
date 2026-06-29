@@ -19,6 +19,21 @@ implementation workflow.
   recommended option first, mark it `(Recommended)`, explain its tradeoff, and
   always allow free-text correction. The options answer the one question; they
   must not smuggle in extra questions.
+- For lock-critical or approval-style rounds, emit a durable gate frame before
+  asking the user when useful:
+
+```bash
+python3 .codex/scripts/oag_gate_frame.py create --ip-dir <ip> --stage deep-interview --kind question \
+  --prompt "<single question>" \
+  --option "A|<recommended label>|<tradeoff>" \
+  --option "B|<label>|<tradeoff>" \
+  --option "C|<label>|<tradeoff>" \
+  --option "D|Other / custom|User supplies exact correction." \
+  --json
+```
+
+  The gate JSON is the durable prompt state; chat rendering is only the
+  fallback UI when no popup/question surface exists.
 - Prefer a native question UI when the Codex surface provides one. If no popup
   or `ask`-style control is available, render the same single-question option
   block as normal chat and wait for one selection or free-text refinement.
@@ -163,6 +178,10 @@ blocking uncertainty across these factors:
   section, feature row, interface/register/parameter/file-set projection,
   interface contract, requirement atom, proof row, or lifecycle field is
   missing;
+- functional feature impact: whether the answer changes product-visible
+  behavior or feature scope;
+- performance impact: whether the answer changes latency, throughput, storage,
+  timing, frequency, or PPA-sensitive constraints;
 - downstream fanout: how many RTL, TB, firmware, integration, or evidence
   artifacts would change;
 - irreversibility: how costly it is to change later;
@@ -315,6 +334,22 @@ Use the draft to update or propose:
 - candidate `ontology/requirement_atoms.yaml` entries, with unknown trigger,
   condition, response, timing, boundary, and proof-shape fields left as draft
   ambiguity.
+
+When the user selects an option, persist the selection as a handoff before
+scoring or moving to lock:
+
+```bash
+python3 .codex/scripts/oag_deep_interview_round.py handoff \
+  --ip-dir <ip> \
+  --json-file <round.json> \
+  --selected-option A \
+  --write-decision-matrix \
+  --write-source-claim
+```
+
+Use `--confirmed` only when the user or a cited source explicitly confirmed the
+answer. Without `--confirmed`, generated decision rows remain proposed and
+source claims remain draft.
 
 ## Decision Matrix Handoff
 

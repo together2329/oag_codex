@@ -19,6 +19,8 @@ VALID_DECISION_EFFECTS = {"none", "unresolved", "proposed", "decided", "waiver_o
 IMPORTANCE_WEIGHTS: tuple[tuple[str, float], ...] = (
     ("lock_blocker", 3.0),
     ("ssot_required_gap", 2.0),
+    ("functional_feature_impact", 2.0),
+    ("performance_impact", 2.0),
     ("downstream_fanout", 2.0),
     ("irreversibility", 2.0),
     ("ambiguity_gap", 1.0),
@@ -91,6 +93,25 @@ def load_json(path: str) -> dict[str, Any]:
 
 def dump_json(data: dict[str, Any]) -> None:
     print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
+
+
+def read_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception as exc:
+        return {"__load_error__": str(exc)}
+
+
+def write_yaml(path: Path, data: dict[str, Any]) -> None:
+    import yaml  # type: ignore
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
 def _text(value: Any) -> str:
@@ -286,6 +307,109 @@ def validate_round(round_doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def selected_option(round_doc: dict[str, Any], selector: str) -> dict[str, Any]:
+    for item in _as_list(round_doc.get("options")):
+        if not isinstance(item, dict):
+            continue
+        if selector in {_text(item.get("id")), _text(item.get("value")), _text(item.get("label"))}:
+            return item
+    raise SystemExit(f"selected option not found: {selector}")
+
+
+def handoff_round(args: argparse.Namespace) -> dict[str, Any]:
+    import oag_paths  # pylint: disable=import-outside-toplevel
+
+    round_doc = load_json(args.json_file)
+    option = selected_option(round_doc, args.selected_option)
+    ip_dir = oag_paths.ip_root(args.ip_dir)
+    component = _text(round_doc.get("component")) or _text(round_doc.get("component_id")) or "scope"
+    round_id = str(round_doc.get("round") or "unknown")
+    normalized_component = component.upper().replace("-", "_").replace("/", "_").replace(" ", "_")
+    decision_ref = _text(option.get("decision_matrix_ref")) or f"DEC_{ip_dir.name.upper()}_{normalized_component}_{round_id}"
+    answer_text = _text(args.answer_text) or _text(option.get("label"))
+    handoff_record = {
+        "schema_version": "oag_deep_interview_handoff.v1",
+        "ip": ip_dir.name,
+        "round": round_doc.get("round"),
+        "component": component,
+        "dimension": round_doc.get("dimension") or round_doc.get("target_dimension"),
+        "question": round_doc.get("question"),
+        "selected_option": option,
+        "answer_text": answer_text,
+        "confirmed": bool(args.confirmed),
+        "decision_matrix_ref": decision_ref,
+        "source_refs": _as_list(round_doc.get("source_refs")),
+        "target_files": [],
+    }
+    out_dir = oag_paths.state_path(ip_dir, "req/deep_semantic_intake")
+    out_path = out_dir / f"round_{round_id}_{component.replace('/', '_').replace(' ', '_')}_handoff.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    handoff_record["target_files"].append(str(out_path))
+
+    if args.write_decision_matrix:
+        matrix_path = oag_paths.ontology_path(ip_dir, "decision_matrix.yaml")
+        matrix = read_yaml(matrix_path)
+        if matrix.get("__load_error__"):
+            raise SystemExit(f"cannot read decision matrix: {matrix['__load_error__']}")
+        matrix.setdefault("schema_version", "oag_decision_matrix.v1")
+        matrix.setdefault("ip", ip_dir.name)
+        decisions = matrix.setdefault("decisions", [])
+        if not isinstance(decisions, list):
+            raise SystemExit("ontology/decision_matrix.yaml decisions must be a list")
+        existing = next((item for item in decisions if isinstance(item, dict) and _text(item.get("id")) == decision_ref), None)
+        row = existing if isinstance(existing, dict) else {}
+        row.update(
+            {
+                "id": decision_ref,
+                "question": _text(round_doc.get("question")),
+                "status": "decided" if args.confirmed else "proposed",
+                "lock_required": True,
+                "owner": args.owner,
+                "recommended": option.get("label") if option.get("recommended") else None,
+                "decision": answer_text if args.confirmed else None,
+                "rationale": args.rationale or "Deep interview handoff; recommendation is not locked truth until confirmed.",
+                "affects": [str(value) for value in _as_list(option.get("affects")) if str(value).strip()],
+                "refs": [str(out_path)],
+            }
+        )
+        if existing is None:
+            decisions.append(row)
+        write_yaml(matrix_path, matrix)
+        handoff_record["target_files"].append(str(matrix_path))
+
+    if args.write_source_claim:
+        claims_path = oag_paths.state_path(ip_dir, "req/source_claims.yaml")
+        claims = read_yaml(claims_path)
+        if claims.get("__load_error__"):
+            raise SystemExit(f"cannot read source claims: {claims['__load_error__']}")
+        claims.setdefault("schema_version", "oag_source_claims.v1")
+        claims.setdefault("ip", ip_dir.name)
+        claim_rows = claims.setdefault("claims", [])
+        if not isinstance(claim_rows, list):
+            raise SystemExit("req/source_claims.yaml claims must be a list")
+        claim_id = args.claim_id or f"CLAIM_{ip_dir.name.upper()}_ROUND_{round_id}_{len(claim_rows) + 1}"
+        claim_rows.append(
+            {
+                "id": claim_id,
+                "claim": answer_text,
+                "source_type": "user_interview",
+                "source_ref": str(out_path),
+                "status": "confirmed" if args.confirmed else "draft",
+            }
+        )
+        write_yaml(claims_path, claims)
+        handoff_record["target_files"].append(str(claims_path))
+
+    out_path.write_text(json.dumps(handoff_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "schema_version": "oag_deep_interview_handoff_result.v1",
+        "status": "pass",
+        "handoff_path": str(out_path),
+        "decision_matrix_ref": decision_ref,
+        "target_files": handoff_record["target_files"],
+    }
+
+
 def rank_candidates(payload: dict[str, Any]) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -397,6 +521,18 @@ def main() -> int:
     rank = sub.add_parser("rank", help="rank candidate next questions by OAG lock impact")
     rank.add_argument("--json-file", default="-", help="candidate JSON file, or '-' for stdin")
 
+    handoff = sub.add_parser("handoff", help="persist a selected round answer into an interview handoff and optional OAG draft rows")
+    handoff.add_argument("--ip-dir", required=True)
+    handoff.add_argument("--json-file", required=True, help="round JSON file")
+    handoff.add_argument("--selected-option", required=True, help="selected option id, value, or label")
+    handoff.add_argument("--answer-text", default="", help="explicit answer text; defaults to the selected option label")
+    handoff.add_argument("--owner", default="user")
+    handoff.add_argument("--rationale", default="")
+    handoff.add_argument("--confirmed", action="store_true", help="mark generated rows as user/spec confirmed rather than proposed/draft")
+    handoff.add_argument("--write-decision-matrix", action="store_true")
+    handoff.add_argument("--write-source-claim", action="store_true")
+    handoff.add_argument("--claim-id", default="")
+
     args = parser.parse_args()
     if args.command == "template":
         dump_json(build_template(args))
@@ -415,6 +551,10 @@ def main() -> int:
         return 0
     if args.command == "rank":
         result = rank_candidates(load_json(args.json_file))
+        dump_json(result)
+        return 0 if result["status"] == "pass" else 1
+    if args.command == "handoff":
+        result = handoff_round(args)
         dump_json(result)
         return 0 if result["status"] == "pass" else 1
     return 2

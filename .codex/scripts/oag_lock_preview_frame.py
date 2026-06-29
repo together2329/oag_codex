@@ -40,6 +40,33 @@ CANONICAL_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("locked_truth", "req/locked_truth.md", "Legacy locked truth, if this IP still uses it"),
 )
 
+FRAME_MODES: dict[str, dict[str, str]] = {
+    "pre-lock": {
+        "title": "Pre-Lock Review Frame",
+        "badge": "Lock-readiness check",
+        "purpose": "This HTML file is a review envelope. It provides navigation, hashes, and lock-readiness issues, but the lock decision must be made by reading the verbatim source panels below.",
+        "instructions": "Confirm that the raw source panels express the intended feature scope, requirements, decisions, obligations, contracts, verification intent, and integration metadata before locking.",
+    },
+    "pre-dispatch": {
+        "title": "Pre-Dispatch Review Frame",
+        "badge": "Dispatch-readiness check",
+        "purpose": "This HTML file is a pre-dispatch review envelope. It preserves source artifacts and hashes so RTL/TB/sim work is not launched from stale or paraphrased truth.",
+        "instructions": "Confirm scope lock, source truth, obligations, contracts, verification intent, and IP-XACT-style metadata before creating implementation dispatches.",
+    },
+    "post-evidence": {
+        "title": "Post-Evidence Review Frame",
+        "badge": "Evidence-readiness check",
+        "purpose": "This HTML file is a post-evidence review envelope. It keeps authored truth visible while reviewing whether evidence can be promoted without stale inputs.",
+        "instructions": "Compare source truth with evidence-facing sections. Do not approve closure when evidence or lifecycle hashes are stale.",
+    },
+    "gate": {
+        "title": "Gate Review Frame",
+        "badge": "Gate-readiness check",
+        "purpose": "This HTML file is a gate-review envelope. It lets a reviewer inspect current source truth and artifact hashes before making or refreshing a gate decision.",
+        "instructions": "Review the raw panels and hashes before approving, rejecting, or requesting changes. A gate decision older than validation evidence must be refreshed.",
+    },
+}
+
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -198,6 +225,8 @@ def render_summary_value(value: Any) -> str:
 
 
 def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, Any]], readiness: dict[str, Any]) -> str:
+    mode = str(metadata.get("frame_mode") or "pre-lock")
+    mode_cfg = FRAME_MODES.get(mode, FRAME_MODES["pre-lock"])
     status = str(readiness.get("status") or "unknown")
     issues = readiness.get("issues") if isinstance(readiness.get("issues"), list) else []
     next_actions = readiness.get("next_actions") if isinstance(readiness.get("next_actions"), list) else []
@@ -266,7 +295,7 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>OAG Pre-Lock Review Frame - {html.escape(ip_dir.name)}</title>
+  <title>OAG {html.escape(mode_cfg['title'])} - {html.escape(ip_dir.name)}</title>
   <style>
     :root {{
       color-scheme: light;
@@ -371,9 +400,9 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 <main id="top">
   <section class="hero">
     <p class="eyebrow">Ontology Agent Gateway</p>
-    <h1>Pre-Lock Review Frame: {html.escape(ip_dir.name)}</h1>
-    <p>This HTML file is a review envelope. It provides navigation, hashes, and lock-readiness issues, but the lock decision must be made by reading the verbatim source panels below.</p>
-    <div class="badge {status_class(status)}">Lock-readiness check: {html.escape(status)}</div>
+    <h1>{html.escape(mode_cfg['title'])}: {html.escape(ip_dir.name)}</h1>
+    <p>{html.escape(mode_cfg['purpose'])}</p>
+    <div class="badge {status_class(status)}">{html.escape(mode_cfg['badge'])}: {html.escape(status)}</div>
   </section>
 
   <section class="grid" aria-label="Metadata">
@@ -385,12 +414,12 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 
   <section class="panel">
     <h2>Review Instructions</h2>
-    <p>Use the tables for navigation only. Do not approve lock from a paraphrase. Confirm that the raw source panels express the intended feature scope, requirements, decisions, obligations, contracts, verification intent, and integration metadata.</p>
+    <p>Use the tables for navigation only. Do not approve from a paraphrase. {html.escape(mode_cfg['instructions'])}</p>
     <ol class="actions">
       <li>Read any readiness issues first.</li>
       <li>Open each required source panel and inspect the verbatim content.</li>
       <li>If a source is missing or stale, continue interview/projection instead of locking.</li>
-      <li>Only after the frame matches intent, run the normal OAG lock command.</li>
+      <li>Only after the frame matches intent, run the normal OAG command for this review stage.</li>
     </ol>
   </section>
 
@@ -416,10 +445,20 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 """
 
 
-def build_frame(ip_dir: Path, output_dir: Path, *, readiness_mode: str) -> dict[str, Any]:
+def default_output_dir(frame_mode: str) -> Path:
+    if frame_mode == "pre-lock":
+        return Path("knowledge/lock_preview")
+    return Path("knowledge/review_frames") / frame_mode
+
+
+def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, frame_mode: str = "pre-lock") -> dict[str, Any]:
     ip_dir = oag_paths.ip_root(ip_dir)
     if not ip_dir.is_dir():
         raise FileNotFoundError(f"IP directory does not exist: {ip_dir}")
+    if frame_mode not in FRAME_MODES:
+        raise ValueError(f"unsupported frame mode: {frame_mode}")
+    if output_dir is None:
+        output_dir = default_output_dir(frame_mode)
     output_dir = output_dir if output_dir.is_absolute() else ip_dir / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
     require_locked = readiness_mode == "lock-ready"
@@ -431,6 +470,7 @@ def build_frame(ip_dir: Path, output_dir: Path, *, readiness_mode: str) -> dict[
         "ip": ip_dir.name,
         "ip_dir": str(ip_dir),
         "readiness_mode": readiness_mode,
+        "frame_mode": frame_mode,
         "output_dir": str(output_dir),
     }
     index_payload = {
@@ -447,6 +487,7 @@ def build_frame(ip_dir: Path, output_dir: Path, *, readiness_mode: str) -> dict[
         "schema_version": "oag_lock_preview_frame_result.v1",
         "status": "pass",
         "ip": ip_dir.name,
+        "frame_mode": frame_mode,
         "html": str(html_path),
         "json": str(json_path),
         "readiness_status": readiness.get("status"),
@@ -457,12 +498,18 @@ def build_frame(ip_dir: Path, output_dir: Path, *, readiness_mode: str) -> dict[
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Render a formal verbatim HTML frame for pre-lock OAG review.")
+    parser = argparse.ArgumentParser(description="Render a formal verbatim HTML frame for OAG review.")
     parser.add_argument("--ip-dir", required=True, help="IP workspace directory.")
     parser.add_argument(
         "--output-dir",
-        default="knowledge/lock_preview",
-        help="Output directory. Relative paths are resolved under the IP directory.",
+        default=None,
+        help="Output directory. Relative paths are resolved under the IP directory. Defaults depend on --frame-mode.",
+    )
+    parser.add_argument(
+        "--frame-mode",
+        choices=sorted(FRAME_MODES),
+        default="pre-lock",
+        help="Review stage rendered by this frame.",
     )
     parser.add_argument(
         "--readiness-mode",
@@ -473,7 +520,12 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Print JSON result.")
     args = parser.parse_args()
     try:
-        result = build_frame(Path(args.ip_dir), Path(args.output_dir), readiness_mode=args.readiness_mode)
+        result = build_frame(
+            Path(args.ip_dir),
+            Path(args.output_dir) if args.output_dir else None,
+            readiness_mode=args.readiness_mode,
+            frame_mode=args.frame_mode,
+        )
     except Exception as exc:
         result = {
             "schema_version": "oag_lock_preview_frame_result.v1",

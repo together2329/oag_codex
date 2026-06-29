@@ -51,6 +51,43 @@ configuration, generator chains, and vendor-extension links back to OAG IDs.
 IP-XACT-style metadata is not the behavior oracle; OAG contracts and modeling
 files remain the behavior/cycle authority.
 
+For nontrivial runs, start from a run-control frame before opening new work:
+
+```bash
+python3 .codex/scripts/oag_run_frame.py --ip-dir <ip> --json
+```
+
+The run frame is the current-state snapshot for human and agent orchestration:
+IP-local git status, scope lock state, active wavefront locks, compile
+freshness, stale lifecycle evidence, pending gate frames, SSOT section health,
+four next-action options, and the recommended next action. Treat terminal
+scrollback as advisory only; durable JSON frames, receipts, decisions, and
+artifact hashes are the source of truth.
+
+When a run has active locks or a child appears stuck, use the orchestration
+guard before opening replacement work:
+
+```bash
+python3 .codex/scripts/oag_orchestration_guard.py audit --ip-dir <ip> --json
+```
+
+Do not create a replacement dispatch while an ownership lock is active. If a
+task must be abandoned, explicitly route it with `abort-task` to
+`blocked`, `failed`, or `inconclusive`; late receipts from that aborted
+dispatch are not valid handoffs.
+
+Use the SSOT section checker at planning, pre-dispatch, and closure boundaries:
+
+```bash
+python3 .codex/scripts/oag_ssot_section_check.py --ip-dir <ip> --stage planning --json
+python3 .codex/scripts/oag_ssot_section_check.py --ip-dir <ip> --stage pre-dispatch --json
+python3 .codex/scripts/oag_ssot_section_check.py --ip-dir <ip> --stage closure --json
+```
+
+It checks the required feature/source-claim/ambiguity/decision/requirement
+atom/requirement/obligation/contract/modeling/verification/TB/IP-XACT-style
+sections, and closure evidence/gate decision presence at the appropriate stage.
+
 Use the version checker when an IP baseline or golden version is being promoted
 or consumed:
 
