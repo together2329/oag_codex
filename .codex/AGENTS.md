@@ -25,6 +25,7 @@ Primary assets:
 - `oag/data-lifecycle-policy.md`
 - `oag/baseline-git-policy.md`
 - `oag/ip-versioning-policy.md`
+- `oag/team-mode-policy.md`
 - `oag/bounded-loop-hook-integration-plan.md`
 - `oag/wavefront-policy.md`
 - `oag/wavefront-task-graph.md`
@@ -64,6 +65,7 @@ Primary assets:
 - `skills/oag-authoring-packet/SKILL.md`
 - `skills/oag-evidence-closure/SKILL.md`
 - `skills/oag-wavefront/SKILL.md`
+- `skills/oag-team-mode/SKILL.md`
 - `skills/oag-ip-versioning/SKILL.md`
 - `rules/oag-rocev.rules.md`
 - `agents/oag-*.toml`
@@ -113,6 +115,7 @@ Primary assets:
 - `scripts/oag_stale_check.py`
 - `scripts/oag_trace_graph_check.py`
 - `scripts/oag_wavefront.py`
+- `scripts/oag_team_plan.py`
 - `scripts/oag_deep_semantic_intake.py`
 - `scripts/oag_decision_matrix_generate.py`
 - `scripts/oag_verification_plan_check.py`
@@ -151,8 +154,9 @@ packets, `oag/baseline-git-policy.md` defines how git commits, annotated tags,
 baseline manifests, and external artifacts form auditable baseline trust
 boundaries, `oag/ip-versioning-policy.md` defines IP-local `.git`, functional
 semantic version bumps, golden baseline lineage, and patch/minor/major
-eligibility, `oag/contract-projection.md`
-defines ROCEV projection,
+eligibility, `oag/team-mode-policy.md` defines plan-only Team Lead plus Worker
+recommendations for multi-role OAG work, `oag/contract-projection.md` defines
+ROCEV projection,
 `oag/bounded-loop-hook-integration-plan.md` defines the planned integration
 between bounded open-item planning, hook/runner execution caps, `oag.run.next`,
 and wavefront materialization,

@@ -43,22 +43,33 @@ OSVVM, UVVM, or PSS files unless the proof need justifies it.
 5. Call `oag.context` for ontology memory.
    If Codex hooks are enabled, UserPromptSubmit may inject this context
    automatically; still verify the active IP/stage before acting.
-6. If work is sharded across Codex subagents, validate
+6. If the user asks for Team Mode, or Mission/Action state suggests multi-role
+   work, run `.codex/scripts/oag_team_plan.py --ip-dir <ip> --json` first.
+   Treat the output as plan-only: it may recommend Team Lead plus Worker, but
+   it does not spawn workers, claim wavefront tasks, or create dispatches.
+7. If work is sharded across Codex subagents, validate
    `.codex/oag/agent-catalog.toml`, then use native Codex subagents with named
    agents from `.codex/agents/*.toml`. Use `multi_agent_v1.spawn_agent` where
    exposed, or the equivalent Codex CLI/App `spawn_agent` collaboration event.
    Each child message must include TASK, DELIVERABLE, SCOPE, VERIFY, and an
    explicit shard scope.
-7. For goal-driven work, call `oag.run.start`; then use `oag.run.next` to get
-   one next action.
-8. During deep requirement interviews, call `oag.draft` after meaningful user
+8. For goal-driven work, call `oag.run.start`; then use `oag.run.next` or
+   `.codex/scripts/oag_mission_loop.py tick` to get one next action. Use
+   `.codex/scripts/oag_mission_loop.py run --max-ticks <n>` only for bounded
+   Mission Runner mode.
+9. Before asking a deep-interview or decision question, check whether the
+   Mission/Action planner recommends `ACT_SELF_EXPLORE_OPTIONS`. If it does,
+   run `.codex/scripts/oag_exploration_plan.py --ip-dir <ip> --json`, inspect
+   local docs/RTL/ontology first, then ask only one residual question if the
+   answer is still product-defining or unsafe to infer.
+10. During deep requirement interviews, call `oag.draft` after meaningful user
    answers and before context pressure can lose the conversation.
-9. When the user asks for status, structure, dependencies, or gaps, build the
+11. When the user asks for status, structure, dependencies, or gaps, build the
    graph with `.codex/scripts/oag_graph.py`.
-10. Do the smallest required implementation or evidence step.
-11. Call `oag.record` or `oag.run.record` at a meaningful boundary.
-12. Use `oag.ticket` for routed failure repair.
-13. Call `oag.check` and `oag.decide` before closure claims, or
+12. Do the smallest required implementation or evidence step.
+13. Call `oag.record` or `oag.run.record` at a meaningful boundary.
+14. Use `oag.ticket` for routed failure repair.
+15. Call `oag.check` and `oag.decide` before closure claims, or
     `oag.run.checkpoint` when a run is active.
 
 ## Decision Policy

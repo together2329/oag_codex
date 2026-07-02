@@ -49,11 +49,23 @@ These modes do not create truth. They preserve the same raw source panels and
 hashes while changing the review instructions for dispatch, evidence, or gate
 approval.
 
+By default, the frame also includes a read-only Operation Context panel above
+the source index: current Mission, recommended Action, four options, draft
+wavefront task count, and role hazards. This is navigation context only and
+must never replace reading the verbatim source panels. Disable it only for a
+strict source-only render:
+
+```bash
+python3 .codex/scripts/oag_lock_preview_frame.py --ip-dir <ip> --no-operation-context --json
+```
+
 ## What The Frame Must Contain
 
 The frame must show:
 
 - readiness status and issues from the OAG lock-readiness checker;
+- optional Operation Context summary that points to Mission/Action state
+  without rewriting source truth;
 - source index with file path, present/missing status, line count, and SHA-256;
 - verbatim panels for `req/source_claims.yaml`, `req/ambiguity_register.yaml`,
   `req/interview_draft.md`, `ontology/features.yaml`,

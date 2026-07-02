@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_mission_templates.schema.json",
+  "title": "OAG Mission Templates",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "product_name",
+    "internal_gateway",
+    "mission_templates"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_mission_templates.v1"
+    },
+    "product_name": {
+      "const": "IP Dev Agent"
+    },
+    "internal_gateway": {
+      "const": "Ontology Agent Gateway"
+    },
+    "mission_templates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "label",
+          "intent",
+          "target_state",
+          "forbidden_actions_until_target",
+          "action_priority"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^MISSION_[A-Z0-9_]+$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target_state": {
+            "type": "object"
+          },
+          "forbidden_actions_until_target": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^ACT_[A-Z0-9_]+$"
+            }
+          },
+          "action_priority": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^ACT_[A-Z0-9_]+$"
+            }
+          },
+          "user_question_policy": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

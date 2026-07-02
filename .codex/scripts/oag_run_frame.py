@@ -15,6 +15,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import oag_paths  # noqa: E402
+import oag_action_plan  # noqa: E402
 from oag_run_control_common import JsonObject, collect_run_state, issue, utc_now, write_json  # noqa: E402
 
 
@@ -44,7 +45,84 @@ def classify_blockers(state: JsonObject) -> list[dict[str, str]]:
     return blockers
 
 
-def next_actions(state: JsonObject, blockers: list[dict[str, str]]) -> list[JsonObject]:
+def actions_from_candidates(action_plan: JsonObject) -> list[JsonObject]:
+    plan = action_plan.get("plan") if isinstance(action_plan.get("plan"), dict) else {}
+    candidates = [item for item in plan.get("candidates", []) if isinstance(item, dict)]
+    actions: list[JsonObject] = []
+    for candidate in candidates[:4]:
+        actions.append(
+            {
+                "id": candidate.get("id") or candidate.get("action_type") or "action-candidate",
+                "label": candidate.get("action_label") or candidate.get("action_type") or "Action candidate",
+                "recommended": bool(candidate.get("recommended")),
+                "command": candidate.get("command") or "",
+                "description": candidate.get("recommendation_reason") or "",
+                "action_type": candidate.get("action_type") or "",
+                "priority": candidate.get("priority") or "",
+                "status": candidate.get("status") or "",
+                "owner_role": candidate.get("owner_role") or "",
+                "score": candidate.get("score") if isinstance(candidate.get("score"), dict) else {},
+            }
+        )
+    if actions and not any(item.get("recommended") for item in actions):
+        actions[0]["recommended"] = True
+    return actions
+
+
+def generic_fallback_actions() -> list[JsonObject]:
+    return [
+        {
+            "id": "render-review-frame",
+            "label": "Render the current review frame",
+            "recommended": False,
+            "command": "python3 .codex/scripts/oag_review_frame.py --ip-dir <ip> --mode pre-dispatch --json",
+            "description": "Create a formal HTML surface over current source and artifact hashes before review.",
+            "action_type": "ACT_RENDER_LOCK_PREVIEW",
+            "priority": "P3",
+            "status": "ready",
+            "owner_role": "tool",
+        },
+        {
+            "id": "check-closure-evidence",
+            "label": "Run closure/evidence checks",
+            "recommended": False,
+            "command": "python3 .codex/scripts/oag_closure_check.py --ip-dir <ip> --json",
+            "description": "Inspect traceability, scoreboard, coverage, validation, and completion readiness.",
+            "action_type": "ACT_EVIDENCE_VALIDATION",
+            "priority": "P3",
+            "status": "ready",
+            "owner_role": "oag-evidence-validator",
+        },
+        {
+            "id": "custom-action",
+            "label": "Other / custom action",
+            "recommended": False,
+            "command": "",
+            "description": "Use a narrower action if the frame shows a project-specific reason not captured above.",
+            "action_type": "ACT_CUSTOM_OPERATOR_INPUT",
+            "priority": "P3",
+            "status": "informational",
+            "owner_role": "human_via_main",
+        },
+    ]
+
+
+def fill_to_four(actions: list[JsonObject]) -> list[JsonObject]:
+    seen = {str(action.get("id") or "") for action in actions}
+    for action in generic_fallback_actions():
+        if len(actions) >= 4:
+            break
+        if action["id"] not in seen:
+            actions.append(action)
+            seen.add(action["id"])
+    return actions[:4]
+
+
+def next_actions(state: JsonObject, blockers: list[dict[str, str]], action_plan: JsonObject | None = None) -> list[JsonObject]:
+    candidate_actions = actions_from_candidates(action_plan or {})
+    if candidate_actions:
+        return fill_to_four(candidate_actions)
+
     scope_state = state.get("scope_lock", {}).get("state")
     active_locks = state.get("wavefront", {}).get("active_lock_count", 0)
     compile_state = state.get("compile_manifest", {}).get("status")
@@ -124,35 +202,7 @@ def next_actions(state: JsonObject, blockers: list[dict[str, str]]) -> list[Json
             }
         )
 
-    fallback_actions = [
-        {
-            "id": "render-review-frame",
-            "label": "Render the current review frame",
-            "recommended": False,
-            "command": "python3 .codex/scripts/oag_review_frame.py --ip-dir <ip> --mode pre-dispatch --json",
-            "description": "Create a formal HTML surface over current source and artifact hashes before review.",
-        },
-        {
-            "id": "check-closure-evidence",
-            "label": "Run closure/evidence checks",
-            "recommended": False,
-            "command": "python3 .codex/scripts/oag_closure_check.py --ip-dir <ip> --json",
-            "description": "Inspect traceability, scoreboard, coverage, validation, and completion readiness.",
-        },
-        {
-            "id": "custom-action",
-            "label": "Other / custom action",
-            "recommended": False,
-            "command": "",
-            "description": "Use a narrower action if the frame shows a project-specific reason not captured above.",
-        },
-    ]
-    for action in fallback_actions:
-        if len(actions) >= 4:
-            break
-        if action["id"] not in {item["id"] for item in actions}:
-            actions.append(action)
-    return actions[:4]
+    return fill_to_four(actions)
 
 
 def run_status(blockers: list[dict[str, str]]) -> str:
@@ -176,13 +226,18 @@ def render_html(frame: JsonObject) -> str:
     state = frame["state"]
     blockers = frame["blockers"]
     actions = frame["next_actions"]
+    action_plan = frame.get("action_plan") if isinstance(frame.get("action_plan"), dict) else {}
     status = frame["run_status"]
     status_class = "pass" if status == "ready" else "fail" if status == "blocked" else "warn"
     action_rows = "".join(
         "<tr>"
         f"<td>{'yes' if action.get('recommended') else ''}</td>"
+        f"<td>{html.escape(str(action.get('priority') or ''))}</td>"
+        f"<td>{html.escape(str(action.get('status') or ''))}</td>"
+        f"<td><code>{html.escape(str(action.get('action_type') or action.get('id') or ''))}</code></td>"
         f"<td>{html.escape(action['label'])}</td>"
         f"<td>{html.escape(action['description'])}</td>"
+        f"<td>{html.escape(str(action.get('owner_role') or ''))}</td>"
         f"<td><code>{html.escape(action.get('command') or 'custom')}</code></td>"
         "</tr>"
         for action in actions
@@ -225,7 +280,11 @@ def render_html(frame: JsonObject) -> str:
     <div class="metric"><span>Active locks</span><strong>{html.escape(str(state.get('wavefront', {}).get('active_lock_count', 0)))}</strong></div>
     <div class="metric"><span>Blockers</span><strong>{html.escape(str(len(blockers)))}</strong></div>
   </div>
-  <section><h2>Recommended Next Actions</h2><table><thead><tr><th>Recommended</th><th>Action</th><th>Why</th><th>Command</th></tr></thead><tbody>{action_rows}</tbody></table></section>
+  <section><h2>Mission/Action Plan</h2>
+    <p>Mission template: <code>{html.escape(str(action_plan.get('mission_template') or 'unknown'))}</code>.
+    Candidate source: <code>{html.escape(str(action_plan.get('output_path') or 'fallback'))}</code>.</p>
+    <table><thead><tr><th>Recommended</th><th>Priority</th><th>Status</th><th>Action Type</th><th>Action</th><th>Why</th><th>Owner</th><th>Command</th></tr></thead><tbody>{action_rows}</tbody></table>
+  </section>
   <section><h2>Blockers</h2><table><thead><tr><th>Code</th><th>Message</th><th>Path</th></tr></thead><tbody>{blocker_rows}</tbody></table></section>
   <section><h2>Active Wavefront Locks</h2><table><thead><tr><th>Run</th><th>Task</th><th>Path</th><th>Dispatch</th><th>Claimed</th><th>Age Seconds</th></tr></thead><tbody>{lock_rows}</tbody></table></section>
   <section><h2>Pending Gates</h2><table><thead><tr><th>Gate</th><th>Stage</th><th>Kind</th><th>Created</th><th>Path</th></tr></thead><tbody>{pending_gate_rows}</tbody></table></section>
@@ -244,6 +303,7 @@ def build_frame(ip_dir: Path, output_dir: Path) -> JsonObject:
     output_dir.mkdir(parents=True, exist_ok=True)
     state = collect_run_state(ip_dir)
     blockers = classify_blockers(state)
+    action_plan = oag_action_plan.build_plan(ip_dir, write=True, run_semantic_checks=False)
     frame: JsonObject = {
         "schema_version": SCHEMA_VERSION,
         "generated_at": utc_now(),
@@ -251,7 +311,18 @@ def build_frame(ip_dir: Path, output_dir: Path) -> JsonObject:
         "ip_dir": str(ip_dir),
         "run_status": run_status(blockers),
         "blockers": blockers,
-        "next_actions": next_actions(state, blockers),
+        "next_actions": next_actions(state, blockers, action_plan),
+        "action_plan": {
+            "status": action_plan.get("status"),
+            "mission_template": action_plan.get("mission_template"),
+            "mission_instance_id": action_plan.get("mission_instance_id"),
+            "output_path": action_plan.get("output_path"),
+            "action_graph_path": action_plan.get("action_graph_path"),
+            "candidate_count": action_plan.get("candidate_count"),
+            "open_item_count": action_plan.get("open_item_count"),
+            "recommended_action": action_plan.get("recommended_action"),
+            "issues": action_plan.get("issues", []),
+        },
         "required_user_decision": bool(state.get("gates", {}).get("pending_gate_count") or state.get("scope_lock", {}).get("state") == "draft"),
         "state": state,
     }

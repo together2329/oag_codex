@@ -1,0 +1,533 @@
+schema_version: oag_operation_action_types.v1
+product_name: IP Dev Agent
+internal_gateway: Ontology Agent Gateway
+policy:
+  generated_candidates_are_truth: false
+  action_instances_are_audit_history: true
+  post_lock_source_writes_require_dispatch: true
+action_types:
+  - id: ACT_RESOLVE_ORCHESTRATION_HAZARD
+    label: Resolve Orchestration Hazard
+    phase: orchestration
+    owner_role: main
+    consumes:
+      - active_wavefront_lock
+      - late_receipt
+      - repeated_blocker
+    preconditions:
+      - active_orchestration_hazard_exists
+    produces:
+      - orchestration_guard_report
+      - abort_or_recovery_decision
+    allowed_write_policy:
+      source: tool
+      required: false
+    fallback_policy:
+      active_lock_conflict: block_replacement_dispatch
+      late_receipt_after_abort: invalid_handoff
+  - id: ACT_ORCHESTRATION_RECOVERY
+    label: Orchestration Recovery
+    phase: orchestration
+    owner_role: main
+    consumes:
+      - failed_or_stuck_action
+      - orchestration_guard_report
+      - wavefront_lock_state
+      - late_receipt_state
+    preconditions:
+      - action_or_subagent_stuck_or_aborted
+      - active_lock_state_audited
+    produces:
+      - recovery_decision
+      - aborted_or_failed_task_record
+      - replacement_action_candidate
+    allowed_write_policy:
+      source: main
+      required: false
+    fallback_policy:
+      active_lock_conflict: block_replacement_dispatch
+      late_receipt_after_abort: invalid_handoff
+  - id: ACT_RESOLVE_PENDING_GATE
+    label: Resolve Pending Workflow Gate
+    phase: gate
+    owner_role: human_via_main
+    consumes:
+      - pending_gate_frame
+      - gate_question
+      - current_oag_state
+    preconditions:
+      - pending_gate_exists
+    produces:
+      - gate_answer
+      - gate_resolution_record
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_CUSTOM_OPERATOR_INPUT
+    label: Custom Operator Input
+    phase: planning
+    owner_role: human_via_main
+    consumes:
+      - current_action_options
+      - user_custom_answer
+      - current_oag_state
+    preconditions:
+      - user_rejects_or_refines_generated_options
+    produces:
+      - custom_action_note
+      - draft_or_decision_update
+      - refreshed_action_candidates
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_SELF_EXPLORE_OPTIONS
+    label: Self Explore Options
+    phase: research
+    owner_role: main
+    consumes:
+      - current_action_options
+      - source_claim
+      - ambiguity_row
+      - decision_row
+      - spec_document
+      - existing_rtl
+      - ontology_context
+    preconditions:
+      - local_sources_available
+      - user_question_not_yet_required_after_research
+    produces:
+      - exploration_plan
+      - option_matrix
+      - recommendation
+      - residual_question_policy
+    allowed_write_policy:
+      source: main
+      required: false
+    ask_vs_explore_policy:
+      ask_only_after_local_sources_exhausted: true
+      one_residual_question_per_round: true
+      option_count: 4
+      require_recommendation: true
+      allow_custom_answer: true
+  - id: ACT_CAPTURE_SOURCE_CLAIM
+    label: Capture Source Claim
+    phase: intake
+    owner_role: main
+    consumes:
+      - user_text
+      - spec_document
+      - existing_rtl_note
+    preconditions:
+      - source_intent_available
+    produces:
+      - source_claim
+      - ambiguity_row
+      - draft_record
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_ASK_DEEP_INTERVIEW_QUESTION
+    label: Ask Deep Interview Question
+    phase: intake
+    owner_role: human_via_main
+    consumes:
+      - ambiguity_row
+      - decision_row
+      - mission_target_state
+    preconditions:
+      - unresolved_lock_blocker_exists
+    produces:
+      - user_answer
+      - decision_matrix_update
+      - draft_record
+    allowed_write_policy:
+      source: main
+      required: false
+    question_policy:
+      one_question_per_round: true
+      option_count: 4
+      require_recommendation: true
+      allow_custom_answer: true
+  - id: ACT_RESOLVE_DECISION
+    label: Resolve Decision
+    phase: planning
+    owner_role: human_via_main
+    consumes:
+      - decision_row
+      - recommendation
+      - source_claim
+    preconditions:
+      - lock_required_decision_unresolved_or_proposed
+    produces:
+      - decided_or_waived_decision_row
+      - decision_rationale
+      - draft_record
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_REPAIR_SSOT_SECTION
+    label: Repair SSOT Section
+    phase: planning
+    owner_role: main
+    consumes:
+      - ssot_section_check
+    preconditions:
+      - missing_or_empty_ssot_section_exists
+    produces:
+      - repaired_draft_or_ontology_section
+      - draft_record
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_PROJECT_REQUIREMENT_ATOMS
+    label: Project Requirement Atoms
+    phase: planning
+    owner_role: oag-requirement-contract-agent
+    consumes:
+      - source_claim
+      - ambiguity_row
+      - decision_row
+    preconditions:
+      - source_claims_present
+      - unresolved_design_defaults_not_silently_chosen
+    produces:
+      - requirement_atom
+      - atom_ambiguity
+    allowed_write_policy:
+      source: dispatch_when_locked
+      required: false
+  - id: ACT_REVIEW_REQUIREMENTS
+    label: Review Requirements
+    phase: review
+    owner_role: oag-custom-reviewer
+    consumes:
+      - source_claim
+      - ambiguity_row
+      - requirement_atom
+      - requirement
+      - decision_row
+    preconditions:
+      - draft_truth_available
+    produces:
+      - review_finding
+      - blocker
+      - recommendation
+    allowed_write_policy:
+      source: dispatch_or_read_only_receipt
+      required: false
+  - id: ACT_PROJECT_OBLIGATIONS
+    label: Project Obligations
+    phase: planning
+    owner_role: oag-requirement-contract-agent
+    consumes:
+      - requirement
+      - requirement_atom
+      - decision_row
+    preconditions:
+      - requirement_atoms_structured
+    produces:
+      - obligation
+    allowed_write_policy:
+      source: dispatch_when_locked
+      required: false
+  - id: ACT_PROJECT_CONTRACTS
+    label: Project Contracts
+    phase: planning
+    owner_role: oag-ip-contract-agent
+    consumes:
+      - obligation
+      - behavior_rule
+      - cycle_rule
+      - verification_intent
+    preconditions:
+      - obligations_present
+    produces:
+      - assume_guarantee_contract
+      - proof_ref
+    allowed_write_policy:
+      source: dispatch_when_locked
+      required: false
+  - id: ACT_PROJECT_VERIFICATION_PLAN
+    label: Project Verification Plan
+    phase: planning
+    owner_role: oag-verification-strategy-agent
+    consumes:
+      - requirement
+      - obligation
+      - contract
+      - scenario
+      - coverage_goal
+    preconditions:
+      - requirements_and_contracts_available
+    produces:
+      - verification_plan
+      - proof_objective
+      - scoreboard_ref
+      - coverage_ref
+    allowed_write_policy:
+      source: dispatch_when_locked
+      required: false
+  - id: ACT_ARCHITECTURE_PROJECTION
+    label: Architecture Projection
+    phase: architecture
+    owner_role: oag-ip-contract-agent
+    consumes:
+      - feature
+      - interface
+      - requirement
+      - obligation
+      - contract
+      - ipxact_projection
+    preconditions:
+      - interface_and_behavior_decisions_resolved
+    produces:
+      - structure
+      - decomposition
+      - modeling
+      - module_boundary
+    allowed_write_policy:
+      source: dispatch_when_locked
+      required: false
+  - id: ACT_RENDER_LOCK_PREVIEW
+    label: Render Lock Preview
+    phase: review
+    owner_role: tool
+    consumes:
+      - source_claim
+      - ambiguity_row
+      - feature
+      - decision_row
+      - requirement_atom
+      - requirement
+      - obligation
+      - contract
+      - verification_intent
+      - ipxact_projection
+    preconditions:
+      - draft_truth_available
+    produces:
+      - lock_preview_frame
+    allowed_write_policy:
+      source: tool
+      required: false
+  - id: ACT_LOCK_SCOPE
+    label: Lock Scope
+    phase: lock
+    owner_role: human_via_main
+    consumes:
+      - lock_preview_frame
+      - lock_readiness_check
+      - human_approval
+    preconditions:
+      - lock_required_decisions_decided_or_waived
+      - semantic_gates_pass
+      - human_scope_approval_present
+    produces:
+      - scope_lock
+      - decision_receipt
+    allowed_write_policy:
+      source: main
+      required: false
+  - id: ACT_COMPILE_AUTHORING_PACKETS
+    label: Compile Authoring Packets
+    phase: compile
+    owner_role: tool
+    consumes:
+      - authored_ontology
+    preconditions:
+      - ontology_sources_available
+    produces:
+      - design_spec
+      - authoring_packet
+      - compile_manifest
+    allowed_write_policy:
+      source: tool
+      required: false
+  - id: ACT_REPAIR_AUTHORING_PACKET_PROJECTION
+    label: Repair Authoring Packet Projection
+    phase: planning
+    owner_role: oag-requirement-contract-agent
+    consumes:
+      - authoring_packet_check
+      - authored_ontology
+    preconditions:
+      - authoring_packet_check_failed
+    produces:
+      - repaired_authored_projection_source
+      - refreshed_authoring_packet
+    allowed_write_policy:
+      source: dispatch
+      required: true
+  - id: ACT_RTL_IMPLEMENTATION
+    label: RTL Implementation
+    phase: implementation
+    owner_role: oag-rtl-implementation-agent
+    consumes:
+      - rtl_authoring_packet
+      - contract
+      - module_boundary
+      - behavior_rule
+      - cycle_rule
+    preconditions:
+      - scope_lock_locked
+      - compile_manifest_fresh
+      - authoring_packet_check_pass
+      - contract_strength_check_pass
+      - no_conflicting_wavefront_lock
+    produces:
+      - rtl_file_delta
+      - subagent_receipt
+      - lint_or_compile_evidence_when_available
+    allowed_write_policy:
+      source: dispatch
+      required: true
+    cannot_claim:
+      - final_completion
+      - closure
+      - signoff
+    fallback_policy:
+      dispatch_verify_fail: route_inconclusive
+      active_lock_conflict: block_until_released
+  - id: ACT_TB_IMPLEMENTATION
+    label: Testbench Implementation
+    phase: verification
+    owner_role: oag-tb-implementation-agent
+    consumes:
+      - tb_authoring_packet
+      - verification_plan
+      - scenario
+      - scoreboard_ref
+      - coverage_goal
+    preconditions:
+      - scope_lock_locked
+      - verification_plan_check_pass
+      - authoring_packet_check_pass
+      - no_conflicting_wavefront_lock
+    produces:
+      - tb_file_delta
+      - scoreboard_writer
+      - coverage_collector
+      - subagent_receipt
+    allowed_write_policy:
+      source: dispatch
+      required: true
+    cannot_claim:
+      - final_completion
+      - closure
+      - signoff
+  - id: ACT_LINT_STATIC_CHECK
+    label: Lint Static Check
+    phase: static_validation
+    owner_role: oag-rtl-lint-static-agent
+    consumes:
+      - rtl_file
+      - design_rule
+      - rtl_language_policy
+    preconditions:
+      - rtl_available
+    produces:
+      - lint_report
+      - static_finding
+      - subagent_receipt
+    allowed_write_policy:
+      source: dispatch
+      required: true
+  - id: ACT_SIMULATION_RUN
+    label: Simulation Run
+    phase: dynamic_validation
+    owner_role: oag-sim-execution-agent
+    consumes:
+      - rtl_file
+      - tb_file
+      - scenario
+      - contract
+    preconditions:
+      - runnable_testbench_available
+      - no_conflicting_integration_lock
+    produces:
+      - results_xml
+      - scoreboard_rows
+      - coverage_json
+      - sim_receipt
+    allowed_write_policy:
+      source: dispatch
+      required: true
+  - id: ACT_FAILURE_TRIAGE
+    label: Failure Triage
+    phase: triage
+    owner_role: oag-custom-reviewer
+    consumes:
+      - failing_lint_report
+      - failing_sim_report
+      - scoreboard_rows
+      - waveform_when_required
+    preconditions:
+      - failure_artifact_available
+    produces:
+      - failure_classification
+      - repair_ticket
+      - recommended_repair_action
+    allowed_write_policy:
+      source: dispatch_or_read_only_receipt
+      required: false
+  - id: ACT_COVERAGE_REVIEW
+    label: Coverage Review
+    phase: closure
+    owner_role: oag-coverage-agent
+    consumes:
+      - coverage_json
+      - scoreboard_rows
+      - coverage_goal
+    preconditions:
+      - passing_evidence_available
+    produces:
+      - coverage_finding
+      - coverage_blocker
+    allowed_write_policy:
+      source: dispatch
+      required: true
+  - id: ACT_EVIDENCE_VALIDATION
+    label: Evidence Validation
+    phase: closure
+    owner_role: oag-evidence-validator
+    consumes:
+      - scoreboard_rows
+      - coverage_json
+      - validation_record
+      - artifact_hash
+    preconditions:
+      - evidence_artifacts_available
+      - traceability_objects_available
+    produces:
+      - validation_report
+      - stale_evidence_finding
+      - refreshed_validation_record
+    allowed_write_policy:
+      source: dispatch
+      required: true
+  - id: ACT_GATE_REVIEW
+    label: Gate Review
+    phase: gate
+    owner_role: oag-gate-reviewer
+    consumes:
+      - closure_matrix
+      - validation_report
+      - gate_frame
+      - checked_artifact_hashes
+    preconditions:
+      - oag_check_pass
+      - closure_check_pass
+      - validation_report_current
+    produces:
+      - gate_decision
+      - gate_reviewer_receipt
+    allowed_write_policy:
+      source: dispatch
+      required: true
+    timeout_policy:
+      soft_timeout_sec: 600
+      retry_limit: 1
+    fallback_policy:
+      after_retry_stuck: ACT_ORCHESTRATION_RECOVERY
+      custom_review_allowed: true
+      late_receipt_after_abort: invalid_handoff

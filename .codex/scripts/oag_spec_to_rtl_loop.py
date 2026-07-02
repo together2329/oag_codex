@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -111,12 +112,35 @@ def _render_command(command: str, values: dict[str, str]) -> str:
     return rendered
 
 
-def _run_shell(command: str, *, cwd: Path, timeout_s: float) -> dict[str, Any]:
+def _split_command(command: str) -> tuple[list[str], str]:
+    unsupported = {"|", ">", "<", "&&", "||", ";"}
+    try:
+        argv = shlex.split(command, posix=os.name != "nt")
+    except ValueError as exc:
+        return [], str(exc)
+    if not argv:
+        return [], "empty command"
+    if any(token in unsupported for token in argv):
+        return [], "shell metacharacters are not supported; pass a direct argv-style command"
+    return argv, ""
+
+
+def _run_command(command: str, *, cwd: Path, timeout_s: float) -> dict[str, Any]:
     started = time.perf_counter()
+    argv, split_error = _split_command(command)
+    if split_error:
+        return {
+            "command": command,
+            "argv": argv,
+            "returncode": 2,
+            "status": "fail",
+            "stdout_tail": "",
+            "stderr_tail": split_error,
+            "duration_s": round(time.perf_counter() - started, 4),
+        }
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
+            argv,
             cwd=str(cwd),
             env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
             text=True,
@@ -126,6 +150,7 @@ def _run_shell(command: str, *, cwd: Path, timeout_s: float) -> dict[str, Any]:
         )
         return {
             "command": command,
+            "argv": argv,
             "returncode": proc.returncode,
             "status": "pass" if proc.returncode == 0 else "fail",
             "stdout_tail": proc.stdout[-12000:],
@@ -135,6 +160,7 @@ def _run_shell(command: str, *, cwd: Path, timeout_s: float) -> dict[str, Any]:
     except subprocess.TimeoutExpired as exc:
         return {
             "command": command,
+            "argv": argv,
             "returncode": 124,
             "status": "timeout",
             "stdout_tail": (exc.stdout or "")[-12000:] if isinstance(exc.stdout, str) else "",
@@ -175,7 +201,7 @@ def _run_stage_commands(ip: Path, commands: list[tuple[str, str]], *, spec_ref: 
         if not command.strip():
             continue
         rendered = _render_command(command, values)
-        result = _run_shell(rendered, cwd=PROJECT_ROOT, timeout_s=timeout_s)
+        result = _run_command(rendered, cwd=PROJECT_ROOT, timeout_s=timeout_s)
         result["stage"] = stage
         results.append(result)
     return results

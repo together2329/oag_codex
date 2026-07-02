@@ -1,0 +1,130 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_team_plan.schema.json",
+  "title": "OAG Team Plan",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "status",
+    "generated_at",
+    "ip",
+    "recommendation",
+    "team",
+    "tasks",
+    "stop_conditions",
+    "issues",
+    "no_spawn"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_team_plan.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail", "blocked"]
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "recommendation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "score", "reason"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["default", "team_plan_optional", "team_plan_recommended", "blocked"]
+        },
+        "score": {
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "team": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["lead", "workers"],
+      "properties": {
+        "lead": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["role", "owner", "responsibilities"],
+          "properties": {
+            "role": {
+              "type": "string",
+              "minLength": 1
+            },
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "responsibilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["role", "owner", "count", "responsibilities"],
+            "properties": {
+              "role": {
+                "type": "string",
+                "minLength": 1
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "integer"
+              },
+              "responsibilities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "no_spawn": {
+      "type": "boolean"
+    }
+  }
+}

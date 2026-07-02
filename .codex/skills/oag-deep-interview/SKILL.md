@@ -344,12 +344,17 @@ python3 .codex/scripts/oag_deep_interview_round.py handoff \
   --json-file <round.json> \
   --selected-option A \
   --write-decision-matrix \
-  --write-source-claim
+  --write-source-claim \
+  --refresh-action-plan \
+  --render-operation-frame
 ```
 
 Use `--confirmed` only when the user or a cited source explicitly confirmed the
 answer. Without `--confirmed`, generated decision rows remain proposed and
-source claims remain draft.
+source claims remain draft. Use `--refresh-action-plan` and
+`--render-operation-frame` when the answer changes the current operating state:
+the handoff will regenerate Mission/Action candidates and a formal operation
+frame so the next question/action is selected from the updated SSOT.
 
 ## Decision Matrix Handoff
 

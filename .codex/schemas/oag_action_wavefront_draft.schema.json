@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_action_wavefront_draft.schema.json",
+  "title": "OAG Action Wavefront Draft",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "ip",
+    "mission_template",
+    "tasks",
+    "barriers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_action_wavefront_draft.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mission_template": {
+      "type": "string"
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["task_id", "action_candidate_id", "action_type", "agent_type", "phase", "depends_on"],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action_candidate_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action_type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "agent_type": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "barriers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

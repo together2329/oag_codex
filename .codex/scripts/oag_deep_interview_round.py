@@ -401,12 +401,64 @@ def handoff_round(args: argparse.Namespace) -> dict[str, Any]:
         handoff_record["target_files"].append(str(claims_path))
 
     out_path.write_text(json.dumps(handoff_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    action_plan_result: dict[str, Any] = {}
+    operation_frame_result: dict[str, Any] = {}
+    if getattr(args, "refresh_action_plan", False):
+        import oag_action_plan  # pylint: disable=import-outside-toplevel
+
+        action_plan_result = oag_action_plan.build_plan(ip_dir, write=True, run_semantic_checks=False)
+        if action_plan_result.get("status") != "pass":
+            raise SystemExit(f"action plan refresh failed: {action_plan_result}")
+        for key in ("output_path", "action_graph_path"):
+            if _text(action_plan_result.get(key)):
+                handoff_record["target_files"].append(str(ip_dir / _text(action_plan_result.get(key))))
+        handoff_record["action_plan_ref"] = {
+            "output_path": action_plan_result.get("output_path") or "",
+            "action_graph_path": action_plan_result.get("action_graph_path") or "",
+            "mission_instance_id": action_plan_result.get("mission_instance_id") or "",
+            "recommended_action": (action_plan_result.get("recommended_action") or {}).get("action_type")
+            if isinstance(action_plan_result.get("recommended_action"), dict)
+            else "",
+        }
+    if getattr(args, "render_operation_frame", False):
+        import oag_operation_review_frame  # pylint: disable=import-outside-toplevel
+
+        operation_frame_result = oag_operation_review_frame.build_frame(ip_dir, Path("knowledge/operation_frames/deep_interview_latest"))
+        if operation_frame_result.get("status") != "pass":
+            raise SystemExit(f"operation frame render failed: {operation_frame_result}")
+        for key in ("html", "json"):
+            if _text(operation_frame_result.get(key)):
+                handoff_record["target_files"].append(_text(operation_frame_result.get(key)))
+        handoff_record["operation_frame_ref"] = {
+            "html": operation_frame_result.get("html") or "",
+            "json": operation_frame_result.get("json") or "",
+            "frame_status": operation_frame_result.get("frame_status") or "",
+        }
+
+    if action_plan_result or operation_frame_result:
+        out_path.write_text(json.dumps(handoff_record, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return {
         "schema_version": "oag_deep_interview_handoff_result.v1",
         "status": "pass",
         "handoff_path": str(out_path),
         "decision_matrix_ref": decision_ref,
         "target_files": handoff_record["target_files"],
+        "action_plan": {
+            "status": action_plan_result.get("status") or "",
+            "output_path": action_plan_result.get("output_path") or "",
+            "action_graph_path": action_plan_result.get("action_graph_path") or "",
+            "mission_instance_id": action_plan_result.get("mission_instance_id") or "",
+            "recommended_action": (action_plan_result.get("recommended_action") or {}).get("action_type")
+            if isinstance(action_plan_result.get("recommended_action"), dict)
+            else "",
+        },
+        "operation_frame": {
+            "status": operation_frame_result.get("status") or "",
+            "html": operation_frame_result.get("html") or "",
+            "json": operation_frame_result.get("json") or "",
+            "frame_status": operation_frame_result.get("frame_status") or "",
+        },
     }
 
 
@@ -532,6 +584,8 @@ def main() -> int:
     handoff.add_argument("--write-decision-matrix", action="store_true")
     handoff.add_argument("--write-source-claim", action="store_true")
     handoff.add_argument("--claim-id", default="")
+    handoff.add_argument("--refresh-action-plan", action="store_true", help="Regenerate Mission/Action candidates after persisting the answer.")
+    handoff.add_argument("--render-operation-frame", action="store_true", help="Render a formal operation review frame after refreshing Mission/Action state.")
 
     args = parser.parse_args()
     if args.command == "template":

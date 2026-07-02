@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_action_candidates.schema.json",
+  "title": "OAG Generated Action Candidates",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "ip",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_action_candidates.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mission_template": {
+      "type": "string"
+    },
+    "open_items": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "action_type",
+          "status",
+          "priority",
+          "recommended",
+          "recommendation_reason",
+          "target_objects",
+          "open_items",
+          "preconditions",
+          "owner_role",
+          "expected_effects"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ACT_CAND_[A-Za-z0-9_.:-]+$"
+          },
+          "action_type": {
+            "type": "string",
+            "pattern": "^ACT_[A-Z0-9_]+$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ready", "blocked", "informational"]
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["P0", "P1", "P2", "P3"]
+          },
+          "recommended": {
+            "type": "boolean"
+          },
+          "recommendation_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target_objects": {
+            "type": "object"
+          },
+          "open_items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "preconditions": {
+            "type": "object"
+          },
+          "owner_role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expected_effects": {
+            "type": "object"
+          },
+          "command": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

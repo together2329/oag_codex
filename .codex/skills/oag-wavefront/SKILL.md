@@ -71,6 +71,19 @@ python3 .codex/scripts/oag_wavefront.py plan \
   --json
 ```
 
+Create a graph from current Mission/Action candidates when the operating plan
+has already selected the next ready work split:
+
+```bash
+python3 .codex/scripts/oag_action_wavefront_draft.py \
+  --ip-dir <ip> \
+  --materialize-run-id <run_id> \
+  --json
+```
+
+This writes an intermediate generated template and a wavefront graph. It still
+does not claim tasks, create dispatch records, or approve handoffs.
+
 List ready tasks:
 
 ```bash

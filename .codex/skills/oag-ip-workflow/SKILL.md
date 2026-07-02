@@ -31,6 +31,9 @@ task enters one of these lanes:
 - `oag-wavefront`: dependency-aware parallel work planning, ownership locks,
   barrier tokens, read-only triage, disjoint write shards, and single
   integration owners.
+- `oag-team-mode`: plan-only Team Lead plus Worker recommendations for complex
+  or multi-role IP work. It reads Mission/Action and orchestration state but
+  must not spawn workers, claim tasks, or create dispatches by itself.
 - `oag-ip-versioning`: IP-local functional semantic versioning, golden baseline
   lineage, manifest/tag readiness, and patch/minor/major stewardship.
 - `oag-evidence-closure`: scoreboard, coverage, validation, trace graph,
@@ -60,21 +63,76 @@ python3 .codex/scripts/oag_run_frame.py --ip-dir <ip> --json
 The run frame is the current-state snapshot for human and agent orchestration:
 IP-local git status, scope lock state, active wavefront locks, compile
 freshness, stale lifecycle evidence, pending gate frames, SSOT section health,
-four next-action options, and the recommended next action. Treat terminal
-scrollback as advisory only; durable JSON frames, receipts, decisions, and
-artifact hashes are the source of truth.
+Mission/Action candidates, four next-action options, and the recommended next
+action. Treat terminal scrollback as advisory only; durable JSON frames,
+Action instances, receipts, decisions, and artifact hashes are the source of
+truth.
+
+The Mission/Action layer is the operation planner. It does not replace
+requirements, obligations, contracts, wavefront locks, dispatches, receipts, or
+ROCEV records; it makes the next operation explicit and auditable:
+
+```bash
+python3 .codex/scripts/oag_action_plan.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_mission_runtime.py show --ip-dir <ip> --mission-id active --json
+python3 .codex/scripts/oag_mission_runtime.py evaluate --ip-dir <ip> --mission-id active --json
+python3 .codex/scripts/oag_role_health.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_action_wavefront_draft.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_action_wavefront_draft.py --ip-dir <ip> --materialize-run-id <run_id> --json
+python3 .codex/scripts/oag_team_plan.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_action_record.py start --ip-dir <ip> --candidate-id recommended --selected-reason "<why this action was chosen>" --json
+python3 .codex/scripts/oag_action_record.py update --ip-dir <ip> --action-id latest --status accepted --summary "<what happened>" --json
+python3 .codex/scripts/oag_operation_review_frame.py --ip-dir <ip> --json
+python3 .codex/scripts/oag_mission_loop.py tick --ip-dir <ip> --json
+python3 .codex/scripts/oag_mission_loop.py run --ip-dir <ip> --max-ticks 5 --json
+```
+
+Use `oag_action_record.py update` to attach dispatch ids, receipt paths,
+wavefront task refs, changed paths, evidence paths, blockers, and review
+decisions. Use `--git-checkpoint` when the action result should become an
+IP-local git checkpoint, and `--auto-link-latest-dispatch` or
+`--auto-link-active-wavefront` only when that linkage is intentional and
+audited. Generated candidates under `ontology/generated/action_candidates.json`
+`ontology/generated/action_graph.json`, and
+`ontology/generated/action_wavefront_draft.json` are current-state
+recommendations. The wavefront draft is not a claim and not a dispatch; it is a
+reviewable task-shaped proposal with dependencies, owner roles, dispatch hints,
+and `may_claim_complete=false`. `--materialize-run-id` converts that proposal
+into a durable wavefront graph, but still does not claim tasks or create
+dispatches. Mission instances under `knowledge/missions/` and Action instances
+under `knowledge/actions/` are durable audit history.
+Role health under `knowledge/operations/role_health.json` is derived state from
+Action instances and active locks; stuck or degraded roles should route through
+`ACT_ORCHESTRATION_RECOVERY` before opening more work for the affected role.
+
+For human operation review, use the operation review frame. It renders the
+current Mission, recommended action, four options, open items, Action graph,
+draft wavefront tasks, role health, mission completion criteria, Action
+history, and stuck/open actions without replacing the source JSON:
+
+```bash
+python3 .codex/scripts/oag_operation_review_frame.py --ip-dir <ip> --json
+```
+
+If a started or running Action instance exceeds the action-plan stuck timeout,
+`oag_action_plan.py` emits an `ACT_ORCHESTRATION_RECOVERY` candidate. Resolve or
+abort that Action record before opening conflicting dispatches.
 
 When a run has active locks or a child appears stuck, use the orchestration
 guard before opening replacement work:
 
 ```bash
 python3 .codex/scripts/oag_orchestration_guard.py audit --ip-dir <ip> --json
+python3 .codex/scripts/oag_orchestration_guard.py fallback-plan --ip-dir <ip> --json
 ```
 
 Do not create a replacement dispatch while an ownership lock is active. If a
 task must be abandoned, explicitly route it with `abort-task` to
 `blocked`, `failed`, or `inconclusive`; late receipts from that aborted
-dispatch are not valid handoffs.
+dispatch are not valid handoffs. For stale gate-review locks, use
+`fallback-plan` to quarantine late receipts and retry the gate as a fresh
+`oag-custom-reviewer` dispatch instead of repeatedly spawning the dedicated
+gate-reviewer role.
 
 Use the SSOT section checker at planning, pre-dispatch, and closure boundaries:
 
@@ -94,6 +152,16 @@ or consumed:
 ```bash
 python3 .codex/scripts/oag_ip_version_check.py --ip-dir <ip> --require-ip-git --json
 ```
+
+For Windows portability, run:
+
+```bash
+python3 .codex/scripts/oag_windows_smoke.py --json
+```
+
+This checks that runtime hooks/scripts avoid `/bin/sh`, `sh.exe`, and
+`shell=True`, and that Git for Windows discovery remains available for
+PowerShell-based IP-local checkpointing.
 
 ## Start
 
@@ -387,13 +455,33 @@ durable run loop:
 ```bash
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
 python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_mission_loop.py tick --ip-dir <ip> --json
+python3 .codex/scripts/oag_mission_loop.py run --ip-dir <ip> --max-ticks 5 --json
+python3 .codex/scripts/oag_mission_loop.py pause --ip-dir <ip> --reason "<why>" --json
+python3 .codex/scripts/oag_mission_loop.py explain --ip-dir <ip> --json
 ```
 
 `oag.run.start` derives the active obligation from the closure matrix and writes
 `ontology/runs/<run_id>/run_state.json`, `next_action.json`, and
 `checkpoint_history.jsonl`. `oag.run.next` always returns one action to take
-next. The run loop is a driver; it does not replace ROCEV records or decision
-receipts.
+next. `oag_mission_loop.py` is the bounded "keeps working" controller above the
+Mission/Action layer: each tick audits orchestration hazards, refreshes Action
+candidates, starts at most one Action record in record mode, and stops on human
+questions, active locks, blocked candidates, or dispatch-required boundaries.
+The run loop is a driver; it does not replace ROCEV records, wavefront locks,
+dispatch receipts, or decision receipts.
+
+When a user question is likely but local sources exist, the Mission/Action
+layer should prefer `ACT_SELF_EXPLORE_OPTIONS` before asking. Run:
+
+```bash
+python3 .codex/scripts/oag_exploration_plan.py --ip-dir <ip> --json
+```
+
+This writes `knowledge/mission_loop/exploration_plan.json` with the current
+ask-versus-explore decision, source targets, option axes, and a bounded research
+prompt. Ask the user only after this local evidence pass leaves one residual
+product-defining or lock-critical question.
 
 After `oag.compile`, treat `ontology/generated/design_spec.json`,
 `ontology/generated/authoring_packets/*.json`,

@@ -1,0 +1,93 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_exploration_plan.schema.json",
+  "title": "OAG Ask-Versus-Explore Plan",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "status",
+    "generated_at",
+    "ip",
+    "ask_vs_explore",
+    "input_fingerprint",
+    "source_targets",
+    "option_axes",
+    "research_prompt"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_exploration_plan.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "generated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ask_vs_explore": {
+      "type": "object",
+      "required": [
+        "decision",
+        "reason",
+        "question_required_now",
+        "lock_critical"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["self_explore", "ask_user", "proceed_action", "blocked", "idle"]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question_required_now": {
+          "type": "boolean"
+        },
+        "lock_critical": {
+          "type": "boolean"
+        }
+      }
+    },
+    "input_fingerprint": {
+      "type": "object",
+      "required": ["sha256"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "source_targets": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "option_axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object"
+      }
+    },
+    "research_prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

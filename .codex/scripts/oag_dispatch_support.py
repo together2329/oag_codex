@@ -367,8 +367,12 @@ def enforce_authoring_packet_gate(ip_dir: Path) -> JsonObject:
 
 def path_matches(path: str, patterns: list[str]) -> bool:
     path = path.strip("/")
+    while path.startswith("./"):
+        path = path[2:]
     for pattern in patterns:
         normalized = pattern.strip("/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
         if not normalized:
             continue
         if any(char in normalized for char in "*?["):

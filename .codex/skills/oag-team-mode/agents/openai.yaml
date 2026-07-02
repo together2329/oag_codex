@@ -1,0 +1,4 @@
+interface:
+  display_name: "OAG Team Mode"
+  short_description: "Plan bounded OAG team workflows"
+  default_prompt: "Use $oag-team-mode to plan a bounded Team Lead plus Worker flow for this IP task."

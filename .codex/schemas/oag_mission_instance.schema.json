@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_mission_instance.schema.json",
+  "title": "OAG Mission Instance",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "id",
+    "template_id",
+    "status",
+    "started_at",
+    "target_state",
+    "current_open_items",
+    "current_recommended_action",
+    "action_instance_refs",
+    "observations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_mission_instance.v1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^MISSION_RUN_[A-Za-z0-9_.:-]+$"
+    },
+    "template_id": {
+      "type": "string",
+      "pattern": "^MISSION_[A-Z0-9_]+$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "completed", "blocked", "superseded", "abandoned"]
+    },
+    "started_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "last_observed_at": {
+      "type": "string"
+    },
+    "completed_at": {
+      "type": "string"
+    },
+    "target_state": {
+      "type": "object"
+    },
+    "current_open_items": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "current_recommended_action": {
+      "type": "object"
+    },
+    "action_instance_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""Check OAG pack assumptions that commonly break on Windows hosts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+SCRIPTS_DIR = Path(__file__).resolve().parent
+CODEX_ROOT = SCRIPTS_DIR.parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import oag_ip_git  # noqa: E402
+import oag_spec_to_rtl_loop  # noqa: E402
+
+
+SCHEMA_VERSION = "oag_windows_smoke.v1"
+FORBIDDEN_RUNTIME_TOKENS = ("/bin/sh", "sh.exe", "shell=True", "bash -lc")
+
+
+def issue(code: str, message: str, path: str = "") -> dict[str, str]:
+    payload = {"code": code, "message": message}
+    if path:
+        payload["path"] = path
+    return payload
+
+
+def scan_runtime_sources() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    roots = [CODEX_ROOT / "hooks", CODEX_ROOT / "scripts"]
+    excluded = {"smoke_test.py", "oag_windows_smoke.py"}
+    for root in roots:
+        for path in sorted(root.glob("*.py")):
+            if path.name in excluded:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for token in FORBIDDEN_RUNTIME_TOKENS:
+                if token in text:
+                    issues.append(issue("WINDOWS_SHELL_ASSUMPTION", f"runtime source contains {token!r}", str(path)))
+    hooks = CODEX_ROOT / "hooks.json"
+    try:
+        payload = json.loads(hooks.read_text(encoding="utf-8"))
+    except Exception as exc:
+        issues.append(issue("HOOKS_JSON_LOAD", str(exc), str(hooks)))
+        return issues, warnings
+    commands: list[str] = []
+    for entries in payload.get("hooks", {}).values():
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for hook in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
+                if isinstance(hook, dict) and hook.get("command"):
+                    commands.append(str(hook["command"]))
+    for command in commands:
+        if any(token in command for token in FORBIDDEN_RUNTIME_TOKENS):
+            issues.append(issue("HOOK_COMMAND_SHELL_ASSUMPTION", "hook command depends on a shell-specific executable", "hooks.json"))
+        if not command.startswith("python3 "):
+            warnings.append(issue("HOOK_COMMAND_NOT_PYTHON3", "hook command is not a direct python3 invocation", command))
+    return issues, warnings
+
+
+def check_command_splitting() -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    argv, error = oag_spec_to_rtl_loop._split_command('python3 -c "print(1)"')  # pylint: disable=protected-access
+    if error or argv[:2] != ["python3", "-c"]:
+        issues.append(issue("ARGV_SPLIT_DIRECT_COMMAND", f"direct command split failed: argv={argv!r} error={error!r}"))
+    argv, error = oag_spec_to_rtl_loop._split_command("python3 good.py && python3 bad.py")  # pylint: disable=protected-access
+    if not error:
+        issues.append(issue("ARGV_SPLIT_SHELL_META_ALLOWED", f"shell metacharacter command should be rejected: {argv!r}"))
+    return issues
+
+
+def check_git_probe() -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
+    issues: list[dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
+    git = oag_ip_git.git_executable()
+    probe = {
+        "git_executable": git or "",
+        "windows_candidate_count": len(oag_ip_git.WINDOWS_GIT_CANDIDATES),
+        "git_version": "",
+        "available": False,
+    }
+    if not oag_ip_git.WINDOWS_GIT_CANDIDATES:
+        issues.append(issue("WINDOWS_GIT_CANDIDATES_MISSING", "Git for Windows candidate paths are not configured"))
+    if git is None:
+        warnings.append(issue("GIT_NOT_AVAILABLE", "git was not found on PATH or known Windows install locations"))
+        return issues, warnings, probe
+    proc = subprocess.run([git, "--version"], text=True, capture_output=True, check=False)
+    probe["available"] = proc.returncode == 0
+    probe["git_version"] = proc.stdout.strip()
+    if proc.returncode != 0:
+        warnings.append(issue("GIT_VERSION_FAILED", proc.stderr.strip() or proc.stdout.strip() or "git --version failed", git))
+    return issues, warnings, probe
+
+
+def run() -> dict[str, Any]:
+    issues, warnings = scan_runtime_sources()
+    issues.extend(check_command_splitting())
+    git_issues, git_warnings, git_probe = check_git_probe()
+    issues.extend(git_issues)
+    warnings.extend(git_warnings)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "status": "fail" if issues else "pass",
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "python": sys.version.split()[0],
+        },
+        "git": git_probe,
+        "checks": {
+            "runtime_source_scan": "pass" if not [item for item in issues if item.get("code") == "WINDOWS_SHELL_ASSUMPTION"] else "fail",
+            "hook_commands": "pass" if not [item for item in issues if item.get("code") == "HOOK_COMMAND_SHELL_ASSUMPTION"] else "fail",
+            "argv_command_split": "pass" if not [item for item in issues if item.get("code", "").startswith("ARGV_SPLIT")] else "fail",
+            "git_probe": "pass" if not git_issues else "fail",
+        },
+        "issues": issues,
+        "warnings": warnings,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+    payload = run()
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    elif payload["status"] == "pass":
+        print(f"PASS {SCHEMA_VERSION}")
+    else:
+        print(f"FAIL {SCHEMA_VERSION}", file=sys.stderr)
+        for item in payload["issues"]:
+            print(f"- {item.get('code')}: {item.get('message')}", file=sys.stderr)
+    return 0 if payload["status"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -54,6 +54,9 @@ When the task enters a narrow lane, apply the matching skill:
 - `oag-wavefront` for dependency-aware parallel dispatch planning, ownership
   locks, barrier tokens, read-only triage, disjoint write shards, and single
   integration owners.
+- `oag-team-mode` for plan-only Team Lead plus Worker recommendations. Use
+  `python3 .codex/scripts/oag_team_plan.py --ip-dir <ip> --json` to decide
+  whether Team Mode is justified; do not spawn workers from the plan alone.
 - `oag-ip-versioning` for IP-local functional semantic versions, golden
   baseline lineage, manifest/tag readiness, and patch/minor/major bump
   recommendations.
@@ -108,6 +111,10 @@ Use the OAG principle layer before choosing artifacts:
   execution over existing ontology truth. Use
   `python3 .codex/scripts/oag_wavefront.py` to plan ready tasks, claim
   disjoint ownership, record barrier outputs, and verify runtime invariants.
+- `.codex/oag/team-mode-policy.md` for plan-only Team Lead plus Worker
+  recommendations over Mission/Action and orchestration state. Use
+  `python3 .codex/scripts/oag_team_plan.py --ip-dir <ip> --json`; the output
+  is a proposal, not dispatch authority.
 - `.codex/oag/contract-projection.md` for Requirement -> Obligation ->
   Contract -> Evidence projection.
 - `.codex/oag/rtl-implementation.md` for generated RTL implementation

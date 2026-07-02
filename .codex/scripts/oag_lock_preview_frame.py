@@ -224,7 +224,93 @@ def render_summary_value(value: Any) -> str:
     return html.escape(str(value))
 
 
-def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, Any]], readiness: dict[str, Any]) -> str:
+def collect_operation_context(ip_dir: Path) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "status": "pass",
+        "issues": [],
+        "recommended_action": {},
+        "next_actions": [],
+        "mission": {},
+        "wavefront_task_count": 0,
+        "role_hazards": [],
+    }
+    try:
+        import oag_action_plan  # pylint: disable=import-outside-toplevel
+        import oag_action_wavefront_draft  # pylint: disable=import-outside-toplevel
+        import oag_mission_runtime  # pylint: disable=import-outside-toplevel
+        import oag_role_health  # pylint: disable=import-outside-toplevel
+
+        plan_result = oag_action_plan.build_plan(ip_dir, write=False, run_semantic_checks=False)
+        plan = plan_result.get("plan") if isinstance(plan_result.get("plan"), dict) else {}
+        candidates = [item for item in plan.get("candidates", []) if isinstance(item, dict)]
+        recommended = next((item for item in candidates if item.get("recommended") is True), candidates[0] if candidates else {})
+        mission = oag_mission_runtime.latest_active_mission(ip_dir) or {}
+        mission.pop("_path", None)
+        wavefront = oag_action_wavefront_draft.build_draft(ip_dir, max_tasks=8, refresh_plan=False)
+        role_health = oag_role_health.collect_role_health(ip_dir)
+        context.update(
+            {
+                "recommended_action": recommended,
+                "next_actions": candidates[:4],
+                "mission": mission,
+                "wavefront_task_count": len(wavefront.get("tasks", []) if isinstance(wavefront.get("tasks"), list) else []),
+                "role_hazards": [item for item in role_health.get("hazards", []) if isinstance(item, dict)],
+            }
+        )
+        if plan_result.get("status") != "pass":
+            context["status"] = "needs_attention"
+            context["issues"].extend(plan_result.get("issues", []) if isinstance(plan_result.get("issues"), list) else [])
+    except Exception as exc:
+        context["status"] = "unavailable"
+        context["issues"].append({"code": "OPERATION_CONTEXT_UNAVAILABLE", "message": str(exc)})
+    return context
+
+
+def render_operation_context(operation_context: dict[str, Any]) -> str:
+    recommended = operation_context.get("recommended_action") if isinstance(operation_context.get("recommended_action"), dict) else {}
+    options = [item for item in operation_context.get("next_actions", []) if isinstance(item, dict)]
+    mission = operation_context.get("mission") if isinstance(operation_context.get("mission"), dict) else {}
+    hazards = [item for item in operation_context.get("role_hazards", []) if isinstance(item, dict)]
+    option_rows = "".join(
+        "<tr>"
+        f"<td>{'yes' if item.get('recommended') else ''}</td>"
+        f"<td>{html.escape(str(item.get('priority') or ''))}</td>"
+        f"<td><code>{html.escape(str(item.get('action_type') or ''))}</code></td>"
+        f"<td>{html.escape(str(item.get('recommendation_reason') or ''))}</td>"
+        "</tr>"
+        for item in options
+    )
+    if not option_rows:
+        option_rows = "<tr><td colspan=\"4\" class=\"muted-text\">No Action candidates available.</td></tr>"
+    hazard_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(item.get('role') or ''))}</td>"
+        f"<td><code>{html.escape(str(item.get('code') or ''))}</code></td>"
+        f"<td>{html.escape(str(item.get('message') or ''))}</td>"
+        "</tr>"
+        for item in hazards
+    )
+    if not hazard_rows:
+        hazard_rows = "<tr><td colspan=\"3\" class=\"pass-text\">No role hazards detected.</td></tr>"
+    return f"""
+  <section class="panel">
+    <h2>Operation Context</h2>
+    <p>This section is navigation context only. It does not replace the verbatim source panels below.</p>
+    <div class="op-grid">
+      <div><span>Mission</span><strong><code>{html.escape(str(mission.get('template_id') or ''))}</code></strong></div>
+      <div><span>Recommended Action</span><strong><code>{html.escape(str(recommended.get('action_type') or ''))}</code></strong></div>
+      <div><span>Wavefront Draft Tasks</span><strong>{html.escape(str(operation_context.get('wavefront_task_count') or 0))}</strong></div>
+      <div><span>Role Hazards</span><strong>{len(hazards)}</strong></div>
+    </div>
+    <h3 style="margin-top:16px">Four Current Options</h3>
+    <table><thead><tr><th>Recommended</th><th>Priority</th><th>Action Type</th><th>Why</th></tr></thead><tbody>{option_rows}</tbody></table>
+    <h3 style="margin-top:16px">Role Hazards</h3>
+    <table><thead><tr><th>Role</th><th>Code</th><th>Message</th></tr></thead><tbody>{hazard_rows}</tbody></table>
+  </section>
+"""
+
+
+def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, Any]], readiness: dict[str, Any], operation_context: dict[str, Any] | None = None) -> str:
     mode = str(metadata.get("frame_mode") or "pre-lock")
     mode_cfg = FRAME_MODES.get(mode, FRAME_MODES["pre-lock"])
     status = str(readiness.get("status") or "unknown")
@@ -289,6 +375,7 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
     if not issue_rows:
         issue_rows = "<tr><td colspan=\"3\" class=\"pass-text\">No lock-readiness issues reported by the checker.</td></tr>"
     action_rows = "".join(f"<li>{html.escape(str(item))}</li>" for item in next_actions) or "<li>No next action from readiness checker.</li>"
+    operation_panel = render_operation_context(operation_context) if operation_context else ""
 
     return f"""<!doctype html>
 <html lang="en">
@@ -388,9 +475,14 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
     .missing {{ color: var(--fail); font-weight: 700; }}
     .muted-text {{ color: var(--muted); }}
     .actions {{ margin: 8px 0 0; padding-left: 22px; }}
+    .op-grid {{ display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:12px; margin-top:12px; }}
+    .op-grid div {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; min-width:0; }}
+    .op-grid span {{ display:block; color:var(--muted); font-size:12px; }}
+    .op-grid strong {{ display:block; margin-top:4px; overflow-wrap:anywhere; }}
     @media (max-width: 860px) {{
       main {{ padding: 20px 12px 48px; }}
       .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .op-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .meta {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 24px; }}
     }}
@@ -430,6 +522,8 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
     <ul class="actions">{action_rows}</ul>
   </section>
 
+  {operation_panel}
+
   <section class="panel">
     <h2>Source Index</h2>
     <table>
@@ -451,7 +545,7 @@ def default_output_dir(frame_mode: str) -> Path:
     return Path("knowledge/review_frames") / frame_mode
 
 
-def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, frame_mode: str = "pre-lock") -> dict[str, Any]:
+def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, frame_mode: str = "pre-lock", include_operation_context: bool = True) -> dict[str, Any]:
     ip_dir = oag_paths.ip_root(ip_dir)
     if not ip_dir.is_dir():
         raise FileNotFoundError(f"IP directory does not exist: {ip_dir}")
@@ -464,6 +558,7 @@ def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, f
     require_locked = readiness_mode == "lock-ready"
     readiness = oag_lock_readiness_check.check(ip_dir, require_locked=require_locked)
     sources = collect_sources(ip_dir)
+    operation_context = collect_operation_context(ip_dir) if include_operation_context else {}
     metadata = {
         "schema_version": "oag_lock_preview_frame.v1",
         "generated_at": utc_now(),
@@ -477,8 +572,9 @@ def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, f
         **metadata,
         "readiness": readiness,
         "sources": [{key: value for key, value in source.items() if key != "raw_text"} for source in sources],
+        "operation_context": operation_context,
     }
-    html_text = render_html(ip_dir, metadata, sources, readiness)
+    html_text = render_html(ip_dir, metadata, sources, readiness, operation_context if include_operation_context else None)
     html_path = output_dir / "index.html"
     json_path = output_dir / "lock_preview_frame.json"
     html_path.write_text(html_text, encoding="utf-8")
@@ -494,6 +590,7 @@ def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, f
         "readiness_issue_count": len(readiness.get("issues") or []),
         "present_sources": sum(1 for item in sources if item["exists"]),
         "missing_sources": [item["path"] for item in sources if not item["exists"]],
+        "operation_context_status": operation_context.get("status") if operation_context else "disabled",
     }
 
 
@@ -517,6 +614,7 @@ def main() -> int:
         default="lock-ready",
         help="Use lock-ready to run hard pre-lock gates even before scope_lock.json is locked.",
     )
+    parser.add_argument("--no-operation-context", action="store_true", help="Do not include read-only Mission/Action context at the top of the frame.")
     parser.add_argument("--json", action="store_true", help="Print JSON result.")
     args = parser.parse_args()
     try:
@@ -525,6 +623,7 @@ def main() -> int:
             Path(args.output_dir) if args.output_dir else None,
             readiness_mode=args.readiness_mode,
             frame_mode=args.frame_mode,
+            include_operation_context=not args.no_operation_context,
         )
     except Exception as exc:
         result = {

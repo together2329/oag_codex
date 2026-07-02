@@ -57,7 +57,18 @@ BASELINE_VERIFY = ROOT / "scripts" / "oag_baseline_verify.py"
 IP_VERSION_CHECK = ROOT / "scripts" / "oag_ip_version_check.py"
 IP_GIT = ROOT / "scripts" / "oag_ip_git.py"
 RUN_FRAME = ROOT / "scripts" / "oag_run_frame.py"
+ACTION_MODEL_CHECK = ROOT / "scripts" / "oag_action_model_check.py"
+MISSION_RUNTIME = ROOT / "scripts" / "oag_mission_runtime.py"
+MISSION_LOOP = ROOT / "scripts" / "oag_mission_loop.py"
+EXPLORATION_PLAN = ROOT / "scripts" / "oag_exploration_plan.py"
+ACTION_PLAN = ROOT / "scripts" / "oag_action_plan.py"
+ACTION_WAVEFRONT_DRAFT = ROOT / "scripts" / "oag_action_wavefront_draft.py"
+TEAM_PLAN = ROOT / "scripts" / "oag_team_plan.py"
+ACTION_RECORD = ROOT / "scripts" / "oag_action_record.py"
+OPERATION_REVIEW_FRAME = ROOT / "scripts" / "oag_operation_review_frame.py"
+ROLE_HEALTH = ROOT / "scripts" / "oag_role_health.py"
 ORCHESTRATION_GUARD = ROOT / "scripts" / "oag_orchestration_guard.py"
+WINDOWS_SMOKE = ROOT / "scripts" / "oag_windows_smoke.py"
 REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
 GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
@@ -74,6 +85,7 @@ OAG_CONTRACT_PROJECTION_SKILL = ROOT / "skills" / "oag-contract-projection" / "S
 OAG_AUTHORING_PACKET_SKILL = ROOT / "skills" / "oag-authoring-packet" / "SKILL.md"
 OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.md"
 OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
+OAG_TEAM_MODE_SKILL = ROOT / "skills" / "oag-team-mode" / "SKILL.md"
 OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
 OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
 OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
@@ -112,6 +124,8 @@ SCHEMA_FILES = [
     ROOT / "schemas" / "oag_artifact_lifecycle.schema.json",
     ROOT / "schemas" / "oag_baseline_manifest.schema.json",
     ROOT / "schemas" / "oag_ip_version.schema.json",
+    ROOT / "schemas" / "oag_exploration_plan.schema.json",
+    ROOT / "schemas" / "oag_team_plan.schema.json",
 ]
 
 
@@ -1277,6 +1291,114 @@ def run_oag_run_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_oag_action_model_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(ACTION_MODEL_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_action_plan(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(ACTION_PLAN), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_action_wavefront_draft(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(ACTION_WAVEFRONT_DRAFT), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_team_plan(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(TEAM_PLAN), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_role_health(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(ROLE_HEALTH), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_action_record(command: str, ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(ACTION_RECORD), command, "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_mission_runtime(command: str, ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(MISSION_RUNTIME), command, "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_mission_loop(command: str, ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(MISSION_LOOP), command, "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_oag_operation_review_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(OPERATION_REVIEW_FRAME), "--ip-dir", str(ip), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
 def run_oag_review_frame(ip: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
@@ -1323,6 +1445,18 @@ def run_oag_orchestration_guard(*args: str, project_root: Path | None = None) ->
         capture_output=True,
         check=False,
         cwd=project_root or ROOT.parent,
+        env=env,
+    )
+
+
+def run_oag_windows_smoke(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(WINDOWS_SMOKE), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
         env=env,
     )
 
@@ -1844,19 +1978,95 @@ def test_lock_preview_frame_preserves_verbatim_source(tmp_root: Path) -> None:
     assert json_path.is_file(), payload
     html_text = html_path.read_text(encoding="utf-8")
     assert "OAG Pre-Lock Review Frame" in html_text, html_text
+    assert "Operation Context" in html_text, html_text
     assert "req/source_claims.yaml" in html_text, html_text
     assert "RAW_MARKER &lt;keep &amp; exact&gt;" in html_text, html_text
     assert "The block below is the file content with HTML escaping only" in html_text, html_text
     sidecar = json.loads(json_path.read_text(encoding="utf-8"))
     assert sidecar["schema_version"] == "oag_lock_preview_frame.v1", sidecar
+    assert sidecar["operation_context"]["status"] in {"pass", "needs_attention", "unavailable"}, sidecar
     source_rows = {item["name"]: item for item in sidecar["sources"]}
     assert source_rows["source_claims"]["sha256"] == sha256(source_claims), source_rows["source_claims"]
     assert "raw_text" not in source_rows["source_claims"], source_rows["source_claims"]
 
 
+def test_oag_team_plan_mode(tmp_root: Path) -> None:
+    ip = make_ip(tmp_root / "team_plan")
+    proc = run_oag_team_plan(ip, "--json")
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["schema_version"] == "oag_team_plan_result.v1", payload
+    assert payload["status"] in {"pass", "blocked"}, payload
+    plan = payload["plan"]
+    assert plan["schema_version"] == "oag_team_plan.v1", plan
+    assert plan["no_spawn"] is True, plan
+    assert plan["recommendation"]["mode"] in {"default", "team_plan_optional", "team_plan_recommended", "blocked"}, plan
+    assert plan["team"]["lead"]["role"] == "Team Lead", plan
+    assert all(task.get("may_claim_complete") is False for task in plan["tasks"]), plan
+    assert Path(ip / payload["output_path"]).is_file(), payload
+    assert "Worker" not in [task.get("role") for task in plan["tasks"]] or plan["recommendation"]["mode"] != "default", plan
+
+    no_write = run_oag_team_plan(ip, "--no-write", "--json")
+    assert no_write.returncode == 0, no_write.stderr or no_write.stdout
+    no_write_payload = json.loads(no_write.stdout)
+    assert no_write_payload["written"] is False, no_write_payload
+    assert no_write_payload["plan"]["no_spawn"] is True, no_write_payload
+
+
 def test_oag_run_control_layer(tmp_root: Path) -> None:
     project = tmp_root / "run_control_project"
     ip = make_ip(project)
+
+    action_model = run_oag_action_model_check("--json")
+    assert action_model.returncode == 0, action_model.stderr or action_model.stdout
+    assert json.loads(action_model.stdout)["status"] == "pass", action_model.stdout
+
+    action_plan = run_oag_action_plan(ip, "--quick", "--json")
+    assert action_plan.returncode == 0, action_plan.stderr or action_plan.stdout
+    action_plan_payload = json.loads(action_plan.stdout)
+    assert action_plan_payload["schema_version"] == "oag_action_plan_result.v1", action_plan_payload
+    assert action_plan_payload["status"] == "pass", action_plan_payload
+    assert Path(ip / action_plan_payload["output_path"]).is_file(), action_plan_payload
+    assert Path(ip / action_plan_payload["action_graph_path"]).is_file(), action_plan_payload
+    assert action_plan_payload["mission_instance_id"], action_plan_payload
+    assert action_plan_payload["candidate_count"] >= 1, action_plan_payload
+    assert action_plan_payload["dependency_graph"]["summary"]["node_count"] >= 1, action_plan_payload
+
+    mission_show = run_oag_mission_runtime("show", ip, "--mission-id", "active", "--json")
+    assert mission_show.returncode == 0, mission_show.stderr or mission_show.stdout
+    mission_payload = json.loads(mission_show.stdout)
+    assert mission_payload["status"] == "pass", mission_payload
+    assert mission_payload["mission"]["id"] == action_plan_payload["mission_instance_id"], mission_payload
+
+    mission_tick = run_oag_mission_loop("tick", ip, "--quick", "--json")
+    assert mission_tick.returncode == 0, mission_tick.stderr or mission_tick.stdout
+    mission_tick_payload = json.loads(mission_tick.stdout)
+    assert mission_tick_payload["schema_version"] == "oag_mission_loop_result.v1", mission_tick_payload
+    assert mission_tick_payload["status"] in {"pass", "blocked"}, mission_tick_payload
+    assert Path(ip / mission_tick_payload["state_path"]).is_file(), mission_tick_payload
+    assert Path(ip / mission_tick_payload["tick_log_path"]).is_file(), mission_tick_payload
+    assert mission_tick_payload["tick"]["decision"] in {"action_started", "needs_user", "self_explore", "blocked", "idle"}, mission_tick_payload
+    if mission_tick_payload["tick"]["decision"] == "action_started":
+        assert mission_tick_payload["tick"]["action_record"]["status"] == "pass", mission_tick_payload
+        loop_action_id = mission_tick_payload["tick"]["action_record"]["action_id"]
+        loop_action_update = run_oag_action_record(
+            "update",
+            ip,
+            "--action-id",
+            loop_action_id,
+            "--status",
+            "accepted",
+            "--summary",
+            "smoke accepted mission-loop-started action",
+            "--json",
+        )
+        assert loop_action_update.returncode == 0, loop_action_update.stderr or loop_action_update.stdout
+
+    mission_loop_explain = run_oag_mission_loop("explain", ip, "--json")
+    assert mission_loop_explain.returncode == 0, mission_loop_explain.stderr or mission_loop_explain.stdout
+    mission_loop_explain_payload = json.loads(mission_loop_explain.stdout)
+    assert mission_loop_explain_payload["state"]["schema_version"] == "oag_mission_loop_state.v1", mission_loop_explain_payload
+    assert mission_loop_explain_payload["last_tick"], mission_loop_explain_payload
 
     run_frame = run_oag_run_frame(ip, "--json")
     assert run_frame.returncode == 0, run_frame.stderr or run_frame.stdout
@@ -1869,7 +2079,134 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     assert run_sidecar["schema_version"] == "oag_run_frame.v1", run_sidecar
     assert len(run_sidecar["next_actions"]) == 4, run_sidecar
     assert sum(1 for action in run_sidecar["next_actions"] if action.get("recommended")) == 1, run_sidecar
+    assert run_sidecar["action_plan"]["candidate_count"] >= 1, run_sidecar
+    assert run_sidecar["action_plan"]["mission_instance_id"], run_sidecar
+    assert run_sidecar["action_plan"]["action_graph_path"], run_sidecar
     assert run_payload["recommended_action"]["id"] in {action["id"] for action in run_sidecar["next_actions"]}, run_payload
+
+    action_start = run_oag_action_record("start", ip, "--candidate-id", "recommended", "--selected-reason", "smoke selected the recommended run-frame action", "--json")
+    assert action_start.returncode == 0, action_start.stderr or action_start.stdout
+    action_start_payload = json.loads(action_start.stdout)
+    assert action_start_payload["status"] == "pass", action_start_payload
+    assert action_start_payload["mission_instance_id"], action_start_payload
+    action_update = run_oag_action_record(
+        "update",
+        ip,
+        "--action-id",
+        action_start_payload["action_id"],
+        "--status",
+        "accepted",
+        "--summary",
+        "smoke accepted action instance",
+        "--auto-link-active-wavefront",
+        "--deep-interview-round",
+        "req/deep_interview_rounds/smoke.json",
+        "--git-checkpoint",
+        "--checkpoint-message",
+        "OAG smoke action checkpoint",
+        "--json",
+    )
+    assert action_update.returncode == 0, action_update.stderr or action_update.stdout
+    action_update_payload = json.loads(action_update.stdout)
+    assert action_update_payload["git_checkpoint"]["status"] == "pass", action_update_payload
+    action_list = run_oag_action_record("list", ip, "--json")
+    assert action_list.returncode == 0, action_list.stderr or action_list.stdout
+    action_index = json.loads(action_list.stdout)["index"]
+    assert action_index["counts"]["total"] >= 1 and action_index["counts"]["terminal"] >= 1, action_index
+
+    mission_show_after = run_oag_mission_runtime("show", ip, "--mission-id", action_start_payload["mission_instance_id"], "--json")
+    assert mission_show_after.returncode == 0, mission_show_after.stderr or mission_show_after.stdout
+    mission_after_payload = json.loads(mission_show_after.stdout)
+    assert action_start_payload["action_id"] in mission_after_payload["mission"]["action_instance_refs"], mission_after_payload
+
+    operation_frame = run_oag_operation_review_frame(ip, "--json")
+    assert operation_frame.returncode == 0, operation_frame.stderr or operation_frame.stdout
+    operation_payload = json.loads(operation_frame.stdout)
+    assert operation_payload["schema_version"] == "oag_operation_review_frame_result.v1", operation_payload
+    assert Path(operation_payload["html"]).is_file(), operation_payload
+    operation_sidecar = json.loads(Path(operation_payload["json"]).read_text(encoding="utf-8"))
+    assert operation_sidecar["schema_version"] == "oag_operation_review_frame.v1", operation_sidecar
+    assert operation_sidecar["current_mission"]["id"], operation_sidecar
+    assert operation_sidecar["action_history"], operation_sidecar
+    operation_html = Path(operation_payload["html"]).read_text(encoding="utf-8")
+    assert "OAG Operation Review Frame" in operation_html, operation_html
+    assert "Action Graph Nodes" in operation_html, operation_html
+    assert "Wavefront Draft" in operation_html, operation_html
+    assert "Role Health" in operation_html, operation_html
+    assert "Mission Completion Criteria" in operation_html, operation_html
+    assert operation_sidecar["wavefront_draft"]["summary"]["task_count"] >= 1, operation_sidecar
+    assert operation_sidecar["role_health"]["summary"]["hazard_count"] == 0, operation_sidecar
+    assert operation_sidecar["mission_completion"]["criteria"], operation_sidecar
+
+    wavefront_draft = run_oag_action_wavefront_draft(ip, "--json")
+    assert wavefront_draft.returncode == 0, wavefront_draft.stderr or wavefront_draft.stdout
+    wavefront_payload = json.loads(wavefront_draft.stdout)
+    assert wavefront_payload["status"] == "pass", wavefront_payload
+    assert Path(ip / wavefront_payload["path"]).is_file(), wavefront_payload
+    assert wavefront_payload["draft"]["summary"]["task_count"] >= 1, wavefront_payload
+    assert all(task.get("may_claim_complete") is False for task in wavefront_payload["draft"]["tasks"]), wavefront_payload
+    materialized_wavefront = run_oag_action_wavefront_draft(ip, "--no-refresh-plan", "--materialize-run-id", "ACTION_WAVEFRONT_SMOKE", "--barrier", "seed_ready", "--json")
+    assert materialized_wavefront.returncode == 0, materialized_wavefront.stderr or materialized_wavefront.stdout
+    materialized_payload = json.loads(materialized_wavefront.stdout)
+    assert materialized_payload["status"] == "pass", materialized_payload
+    assert materialized_payload["materialized"]["plan"]["status"] == "pass", materialized_payload
+    assert Path(ip / materialized_payload["materialized"]["template_path"]).is_file(), materialized_payload
+    assert (ip / "ontology" / "runs" / "ACTION_WAVEFRONT_SMOKE" / "wavefront_task_graph.json").is_file(), materialized_payload
+
+    clean_health = run_oag_role_health(ip, "--json")
+    assert clean_health.returncode == 0, clean_health.stderr or clean_health.stdout
+    clean_health_payload = json.loads(clean_health.stdout)
+    assert clean_health_payload["status"] == "pass", clean_health_payload
+    assert Path(ip / clean_health_payload["path"]).is_file(), clean_health_payload
+    assert clean_health_payload["role_health"]["summary"]["hazard_count"] == 0, clean_health_payload
+
+    stuck_start = run_oag_action_record(
+        "start",
+        ip,
+        "--candidate-id",
+        "recommended",
+        "--selected-reason",
+        "smoke stuck action injection",
+        "--json",
+    )
+    assert stuck_start.returncode == 0, stuck_start.stderr or stuck_start.stdout
+    stuck_payload = json.loads(stuck_start.stdout)
+    stuck_path = ip / stuck_payload["path"]
+    stuck_doc = json.loads(stuck_path.read_text(encoding="utf-8"))
+    stuck_doc["status"] = "running"
+    stuck_doc["started_at"] = "2000-01-01T00:00:00Z"
+    stuck_path.write_text(json.dumps(stuck_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    stuck_health = run_oag_role_health(ip, "--stuck-seconds", "1", "--json")
+    assert stuck_health.returncode == 0, stuck_health.stderr or stuck_health.stdout
+    stuck_health_payload = json.loads(stuck_health.stdout)
+    assert stuck_health_payload["role_health"]["summary"]["hazard_count"] >= 1, stuck_health_payload
+    assert any(item["code"] == "ROLE_STUCK" for item in stuck_health_payload["role_health"]["hazards"]), stuck_health_payload
+
+    recovery_plan = run_oag_action_plan(ip, "--quick", "--stuck-seconds", "1", "--json")
+    assert recovery_plan.returncode == 0, recovery_plan.stderr or recovery_plan.stdout
+    recovery_payload = json.loads(recovery_plan.stdout)
+    assert recovery_payload["recommended_action"]["action_type"] == "ACT_ORCHESTRATION_RECOVERY", recovery_payload
+    assert any(item["code"] == "ROLE_HEALTH_HAZARD" for item in recovery_payload["plan"]["open_items"]), recovery_payload
+
+    stuck_abort = run_oag_action_record(
+        "update",
+        ip,
+        "--action-id",
+        stuck_payload["action_id"],
+        "--status",
+        "aborted",
+        "--summary",
+        "smoke recovered stuck action",
+        "--json",
+    )
+    assert stuck_abort.returncode == 0, stuck_abort.stderr or stuck_abort.stdout
+
+    mission_eval = run_oag_mission_runtime("evaluate", ip, "--mission-id", "active", "--json")
+    assert mission_eval.returncode == 0, mission_eval.stderr or mission_eval.stdout
+    mission_eval_payload = json.loads(mission_eval.stdout)
+    assert mission_eval_payload["status"] == "pass", mission_eval_payload
+    assert mission_eval_payload["evaluation"]["criteria"], mission_eval_payload
 
     review_frame = run_oag_review_frame(ip, "--mode", "pre-dispatch", "--readiness-mode", "draft", "--json")
     assert review_frame.returncode == 0, review_frame.stderr or review_frame.stdout
@@ -1925,7 +2262,7 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     assert gated_frame.returncode == 0, gated_frame.stderr or gated_frame.stdout
     gated_payload = json.loads(gated_frame.stdout)
     assert gated_payload["run_status"] == "blocked", gated_payload
-    assert gated_payload["recommended_action"]["id"] == "answer-pending-gate", gated_payload
+    assert gated_payload["recommended_action"]["action_type"] == "ACT_RESOLVE_PENDING_GATE", gated_payload
 
     gate_render = run_oag_gate_frame("render", "--ip-dir", str(ip), "--gate-id", gate_id, "--json")
     assert gate_render.returncode == 0, gate_render.stderr or gate_render.stdout
@@ -1947,12 +2284,12 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     guard_template.write_text(
         json.dumps(
             {
-                "schema_version": "oag_wavefront_template.v1",
-                "tasks": [
-                    {
-                        "task_id": "WRITE_GUARD_SMOKE",
-                        "kind": "write",
-                        "phase": "tb",
+                        "schema_version": "oag_wavefront_template.v1",
+                        "tasks": [
+                            {
+                                "task_id": "GATE_REVIEW_SMOKE",
+                                "kind": "write",
+                                "phase": "tb",
                         "depends_on": [],
                         "allowed_write_paths": ["tb/run_control_guard_smoke.sv"],
                         "ownership_mode": "exclusive_file",
@@ -1974,15 +2311,15 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
         "--ip-dir",
         str(ip),
         "--agent-type",
-        "oag-custom-worker",
+        "oag-gate-reviewer",
         "--stage",
-        "run_control_guard_smoke",
+        "gate",
         "--receipt-path",
-        str(ip / "knowledge" / "subagents" / "WRITE_GUARD_SMOKE.json"),
+        str(ip / "knowledge" / "subagents" / "GATE_REVIEW_SMOKE.json"),
         "--wavefront-run-id",
         run_id,
         "--task-id",
-        "WRITE_GUARD_SMOKE",
+        "GATE_REVIEW_SMOKE",
         "--ownership-mode",
         "exclusive_file",
         "--json",
@@ -1997,7 +2334,7 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
         "--run-id",
         run_id,
         "--task-id",
-        "WRITE_GUARD_SMOKE",
+        "GATE_REVIEW_SMOKE",
         "--dispatch-id",
         dispatch_id,
         "--claimed-by",
@@ -2020,7 +2357,26 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     assert guard_locked.returncode != 0, guard_locked.stdout
     guard_locked_payload = json.loads(guard_locked.stdout)
     assert any(item["code"] == "STALE_ACTIVE_LOCK" for item in guard_locked_payload["issues"]), guard_locked_payload
-    assert guard_locked_payload["recommendations"][0]["id"] == "do-not-open-new-dispatch", guard_locked_payload
+    assert any(item["code"] == "GATE_REVIEWER_STUCK" for item in guard_locked_payload["issues"]), guard_locked_payload
+    recommendation_ids = {item["id"] for item in guard_locked_payload["recommendations"]}
+    assert {"gate-reviewer-custom-fallback", "do-not-open-new-dispatch"} <= recommendation_ids, guard_locked_payload
+    fallback = run_oag_orchestration_guard(
+        "fallback-plan",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--stale-seconds",
+        "0",
+        "--json",
+        project_root=project,
+    )
+    assert fallback.returncode != 0, fallback.stdout
+    fallback_payload = json.loads(fallback.stdout)
+    assert fallback_payload["schema_version"] == "oag_gate_fallback_plan.v1", fallback_payload
+    assert fallback_payload["summary"]["hung_gate_lock_count"] == 1, fallback_payload
+    assert fallback_payload["fallback_actions"][0]["fallback_agent_type"] == "oag-custom-reviewer", fallback_payload
+    assert (ip / fallback_payload["path"]).is_file(), fallback_payload
 
     abort = run_oag_orchestration_guard(
         "abort-task",
@@ -2029,7 +2385,7 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
         "--run-id",
         run_id,
         "--task-id",
-        "WRITE_GUARD_SMOKE",
+        "GATE_REVIEW_SMOKE",
         "--status",
         "failed",
         "--json",
@@ -2097,6 +2453,8 @@ def test_deep_interview_handoff_persists_decision_rows(tmp_root: Path) -> None:
             "--confirmed",
             "--write-decision-matrix",
             "--write-source-claim",
+            "--refresh-action-plan",
+            "--render-operation-frame",
         ],
         text=True,
         capture_output=True,
@@ -2108,7 +2466,14 @@ def test_deep_interview_handoff_persists_decision_rows(tmp_root: Path) -> None:
     assert payload["schema_version"] == "oag_deep_interview_handoff_result.v1", payload
     assert payload["status"] == "pass", payload
     assert payload["decision_matrix_ref"] == "DEC_SMOKE_CONTROL_BOUNDARY", payload
+    assert payload["action_plan"]["status"] == "pass", payload
+    assert payload["action_plan"]["mission_instance_id"], payload
+    assert payload["operation_frame"]["status"] == "pass", payload
     assert Path(payload["handoff_path"]).is_file(), payload
+    assert Path(payload["operation_frame"]["html"]).is_file(), payload
+    handoff_doc = json.loads(Path(payload["handoff_path"]).read_text(encoding="utf-8"))
+    assert handoff_doc["action_plan_ref"]["mission_instance_id"] == payload["action_plan"]["mission_instance_id"], handoff_doc
+    assert handoff_doc["operation_frame_ref"]["html"] == payload["operation_frame"]["html"], handoff_doc
     decision_text = (ip / "ontology" / "decision_matrix.yaml").read_text(encoding="utf-8")
     assert "DEC_SMOKE_CONTROL_BOUNDARY" in decision_text, decision_text
     assert "status: decided" in decision_text, decision_text
@@ -3584,6 +3949,18 @@ def main() -> int:
         assert ANSWER_KEY_EVAL.is_file(), ANSWER_KEY_EVAL
         assert DEV_VALIDATOR.is_file(), DEV_VALIDATOR
         assert SPEC_RTL_LOOP.is_file(), SPEC_RTL_LOOP
+        assert EXPLORATION_PLAN.is_file(), EXPLORATION_PLAN
+        assert TEAM_PLAN.is_file(), TEAM_PLAN
+        assert WINDOWS_SMOKE.is_file(), WINDOWS_SMOKE
+        spec_loop_source = SPEC_RTL_LOOP.read_text(encoding="utf-8")
+        assert "shell=True" not in spec_loop_source, spec_loop_source
+        assert "/bin/sh" not in spec_loop_source and "sh.exe" not in spec_loop_source, spec_loop_source
+        windows_smoke = run_oag_windows_smoke("--json")
+        assert windows_smoke.returncode == 0, windows_smoke.stderr or windows_smoke.stdout
+        windows_smoke_payload = json.loads(windows_smoke.stdout)
+        assert windows_smoke_payload["status"] == "pass", windows_smoke_payload
+        assert windows_smoke_payload["checks"]["hook_commands"] == "pass", windows_smoke_payload
+        assert windows_smoke_payload["checks"]["argv_command_split"] == "pass", windows_smoke_payload
         test_pyslang_lint_runner()
         test_wavefront_scheduler(Path(tmp))
         test_task5_dispatch_wavefront_matrix(Path(tmp))
@@ -3599,6 +3976,7 @@ def main() -> int:
         test_ip_version_policy_checker(Path(tmp))
         test_ip_git_helper_checkpoint(Path(tmp))
         test_lock_preview_frame_preserves_verbatim_source(Path(tmp))
+        test_oag_team_plan_mode(Path(tmp))
         test_oag_run_control_layer(Path(tmp))
         test_deep_interview_handoff_persists_decision_rows(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
@@ -3633,6 +4011,7 @@ def main() -> int:
         assert IP_GIT.is_file(), IP_GIT
         assert RUN_FRAME.is_file(), RUN_FRAME
         assert ORCHESTRATION_GUARD.is_file(), ORCHESTRATION_GUARD
+        assert WINDOWS_SMOKE.is_file(), WINDOWS_SMOKE
         assert REVIEW_FRAME.is_file(), REVIEW_FRAME
         assert GATE_FRAME.is_file(), GATE_FRAME
         assert SSOT_SECTION_CHECK.is_file(), SSOT_SECTION_CHECK
@@ -3648,6 +4027,7 @@ def main() -> int:
         assert OAG_AUTHORING_PACKET_SKILL.is_file(), OAG_AUTHORING_PACKET_SKILL
         assert OAG_EVIDENCE_CLOSURE_SKILL.is_file(), OAG_EVIDENCE_CLOSURE_SKILL
         assert OAG_WAVEFRONT_SKILL.is_file(), OAG_WAVEFRONT_SKILL
+        assert OAG_TEAM_MODE_SKILL.is_file(), OAG_TEAM_MODE_SKILL
         assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
         assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
         assert OAG_BASELINE_GIT_POLICY.is_file(), OAG_BASELINE_GIT_POLICY

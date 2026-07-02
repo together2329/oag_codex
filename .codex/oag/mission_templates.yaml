@@ -1,0 +1,133 @@
+schema_version: oag_mission_templates.v1
+product_name: IP Dev Agent
+internal_gateway: Ontology Agent Gateway
+mission_templates:
+  - id: MISSION_INTAKE_TO_RTL_READY
+    label: Intake to RTL-ready
+    intent: Turn ambiguous user/spec intent into locked, implementable OAG truth.
+    target_state:
+      source_claims: present
+      ambiguity_register: no_lock_blockers
+      decision_matrix: all_lock_required_decided_or_waived
+      requirement_atoms: pass
+      requirements_quality: pass
+      obligations: present
+      contracts: strong
+      verification_plan: pass
+      lock_preview_frame: current
+      scope_lock: locked
+      authoring_packets: pass
+    forbidden_actions_until_target:
+      - ACT_RTL_IMPLEMENTATION
+      - ACT_TB_IMPLEMENTATION
+      - ACT_SIMULATION_RUN
+      - ACT_GATE_REVIEW
+    action_priority:
+      - ACT_RESOLVE_ORCHESTRATION_HAZARD
+      - ACT_ORCHESTRATION_RECOVERY
+      - ACT_RESOLVE_PENDING_GATE
+      - ACT_SELF_EXPLORE_OPTIONS
+      - ACT_CAPTURE_SOURCE_CLAIM
+      - ACT_ASK_DEEP_INTERVIEW_QUESTION
+      - ACT_RESOLVE_DECISION
+      - ACT_REPAIR_SSOT_SECTION
+      - ACT_PROJECT_REQUIREMENT_ATOMS
+      - ACT_PROJECT_OBLIGATIONS
+      - ACT_PROJECT_CONTRACTS
+      - ACT_PROJECT_VERIFICATION_PLAN
+      - ACT_ARCHITECTURE_PROJECTION
+      - ACT_RENDER_LOCK_PREVIEW
+      - ACT_LOCK_SCOPE
+      - ACT_COMPILE_AUTHORING_PACKETS
+      - ACT_CUSTOM_OPERATOR_INPUT
+    user_question_policy:
+      one_question_per_round: true
+      option_count: 4
+      require_recommendation: true
+      allow_custom_answer: true
+  - id: MISSION_RTL_READY_TO_IMPLEMENTED
+    label: RTL-ready to implemented
+    intent: Implement locked contracts into RTL and TB artifacts with bounded ownership.
+    target_state:
+      scope_lock: locked
+      authoring_packets: pass
+      rtl_handoffs: accepted
+      tb_handoffs: accepted
+      static_checks: pass_or_blocker_recorded
+      basic_sim: pass_or_blocker_recorded
+    forbidden_actions_until_target:
+      - ACT_GATE_REVIEW
+    action_priority:
+      - ACT_RESOLVE_ORCHESTRATION_HAZARD
+      - ACT_ORCHESTRATION_RECOVERY
+      - ACT_RESOLVE_PENDING_GATE
+      - ACT_SELF_EXPLORE_OPTIONS
+      - ACT_COMPILE_AUTHORING_PACKETS
+      - ACT_REPAIR_AUTHORING_PACKET_PROJECTION
+      - ACT_ARCHITECTURE_PROJECTION
+      - ACT_RTL_IMPLEMENTATION
+      - ACT_TB_IMPLEMENTATION
+      - ACT_LINT_STATIC_CHECK
+      - ACT_SIMULATION_RUN
+      - ACT_FAILURE_TRIAGE
+      - ACT_CUSTOM_OPERATOR_INPUT
+  - id: MISSION_IMPLEMENTED_TO_VALIDATED
+    label: Implemented to validated
+    intent: Convert implementation artifacts into contract-linked evidence and validation.
+    target_state:
+      simulation_results: pass
+      scoreboard_rows: scoreboard_rows_v1
+      coverage_refs: registered_and_contract_linked
+      validation_records: fresh
+      failed_tests_do_not_count_for_closure: true
+    forbidden_actions_until_target:
+      - ACT_GATE_REVIEW
+    action_priority:
+      - ACT_RESOLVE_ORCHESTRATION_HAZARD
+      - ACT_ORCHESTRATION_RECOVERY
+      - ACT_RESOLVE_PENDING_GATE
+      - ACT_SELF_EXPLORE_OPTIONS
+      - ACT_SIMULATION_RUN
+      - ACT_FAILURE_TRIAGE
+      - ACT_COVERAGE_REVIEW
+      - ACT_EVIDENCE_VALIDATION
+      - ACT_CUSTOM_OPERATOR_INPUT
+  - id: MISSION_VALIDATED_TO_GATE_PASS
+    label: Validated to gate pass
+    intent: Produce current closure checks and a gate decision.
+    target_state:
+      oag_check: pass
+      closure_check: pass
+      validation_report: current
+      gate_decision: pass_or_explicit_blocker
+    forbidden_actions_until_target: []
+    action_priority:
+      - ACT_RESOLVE_ORCHESTRATION_HAZARD
+      - ACT_ORCHESTRATION_RECOVERY
+      - ACT_RESOLVE_PENDING_GATE
+      - ACT_SELF_EXPLORE_OPTIONS
+      - ACT_EVIDENCE_VALIDATION
+      - ACT_GATE_REVIEW
+      - ACT_CUSTOM_OPERATOR_INPUT
+  - id: MISSION_LEGACY_IP_GAP_REPAIR
+    label: Legacy IP gap repair
+    intent: Preserve imported RTL/doc hierarchy while mapping implementation gaps to OAG contracts and repair actions.
+    target_state:
+      legacy_facts: captured
+      gap_matrix: ranked
+      repairs: dispatched_to_explicit_files
+      evidence: closes_repaired_gaps
+    forbidden_actions_until_target:
+      - ACT_LOCK_SCOPE
+    action_priority:
+      - ACT_RESOLVE_ORCHESTRATION_HAZARD
+      - ACT_ORCHESTRATION_RECOVERY
+      - ACT_RESOLVE_PENDING_GATE
+      - ACT_SELF_EXPLORE_OPTIONS
+      - ACT_REVIEW_REQUIREMENTS
+      - ACT_ARCHITECTURE_PROJECTION
+      - ACT_RTL_IMPLEMENTATION
+      - ACT_TB_IMPLEMENTATION
+      - ACT_SIMULATION_RUN
+      - ACT_EVIDENCE_VALIDATION
+      - ACT_CUSTOM_OPERATOR_INPUT
