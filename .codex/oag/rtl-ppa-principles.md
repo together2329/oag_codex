@@ -167,6 +167,7 @@ rtl_policy:
     - unique_priority
     - assertions
     - covergroups
+    - mixed_blocking_nonblocking_always
 ppa_policy:
   mode: ppa_aware_correctness_first
   require_ppa_notes_for_nontrivial_rtl: true

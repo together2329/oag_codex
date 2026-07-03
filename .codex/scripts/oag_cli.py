@@ -2419,6 +2419,84 @@ def _outside_generate_blocks(text: str) -> str:
     return "".join(pieces)
 
 
+def _next_nonspace_token(text: str) -> str:
+    match = re.match(r"\s*([A-Za-z_][A-Za-z0-9_$]*)", text)
+    return match.group(1) if match else ""
+
+
+def _first_assignment_kind(statement: str) -> str | None:
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    index = 0
+    while index < len(statement):
+        char = statement[index]
+        if char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth:
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}" and brace_depth:
+            brace_depth -= 1
+        elif paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            if statement.startswith("<=", index):
+                return "nonblocking"
+            if char == "=":
+                prev_char = statement[index - 1] if index else ""
+                next_char = statement[index + 1] if index + 1 < len(statement) else ""
+                if prev_char not in "<>=!" and next_char not in "=>":
+                    return "blocking"
+        index += 1
+    return None
+
+
+def _assignment_kinds_in_always(block_text: str) -> set[str]:
+    kinds: set[str] = set()
+    for statement in block_text.split(";"):
+        kind = _first_assignment_kind(statement)
+        if kind:
+            kinds.add(kind)
+    return kinds
+
+
+def _always_blocks(text: str) -> list[tuple[int, str]]:
+    lines = text.splitlines(keepends=True)
+    blocks: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        if not re.search(r"\balways\s*@", lines[index]):
+            index += 1
+            continue
+
+        start = index
+        depth = 0
+        seen_compound = False
+        end = index
+        while end < len(lines):
+            for token in re.findall(r"\b(begin|end|case|casez|casex|endcase)\b", lines[end]):
+                if token in {"begin", "case", "casez", "casex"}:
+                    depth += 1
+                    seen_compound = True
+                elif token in {"end", "endcase"} and depth:
+                    depth -= 1
+
+            if seen_compound:
+                if depth == 0 and end > start and _next_nonspace_token("".join(lines[end + 1 :])) != "else":
+                    break
+            elif ";" in lines[end]:
+                break
+            end += 1
+
+        blocks.append((start + 1, "".join(lines[start : min(end + 1, len(lines))])))
+        index = max(end + 1, start + 1)
+    return blocks
+
+
 def _rtl_language_subset_violations(ip: Path, source_refs: list[str], forbidden: set[str]) -> list[str]:
     patterns = {
         "procedural_for": re.compile(r"\bfor\s*\("),
@@ -2453,6 +2531,10 @@ def _rtl_language_subset_violations(ip: Path, source_refs: list[str], forbidden:
             scan_text = outside_generate if construct in procedural else clean
             if pattern.search(scan_text):
                 violations.append(f"{ref}: forbidden RTL construct present: {construct}")
+        if "mixed_blocking_nonblocking_always" in forbidden:
+            for line_no, block_text in _always_blocks(clean):
+                if _assignment_kinds_in_always(block_text) == {"blocking", "nonblocking"}:
+                    violations.append(f"{ref}:{line_no}: forbidden RTL construct present: mixed_blocking_nonblocking_always")
     return violations
 
 
@@ -4115,7 +4197,7 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             issues.append(f"{rid}: rtl language subset must allow generate")
         if "generate" in forbidden or "generate_for" in forbidden or "genvar" in forbidden:
             issues.append(f"{rid}: rtl language subset must not forbid generate constructs")
-        for construct in ("procedural_for", "procedural_while", "function", "task"):
+        for construct in ("procedural_for", "procedural_while", "function", "task", "mixed_blocking_nonblocking_always"):
             if construct not in forbidden:
                 issues.append(f"{rid}: rtl language subset must forbid {construct}")
 

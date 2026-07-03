@@ -233,8 +233,9 @@ dispatch-backed native subagent receipts.
 Use `.codex/scripts/oag_ppa_check.py --ip-dir <ip> --json` as the lightweight
 PPA/dialect screen for generated RTL changes when RTL files are available. It
 scans the RTL filelist and `rtl/` sources; the default RTL subset forbids
-`function`, `task`, `always_ff`, `always_comb`, `always_latch`, and procedural
-loops outside generate.
+`function`, `task`, `always_ff`, `always_comb`, `always_latch`, procedural
+loops outside generate, and mixed blocking/nonblocking assignments in the same
+`always` statement.
 Use `.codex/scripts/oag_pyslang_lint.py --ip-dir <ip> --json` as the optional
 pyslang syntax lint backend for `lint/dut_lint.json`. It complements Verilator
 lint and design-facts extraction; it does not prove behavior.

@@ -4087,6 +4087,36 @@ def main() -> int:
         assert ppa_bad_result["status"] == "fail", ppa_bad_result
         assert ppa_bad_result["scanned_files"] == ["rtl/bad_function.sv"], ppa_bad_result
         assert any(issue["code"] == "FUNCTION" for issue in ppa_bad_result["issues"]), ppa_bad_result
+        ppa_bad_mixed_ip = Path(tmp) / "ppa_bad_mixed_assign"
+        (ppa_bad_mixed_ip / "rtl").mkdir(parents=True)
+        (ppa_bad_mixed_ip / "list").mkdir(parents=True)
+        (ppa_bad_mixed_ip / "list" / "rtl.f").write_text("rtl/bad_mixed_assign.sv\n", encoding="utf-8")
+        (ppa_bad_mixed_ip / "rtl" / "bad_mixed_assign.sv").write_text(
+            "\n".join(
+                [
+                    "module bad_mixed_assign(input logic clk, input logic a, output logic y);",
+                    "  logic tmp;",
+                    "  always @(posedge clk) begin",
+                    "    tmp = a;",
+                    "    y <= tmp;",
+                    "  end",
+                    "endmodule",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        ppa_bad_mixed = subprocess.run(
+            [sys.executable, str(PPA_CHECK), "--ip-dir", str(ppa_bad_mixed_ip), "--json"],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert ppa_bad_mixed.returncode == 1, ppa_bad_mixed.stderr or ppa_bad_mixed.stdout
+        ppa_bad_mixed_result = json.loads(ppa_bad_mixed.stdout)
+        assert ppa_bad_mixed_result["status"] == "fail", ppa_bad_mixed_result
+        assert any(issue["code"] == "MIXED_BLOCKING_NONBLOCKING_ALWAYS" for issue in ppa_bad_mixed_result["issues"]), ppa_bad_mixed_result
         ppa_good_ip = Path(tmp) / "ppa_good_generate"
         (ppa_good_ip / "rtl").mkdir(parents=True)
         (ppa_good_ip / "list").mkdir(parents=True)
@@ -6387,7 +6417,7 @@ def main() -> int:
             1,
         )
         bad_lang_rules = bad_lang_rules.replace(
-            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, function, task, always_ff, always_comb, always_latch, package, import, interface, modport, typedef, enum, struct, class, program, clocking, bind, dpi, randomization, constraints, unique_priority, assertions, covergroups]",
+            "    forbidden_constructs: [procedural_for, procedural_while, procedural_repeat, procedural_forever, function, task, always_ff, always_comb, always_latch, package, import, interface, modport, typedef, enum, struct, class, program, clocking, bind, dpi, randomization, constraints, unique_priority, assertions, covergroups, mixed_blocking_nonblocking_always]",
             "    forbidden_constructs: [procedural_for, procedural_while, generate_for]",
             1,
         )
@@ -6402,6 +6432,7 @@ def main() -> int:
             "\n".join(
                 [
                     "module demo_counter_cx1(input logic clk);",
+                    "  logic tmp;",
                     "  function logic bad_helper;",
                     "    input logic in;",
                     "    begin",
@@ -6409,6 +6440,10 @@ def main() -> int:
                     "    end",
                     "  endfunction",
                     "  always_ff @(posedge clk) begin",
+                    "  end",
+                    "  always @(posedge clk) begin",
+                    "    tmp = 1'b0;",
+                    "    tmp <= 1'b1;",
                     "  end",
                     "endmodule",
                     "",
@@ -6442,7 +6477,7 @@ def main() -> int:
                 "    language_policy: smoke_negative_subset",
                 "    rtl_compile_report: rtl/rtl_compile.json",
                 "    rtl_sources: [rtl/demo_counter_cx1.sv]",
-                "    forbidden_constructs_absent: [always_ff, function]",
+                "    forbidden_constructs_absent: [always_ff, function, mixed_blocking_nonblocking_always]",
                 "    evidence_refs:",
                 "      - rtl/demo_counter_cx1.sv",
                 "      - rtl/rtl_compile.json",
@@ -6454,6 +6489,7 @@ def main() -> int:
         assert bad_subset_compile["result"]["status"] == "fail", bad_subset_compile
         assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv: forbidden RTL construct present: always_ff" in bad_subset_compile["result"]["issues"], bad_subset_compile
         assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv: forbidden RTL construct present: function" in bad_subset_compile["result"]["issues"], bad_subset_compile
+        assert "INST_BAD_RTL_LANGUAGE_SUBSET: rtl/demo_counter_cx1.sv:11: forbidden RTL construct present: mixed_blocking_nonblocking_always" in bad_subset_compile["result"]["issues"], bad_subset_compile
         bad_protocol_ip = make_ip(Path(tmp) / "bad_protocol_report")
         (bad_protocol_ip / "signoff").mkdir(exist_ok=True)
         (bad_protocol_ip / "signoff" / "protocol_compliance_report.json").write_text(

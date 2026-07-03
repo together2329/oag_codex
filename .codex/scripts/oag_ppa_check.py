@@ -89,6 +89,89 @@ def line_for_offset(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
 
 
+def next_nonspace_token(text: str, offset: int) -> str:
+    index = offset
+    while index < len(text) and text[index].isspace():
+        index += 1
+    match = re.match(r"[A-Za-z_][A-Za-z0-9_$]*", text[index:])
+    return match.group(0) if match else ""
+
+
+def first_assignment_kind(statement: str) -> str | None:
+    paren_depth = 0
+    bracket_depth = 0
+    brace_depth = 0
+    index = 0
+    while index < len(statement):
+        char = statement[index]
+        if char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth:
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif char == "{":
+            brace_depth += 1
+        elif char == "}" and brace_depth:
+            brace_depth -= 1
+        elif paren_depth == 0 and bracket_depth == 0 and brace_depth == 0:
+            if statement.startswith("<=", index):
+                return "nonblocking"
+            if char == "=":
+                prev_char = statement[index - 1] if index else ""
+                next_char = statement[index + 1] if index + 1 < len(statement) else ""
+                if prev_char not in "<>=!" and next_char not in "=>":
+                    return "blocking"
+        index += 1
+    return None
+
+
+def assignment_kinds_in_always(block_text: str) -> set[str]:
+    kinds: set[str] = set()
+    for statement in block_text.split(";"):
+        kind = first_assignment_kind(statement)
+        if kind:
+            kinds.add(kind)
+    return kinds
+
+
+def always_blocks(text: str) -> list[tuple[int, str]]:
+    lines = text.splitlines(keepends=True)
+    blocks: list[tuple[int, str]] = []
+    index = 0
+    while index < len(lines):
+        if not re.search(r"\balways\s*@", lines[index]):
+            index += 1
+            continue
+
+        start = index
+        depth = 0
+        seen_compound = False
+        end = index
+
+        while end < len(lines):
+            for token in re.findall(r"\b(begin|end|case|casez|casex|endcase)\b", lines[end]):
+                if token in {"begin", "case", "casez", "casex"}:
+                    depth += 1
+                    seen_compound = True
+                elif token in {"end", "endcase"} and depth:
+                    depth -= 1
+
+            line_has_semicolon = ";" in lines[end]
+            if seen_compound:
+                if depth == 0 and end > start and next_nonspace_token("".join(lines[end + 1 :]), 0) != "else":
+                    break
+            elif line_has_semicolon:
+                break
+            end += 1
+
+        blocks.append((start + 1, "".join(lines[start : min(end + 1, len(lines))])))
+        index = max(end + 1, start + 1)
+    return blocks
+
+
 def scan_file(path: Path, *, comb_warn_threshold: int) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8", errors="ignore")
     clean_text = strip_sv_comments(text)
@@ -106,6 +189,10 @@ def scan_file(path: Path, *, comb_warn_threshold: int) -> list[dict[str, Any]]:
 
     for match in re.finditer(r"\b(for|while|repeat|forever)\s*(\(|\b)", outside_generate):
         issues.append(issue(path, line_for_offset(outside_generate, match.start()), "fail", "PROCEDURAL_LOOP", "Procedural loops outside generate are forbidden by default."))
+
+    for line_no, block_text in always_blocks(clean_text):
+        if assignment_kinds_in_always(block_text) == {"blocking", "nonblocking"}:
+            issues.append(issue(path, line_no, "fail", "MIXED_BLOCKING_NONBLOCKING_ALWAYS", "Always block mixes blocking and nonblocking assignments; split next-value calculation into separate combinational/continuous logic and keep each always block assignment style consistent."))
 
     for index, line in enumerate(lines, start=1):
         if re.search(r"\bassign\s+\w*clk\w*\s*=", line, re.IGNORECASE) and re.search(r"\&|\||\?", line):

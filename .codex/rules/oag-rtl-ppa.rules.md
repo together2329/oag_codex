@@ -21,6 +21,9 @@ During RTL code:
   interface/modport/package/import/program/clocking/bind, class, assertions,
   covergroups, DPI, randomization, constraints, unique/priority case/if, or
   procedural loops outside generate by default
+  do not mix blocking `=` and nonblocking `<=` assignments inside the same
+  `always` statement; compute next-value temporaries with separate
+  combinational/continuous logic and keep clocked blocks nonblocking-only
   prefer simple decode for simple peripherals
   use explicit register write enables where applicable
   avoid unnecessary pipelines for simple leaf peripherals
@@ -39,6 +42,7 @@ After RTL code:
 Validator:
   check RTL dialect pass
   check parse/lint pass where available
+  check no single `always` statement mixes blocking and nonblocking assignments
   check implemented contract refs
   check PPA notes present for nontrivial RTL
   check CDC/RDC claims through domain intent, not PPA notes

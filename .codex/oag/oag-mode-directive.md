@@ -184,7 +184,9 @@ Default RTL targets OAG SV-lite: Verilog-2001 plus `logic` and static
 `always_latch`, typedef/enum/struct, interface/modport/package/import/program,
 clocking/bind, class, assertions, covergroups, DPI, randomization,
 constraints, unique/priority case/if, and procedural loops outside generate are
-forbidden by default.
+forbidden by default. A single `always` statement must not mix blocking `=`
+and nonblocking `<=`; split next-value calculation into separate
+combinational/continuous logic before the clocked block.
 PPA-aware RTL is expected: optimize only after preserving correctness, identify
 likely timing paths, reduce unnecessary switching, avoid accidental mux/register
 growth, and record PPA notes for nontrivial RTL handoffs.

@@ -24,13 +24,16 @@ Detailed reasoning lives under `.codex/oag/*.md`.
     constructs; `function`, `task`, `always_ff`, `always_comb`,
     `always_latch`, and procedural loops outside generate are forbidden by
     default.
-14. PPA optimization must preserve locked behavior; it cannot justify protocol,
+14. A single RTL `always` statement must not mix blocking `=` and nonblocking
+    `<=`; split next-value calculation into combinational/continuous logic and
+    keep clocked state updates nonblocking-only.
+15. PPA optimization must preserve locked behavior; it cannot justify protocol,
     timing, reset, priority, or address-map drift.
-15. Nontrivial RTL handoffs must record PPA intent or PPA notes covering
+16. Nontrivial RTL handoffs must record PPA intent or PPA notes covering
     performance, power, area, and tradeoffs.
-16. Clock/reset domain intent is design truth; RTL must not invent CDC/RDC
+17. Clock/reset domain intent is design truth; RTL must not invent CDC/RDC
     safety.
-17. Any CDC/RDC closure claim must trace to domain intent, crossing
+18. Any CDC/RDC closure claim must trace to domain intent, crossing
     classification, mitigation, evidence, validation, and gate decision when a
     gate is required.
-18. CDC/RDC closure cannot be claimed from simulation alone.
+19. CDC/RDC closure cannot be claimed from simulation alone.

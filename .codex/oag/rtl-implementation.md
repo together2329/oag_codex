@@ -340,7 +340,10 @@ Allowed by default:
 - `input`, `output`, `inout`;
 - `wire`, `reg`, `logic`;
 - `always @(*)` and edge-triggered `always @(posedge/negedge ...)`;
-- blocking/nonblocking assignments used consistently;
+- blocking/nonblocking assignments used consistently per procedural block:
+  combinational `always @(*)` blocks use blocking `=`, edge-triggered register
+  blocks use nonblocking `<=` for state updates, and a single `always`
+  statement must not contain both `=` and `<=`;
 - `case`, `if`, ternary expressions;
 - `generate`, `genvar`, `for` inside generate.
 
@@ -355,6 +358,9 @@ Not allowed by default:
   assertions, covergroups, and unique/priority case/if inside RTL unless the IP
   profile and toolchain explicitly approve them;
 - behavioral delays in synthesizable RTL;
+- mixed blocking and nonblocking assignments inside the same `always`
+  statement; next-value temporaries should be computed in separate
+  combinational/continuous logic before the clocked block;
 - unsized or ambiguous width behavior where a contract width is known.
 
 The language subset is a portability policy, not a model-depth policy. It does

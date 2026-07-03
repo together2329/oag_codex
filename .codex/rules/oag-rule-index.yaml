@@ -46,6 +46,19 @@ rules:
       draft: warn
       post_lock: block
       closure: block
+  - id: RULE-RTL-DIALECT-001
+    text: A single RTL always statement must not mix blocking and nonblocking assignments.
+    policy_refs:
+      - oag/rtl-dialect-policy.md
+      - oag/rtl-implementation.md
+      - rules/oag-rtl-ppa.rules.md
+    checker_refs:
+      - scripts/oag_ppa_check.py
+      - scripts/oag_cli.py
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
   - id: RULE-TRACE-001
     text: Load-bearing source, requirement, atom, obligation, contract, scenario, scoreboard, and coverage IDs must form an unbroken trace graph.
     policy_refs:

@@ -35,6 +35,7 @@ rtl_policy:
     - unique_priority
     - assertions
     - covergroups
+    - mixed_blocking_nonblocking_always
 ```
 
 ## Allowed By Default
@@ -44,6 +45,10 @@ rtl_policy:
 - `input`, `output`, `inout`.
 - `wire`, `reg`, and `logic`.
 - `always @(*)` and edge-triggered `always @(posedge/negedge ...)`.
+- Assignment style is per-`always` block: combinational `always @(*)` blocks
+  use blocking assignments, edge-triggered register blocks use nonblocking
+  assignments for state updates, and a single `always` statement must not mix
+  blocking `=` with nonblocking `<=`.
 - `assign`, `case`, `if`, ternary expressions.
 - `generate`, `genvar`, and `for` inside generate blocks.
 
@@ -56,6 +61,9 @@ rtl_policy:
 - assertions, covergroups, DPI, randomization, constraints, and
   `unique`/`priority` case/if.
 - procedural `for`, `while`, `repeat`, or `forever` loops outside generate.
+- mixing blocking `=` and nonblocking `<=` inside the same `always` statement;
+  compute next-value temporaries in a separate combinational block or
+  continuous assignment before the clocked block.
 - manual clock gating unless a policy explicitly allows it.
 - behavioral delays in synthesizable RTL.
 
