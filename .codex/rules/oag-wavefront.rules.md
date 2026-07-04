@@ -27,3 +27,18 @@ opened.
 ## RULE-WAVE-006
 
 Worker receipts must keep `may_claim_complete=false`; closure remains gate-owned.
+
+## RULE-WAVE-007
+
+When two or more dependency-ready tasks have non-conflicting ownership, parent
+orchestration should dispatch the whole ready wave as a native subagent batch.
+Serial dispatch requires an explicit dependency, ownership, runtime-budget, or
+user-scope blocker.
+
+## RULE-WAVE-008
+
+RTL/TB implementation waves should be role-structured. RTL lanes split
+interface shell, control, datapath/state, clock/reset, and one integration
+owner. TB lanes split driver/BFM, monitor, predictor, scoreboard, coverage,
+assertion hooks, scenario shards, and one runner owner. A monolithic RTL or TB
+child requires a recorded triviality or risk rationale.

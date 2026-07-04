@@ -339,16 +339,29 @@ When multiple RTL/TB/sim tasks should run in parallel, use wavefront scheduling
 instead of unconstrained fan-out:
 
 ```bash
+python3 .codex/scripts/oag_wavefront.py plan --ip-dir <ip> --run-id <run> --template .codex/oag/wavefront-templates/rtl_module_fanout.yaml --json
 python3 .codex/scripts/oag_wavefront.py plan --ip-dir <ip> --run-id <run> --template .codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml --json
 python3 .codex/scripts/oag_wavefront.py ready --ip-dir <ip> --run-id <run> --json
 python3 .codex/scripts/oag_wavefront.py claim --ip-dir <ip> --run-id <run> --task-id <task> --dispatch-id <dispatch_id> --json
 ```
+
+Use role-structured RTL/TB wavefronts by default. RTL splits into
+RTL_INTERFACE_SHELL, RTL_CONTROL_FSM, RTL_DATAPATH_STATE,
+RTL_CLOCK_RESET_DOMAIN, and RTL_INTEGRATION_OWNER. TB splits into
+TB_DRIVER_BFM, TB_MONITOR, TB_PREDICTOR_MODEL, TB_SCOREBOARD_SCHEMA,
+TB_COVERAGE_MODEL, TB_ASSERTION_HOOKS, scenario shards, and TB_RUNNER_OWNER.
+Only use a monolithic RTL/TB child for trivial one-file work or with a recorded
+risk rationale.
 
 Read-only triage can fan out aggressively. Write tasks require disjoint
 `allowed_write_paths`. Shared artifacts such as filelists, run scripts,
 aggregate results, coverage JSON, and closure packages require a single
 integration owner. Simulation failures should be classified by read-only
 triage before repair agents are opened.
+When `ready` returns multiple dependency-ready tasks with non-conflicting
+ownership, dispatch the whole ready wave as one native subagent batch. Serial
+dispatch needs an explicit dependency, ownership, runtime-budget, or user-scope
+blocker.
 For write/integration wavefront tasks, create the dispatch before claiming and
 pass its `dispatch_id` into the claim. Child receipt verification must happen
 while the task is still `claimed`; only then may the parent record

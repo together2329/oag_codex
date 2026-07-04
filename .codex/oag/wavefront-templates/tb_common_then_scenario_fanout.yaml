@@ -1,45 +1,180 @@
 schema_version: oag_wavefront_template.v1
 name: tb_common_then_scenario_fanout
-description: Generic TB wavefront with common helper/schema barrier before scenario fan-out.
+description: Role-structured TB wavefront with driver, monitor, predictor, scoreboard, coverage, assertion, scenario, and runner ownership.
 tasks:
-  - task_id: TB_COMMON_API
-    kind: write
-    phase: tb_common
+  - task_id: TB_PACKET_CONTEXT
+    kind: read_only
+    phase: tb_context
     agent_type: oag-tb-implementation-agent
     depends_on: []
     barrier_outputs:
-      - tb_common_import_clean
-      - helper_api_manifest
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+    allowed_write_paths: []
+    ownership_mode: none
+    may_claim_complete: false
+  - task_id: TB_DRIVER_BFM
+    kind: write
+    phase: tb_driver
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_PACKET_CONTEXT
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+    barrier_outputs:
+      - tb_driver_api_ready
     allowed_write_paths:
-      - tb/cocotb/tb_common.py
+      - tb/cocotb/driver.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_MONITOR
+    kind: write
+    phase: tb_monitor
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_PACKET_CONTEXT
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+    barrier_outputs:
+      - tb_monitor_api_ready
+    allowed_write_paths:
+      - tb/cocotb/monitor.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_PREDICTOR_MODEL
+    kind: write
+    phase: tb_predictor
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_PACKET_CONTEXT
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+    barrier_outputs:
+      - tb_predictor_model_ready
+    allowed_write_paths:
+      - tb/cocotb/predictor.py
     ownership_mode: exclusive_file
     may_claim_complete: false
   - task_id: TB_SCOREBOARD_SCHEMA
     kind: write
-    phase: tb_common
+    phase: tb_scoreboard
     agent_type: oag-tb-implementation-agent
-    depends_on: []
+    depends_on:
+      - TB_PACKET_CONTEXT
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
     barrier_outputs:
       - scoreboard_schema_frozen
     allowed_write_paths:
       - tb/cocotb/scoreboard.py
     ownership_mode: exclusive_file
     may_claim_complete: false
-  - task_id: TB_SCENARIO_A
+  - task_id: TB_COVERAGE_MODEL
+    kind: write
+    phase: tb_coverage
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_PACKET_CONTEXT
+      - TB_SCOREBOARD_SCHEMA
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+      - scoreboard_schema_frozen
+    barrier_outputs:
+      - tb_coverage_model_ready
+    allowed_write_paths:
+      - tb/cocotb/coverage.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_ASSERTION_HOOKS
+    kind: write
+    phase: tb_assertions
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_PACKET_CONTEXT
+    barrier_inputs:
+      - tb_authoring_packet_ready
+      - tb_methodology_ready
+    barrier_outputs:
+      - tb_assertion_hooks_ready
+    allowed_write_paths:
+      - tb/cocotb/assertions.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_SCENARIO_RESET
     kind: write
     phase: tb_scenario
     agent_type: oag-tb-implementation-agent
     depends_on:
-      - TB_COMMON_API
+      - TB_DRIVER_BFM
+      - TB_MONITOR
+      - TB_PREDICTOR_MODEL
       - TB_SCOREBOARD_SCHEMA
+      - TB_COVERAGE_MODEL
+      - TB_ASSERTION_HOOKS
     barrier_inputs:
-      - tb_common_import_clean
-      - helper_api_manifest
+      - tb_driver_api_ready
+      - tb_monitor_api_ready
+      - tb_predictor_model_ready
       - scoreboard_schema_frozen
+      - tb_coverage_model_ready
+      - tb_assertion_hooks_ready
     barrier_outputs:
-      - scenario_import_clean
+      - scenario_reset_import_clean
     allowed_write_paths:
-      - tb/cocotb/test_scenario_a.py
+      - tb/cocotb/test_reset.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_SCENARIO_BACKPRESSURE
+    kind: write
+    phase: tb_scenario
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_DRIVER_BFM
+      - TB_MONITOR
+      - TB_PREDICTOR_MODEL
+      - TB_SCOREBOARD_SCHEMA
+      - TB_COVERAGE_MODEL
+      - TB_ASSERTION_HOOKS
+    barrier_inputs:
+      - tb_driver_api_ready
+      - tb_monitor_api_ready
+      - tb_predictor_model_ready
+      - scoreboard_schema_frozen
+      - tb_coverage_model_ready
+      - tb_assertion_hooks_ready
+    barrier_outputs:
+      - scenario_backpressure_import_clean
+    allowed_write_paths:
+      - tb/cocotb/test_backpressure.py
+    ownership_mode: exclusive_file
+    may_claim_complete: false
+  - task_id: TB_SCENARIO_PROTOCOL_ERROR
+    kind: write
+    phase: tb_scenario
+    agent_type: oag-tb-implementation-agent
+    depends_on:
+      - TB_DRIVER_BFM
+      - TB_MONITOR
+      - TB_PREDICTOR_MODEL
+      - TB_SCOREBOARD_SCHEMA
+      - TB_COVERAGE_MODEL
+      - TB_ASSERTION_HOOKS
+    barrier_inputs:
+      - tb_driver_api_ready
+      - tb_monitor_api_ready
+      - tb_predictor_model_ready
+      - scoreboard_schema_frozen
+      - tb_coverage_model_ready
+      - tb_assertion_hooks_ready
+    barrier_outputs:
+      - scenario_protocol_error_import_clean
+    allowed_write_paths:
+      - tb/cocotb/test_protocol_error.py
     ownership_mode: exclusive_file
     may_claim_complete: false
   - task_id: TB_RUNNER_OWNER
@@ -47,12 +182,19 @@ tasks:
     phase: sim_runner
     agent_type: oag-sim-execution-agent
     depends_on:
-      - TB_SCENARIO_A
+      - TB_SCENARIO_RESET
+      - TB_SCENARIO_BACKPRESSURE
+      - TB_SCENARIO_PROTOCOL_ERROR
+    barrier_inputs:
+      - scenario_reset_import_clean
+      - scenario_backpressure_import_clean
+      - scenario_protocol_error_import_clean
     shared_artifacts:
       - tb/tb.f
       - scripts/run_sim.sh
       - sim/results.xml
       - sim/scoreboard_events.jsonl
+      - sim/scenario_mapping.json
       - cov/coverage.json
     ownership_mode: integration_owner
     may_claim_complete: false

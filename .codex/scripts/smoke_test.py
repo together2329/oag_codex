@@ -87,6 +87,7 @@ OAG_EVIDENCE_CLOSURE_SKILL = ROOT / "skills" / "oag-evidence-closure" / "SKILL.m
 OAG_WAVEFRONT_SKILL = ROOT / "skills" / "oag-wavefront" / "SKILL.md"
 OAG_TEAM_MODE_SKILL = ROOT / "skills" / "oag-team-mode" / "SKILL.md"
 OAG_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "tb_common_then_scenario_fanout.yaml"
+OAG_RTL_WAVEFRONT_TEMPLATE = ROOT / "oag" / "wavefront-templates" / "rtl_module_fanout.yaml"
 OAG_DATA_LIFECYCLE_POLICY = ROOT / "oag" / "data-lifecycle-policy.md"
 OAG_BASELINE_GIT_POLICY = ROOT / "oag" / "baseline-git-policy.md"
 OAG_IP_VERSIONING_POLICY = ROOT / "oag" / "ip-versioning-policy.md"
@@ -2525,6 +2526,161 @@ def test_pyslang_lint_runner() -> None:
         assert result["files"] == ["rtl/demo.sv"], result
 
 
+def test_rtl_role_wavefront_template(tmp_root: Path) -> None:
+    project = tmp_root / "rtl_wavefront_project"
+    project.mkdir(parents=True)
+    ip = project / "rtl_wave_ip"
+    ip.mkdir()
+    run_id = "RUN_RTL_ROLE_SMOKE"
+
+    def claim_wavefront_task(task_id: str, *, ownership_mode: str = "exclusive_file") -> None:
+        dispatch_id = ""
+        if ownership_mode != "none":
+            dispatch = run_dispatch(
+                "create",
+                "--ip-dir",
+                str(ip),
+                "--agent-type",
+                "oag-custom-researcher",
+                "--stage",
+                "rtl_role_wavefront_smoke",
+                "--receipt-path",
+                str(ip / "knowledge" / "subagents" / f"{task_id}_receipt.json"),
+                "--wavefront-run-id",
+                run_id,
+                "--task-id",
+                task_id,
+                "--ownership-mode",
+                ownership_mode,
+                "--json",
+                project_root=project,
+            )
+            assert dispatch.returncode == 0, dispatch.stderr or dispatch.stdout
+            dispatch_id = json.loads(dispatch.stdout)["dispatch"]["dispatch_id"]
+
+        claim_args = [
+            "claim",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--claimed-by",
+            f"smoke-{task_id.lower()}",
+            "--json",
+        ]
+        if dispatch_id:
+            claim_args.extend(["--dispatch-id", dispatch_id])
+        claim = run_wavefront(*claim_args, project_root=project)
+        assert claim.returncode == 0, claim.stderr or claim.stdout
+
+    def approve_wavefront_task(task_id: str, *barrier_outputs: str) -> None:
+        review_pending = run_wavefront(
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "review_pending",
+            "--receipt",
+            str(ip / "knowledge" / "subagents" / f"{task_id.lower()}_receipt.json"),
+            "--json",
+            project_root=project,
+        )
+        assert review_pending.returncode == 0, review_pending.stderr or review_pending.stdout
+        decision_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--decision-id",
+            f"DEC_{task_id}_RTL_ROLE_SMOKE",
+            "--decision-type",
+            "custom_review",
+            "--verdict",
+            "approved",
+            "--summary",
+            f"{task_id} RTL role handoff reviewed by smoke test.",
+            "--checked-against",
+            f"{ip}/ontology/runs/{run_id}/wavefront_task_graph.json#{task_id}",
+            "--preserved",
+            "declared RTL role barrier semantics",
+            "--json",
+        ]
+        for token in barrier_outputs:
+            decision_args.extend(["--barrier-output", token])
+        decision = run_decision_harness(*decision_args, project_root=project)
+        assert decision.returncode == 0, decision.stderr or decision.stdout
+        decision_path = json.loads(decision.stdout)["path"]
+        handoff_args = [
+            "record",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--status",
+            "handoff_pass",
+            "--decision",
+            decision_path,
+            "--json",
+        ]
+        for token in barrier_outputs:
+            handoff_args.extend(["--barrier-output", token])
+        handoff = run_wavefront(*handoff_args, project_root=project)
+        assert handoff.returncode == 0, handoff.stderr or handoff.stdout
+
+    plan = run_wavefront(
+        "plan",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--template",
+        str(OAG_RTL_WAVEFRONT_TEMPLATE),
+        "--json",
+        project_root=project,
+    )
+    assert plan.returncode == 0, plan.stderr or plan.stdout
+    plan_result = json.loads(plan.stdout)
+    assert plan_result["status"] == "pass", plan_result
+    assert plan_result["ready_tasks"] == ["RTL_PACKET_CONTEXT"], plan_result
+
+    claim_wavefront_task("RTL_PACKET_CONTEXT", ownership_mode="none")
+    approve_wavefront_task("RTL_PACKET_CONTEXT", "rtl_authoring_packet_ready", "rtl_role_split_ready")
+
+    role_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert role_ready.returncode == 0, role_ready.stderr or role_ready.stdout
+    role_ready_ids = sorted(task["task_id"] for task in json.loads(role_ready.stdout)["ready_tasks"])
+    role_barriers = {
+        "RTL_INTERFACE_SHELL": "rtl_interface_shell_ready",
+        "RTL_CONTROL_FSM": "rtl_control_fsm_ready",
+        "RTL_DATAPATH_STATE": "rtl_datapath_state_ready",
+        "RTL_CLOCK_RESET_DOMAIN": "rtl_clock_reset_domain_ready",
+    }
+    assert role_ready_ids == sorted(role_barriers), role_ready.stdout
+
+    for task_id, barrier_output in role_barriers.items():
+        claim_wavefront_task(task_id)
+        approve_wavefront_task(task_id, barrier_output)
+
+    integration_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert integration_ready.returncode == 0, integration_ready.stderr or integration_ready.stdout
+    integration_ready_ids = [task["task_id"] for task in json.loads(integration_ready.stdout)["ready_tasks"]]
+    assert integration_ready_ids == ["RTL_INTEGRATION_OWNER"], integration_ready.stdout
+
+    verify = run_wavefront("verify", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert verify.returncode == 0, verify.stderr or verify.stdout
+
+
 def test_wavefront_scheduler(tmp_root: Path) -> None:
     project = tmp_root / "wavefront_project"
     project.mkdir(parents=True)
@@ -2596,6 +2752,48 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         handoff = run_wavefront(*handoff_args, project_root=project)
         assert handoff.returncode == 0, handoff.stderr or handoff.stdout
 
+    def claim_wavefront_task(task_id: str, *, ownership_mode: str = "exclusive_file") -> None:
+        dispatch_id = ""
+        if ownership_mode != "none":
+            dispatch = run_dispatch(
+                "create",
+                "--ip-dir",
+                str(ip),
+                "--agent-type",
+                "oag-custom-researcher",
+                "--stage",
+                "wavefront_claim_smoke",
+                "--receipt-path",
+                str(ip / "knowledge" / "subagents" / f"{task_id}_receipt.json"),
+                "--wavefront-run-id",
+                run_id,
+                "--task-id",
+                task_id,
+                "--ownership-mode",
+                ownership_mode,
+                "--json",
+                project_root=project,
+            )
+            assert dispatch.returncode == 0, dispatch.stderr or dispatch.stdout
+            dispatch_id = json.loads(dispatch.stdout)["dispatch"]["dispatch_id"]
+
+        claim_args = [
+            "claim",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            run_id,
+            "--task-id",
+            task_id,
+            "--claimed-by",
+            f"smoke-{task_id.lower()}",
+            "--json",
+        ]
+        if dispatch_id:
+            claim_args.extend(["--dispatch-id", dispatch_id])
+        claim = run_wavefront(*claim_args, project_root=project)
+        assert claim.returncode == 0, claim.stderr or claim.stdout
+
     plan = run_wavefront(
         "plan",
         "--ip-dir",
@@ -2610,12 +2808,12 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     assert plan.returncode == 0, plan.stderr or plan.stdout
     plan_result = json.loads(plan.stdout)
     assert plan_result["status"] == "pass", plan_result
-    assert sorted(plan_result["ready_tasks"]) == ["TB_COMMON_API", "TB_SCOREBOARD_SCHEMA"], plan_result
+    assert sorted(plan_result["ready_tasks"]) == ["TB_PACKET_CONTEXT"], plan_result
 
     ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert ready.returncode == 0, ready.stderr or ready.stdout
     ready_ids = sorted(task["task_id"] for task in json.loads(ready.stdout)["ready_tasks"])
-    assert ready_ids == ["TB_COMMON_API", "TB_SCOREBOARD_SCHEMA"], ready.stdout
+    assert ready_ids == ["TB_PACKET_CONTEXT"], ready.stdout
 
     early_scenario = run_wavefront(
         "claim",
@@ -2624,7 +2822,7 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         "--run-id",
         run_id,
         "--task-id",
-        "TB_SCENARIO_A",
+        "TB_SCENARIO_RESET",
         "--json",
         project_root=project,
     )
@@ -2633,93 +2831,7 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     early_codes = {item["code"] for item in early_result["issues"]}
     assert "DEPENDENCY_UNMET" in early_codes and "BARRIER_UNMET" in early_codes, early_result
 
-    common_dispatch = run_dispatch(
-        "create",
-        "--ip-dir",
-        str(ip),
-        "--agent-type",
-        "oag-custom-researcher",
-        "--stage",
-        "wavefront_claim_smoke",
-        "--receipt-path",
-        str(ip / "knowledge" / "subagents" / "TB_COMMON_API_oag_tb_implementation_agent.json"),
-        "--wavefront-run-id",
-        run_id,
-        "--task-id",
-        "TB_COMMON_API",
-        "--ownership-mode",
-        "exclusive_file",
-        "--json",
-        project_root=project,
-    )
-    assert common_dispatch.returncode == 0, common_dispatch.stderr or common_dispatch.stdout
-    common_dispatch_id = json.loads(common_dispatch.stdout)["dispatch"]["dispatch_id"]
-    claim_common = run_wavefront(
-        "claim",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_COMMON_API",
-        "--dispatch-id",
-        common_dispatch_id,
-        "--claimed-by",
-        "smoke-common",
-        "--json",
-        project_root=project,
-    )
-    assert claim_common.returncode == 0, claim_common.stderr or claim_common.stdout
-    scoreboard_dispatch = run_dispatch(
-        "create",
-        "--ip-dir",
-        str(ip),
-        "--agent-type",
-        "oag-custom-researcher",
-        "--stage",
-        "wavefront_claim_smoke",
-        "--receipt-path",
-        str(ip / "knowledge" / "subagents" / "TB_SCOREBOARD_SCHEMA_oag_tb_implementation_agent.json"),
-        "--wavefront-run-id",
-        run_id,
-        "--task-id",
-        "TB_SCOREBOARD_SCHEMA",
-        "--ownership-mode",
-        "exclusive_file",
-        "--json",
-        project_root=project,
-    )
-    assert scoreboard_dispatch.returncode == 0, scoreboard_dispatch.stderr or scoreboard_dispatch.stdout
-    scoreboard_dispatch_id = json.loads(scoreboard_dispatch.stdout)["dispatch"]["dispatch_id"]
-    claim_scoreboard = run_wavefront(
-        "claim",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--task-id",
-        "TB_SCOREBOARD_SCHEMA",
-        "--dispatch-id",
-        scoreboard_dispatch_id,
-        "--claimed-by",
-        "smoke-scoreboard",
-        "--json",
-        project_root=project,
-    )
-    assert claim_scoreboard.returncode == 0, claim_scoreboard.stderr or claim_scoreboard.stdout
-
-    active_close = run_wavefront(
-        "close",
-        "--ip-dir",
-        str(ip),
-        "--run-id",
-        run_id,
-        "--allow-open",
-        "--json",
-        project_root=project,
-    )
-    assert active_close.returncode != 0, active_close.stdout
-    assert any(item["code"] == "ACTIVE_LOCKS" for item in json.loads(active_close.stdout)["issues"]), active_close.stdout
+    claim_wavefront_task("TB_PACKET_CONTEXT", ownership_mode="none")
 
     bad_barrier_record = run_wavefront(
         "record",
@@ -2728,11 +2840,11 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         "--run-id",
         run_id,
         "--task-id",
-        "TB_COMMON_API",
+        "TB_PACKET_CONTEXT",
         "--status",
         "handoff_pass",
         "--barrier-output",
-        "scoreboard_schema_frozen",
+        "tb_driver_api_ready",
         "--json",
         project_root=project,
     )
@@ -2749,11 +2861,11 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
         "--run-id",
         run_id,
         "--task-id",
-        "TB_COMMON_API",
+        "TB_PACKET_CONTEXT",
         "--status",
         "handoff_pass",
         "--barrier-output",
-        "tb_common_import_clean",
+        "tb_authoring_packet_ready",
         "--json",
         project_root=project,
     )
@@ -2761,50 +2873,69 @@ def test_wavefront_scheduler(tmp_root: Path) -> None:
     missing_decision_codes = {item["code"] for item in json.loads(missing_decision_record.stdout)["issues"]}
     assert "HANDOFF_DECISION_REQUIRED" in missing_decision_codes, missing_decision_record.stdout
 
-    approve_wavefront_task("TB_COMMON_API", "tb_common_import_clean", "helper_api_manifest")
-    approve_wavefront_task("TB_SCOREBOARD_SCHEMA", "scoreboard_schema_frozen")
+    approve_wavefront_task("TB_PACKET_CONTEXT", "tb_authoring_packet_ready", "tb_methodology_ready")
 
-    scenario_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
-    assert scenario_ready.returncode == 0, scenario_ready.stderr or scenario_ready.stdout
-    scenario_ready_ids = [task["task_id"] for task in json.loads(scenario_ready.stdout)["ready_tasks"]]
-    assert scenario_ready_ids == ["TB_SCENARIO_A"], scenario_ready.stdout
+    role_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert role_ready.returncode == 0, role_ready.stderr or role_ready.stdout
+    role_ready_ids = sorted(task["task_id"] for task in json.loads(role_ready.stdout)["ready_tasks"])
+    role_barriers = {
+        "TB_DRIVER_BFM": "tb_driver_api_ready",
+        "TB_MONITOR": "tb_monitor_api_ready",
+        "TB_PREDICTOR_MODEL": "tb_predictor_model_ready",
+        "TB_SCOREBOARD_SCHEMA": "scoreboard_schema_frozen",
+        "TB_ASSERTION_HOOKS": "tb_assertion_hooks_ready",
+    }
+    assert role_ready_ids == sorted(role_barriers), role_ready.stdout
 
-    scenario_dispatch = run_dispatch(
-        "create",
-        "--ip-dir",
-        str(ip),
-        "--agent-type",
-        "oag-custom-researcher",
-        "--stage",
-        "wavefront_claim_smoke",
-        "--receipt-path",
-        str(ip / "knowledge" / "subagents" / "TB_SCENARIO_A_oag_tb_implementation_agent.json"),
-        "--wavefront-run-id",
-        run_id,
-        "--task-id",
-        "TB_SCENARIO_A",
-        "--ownership-mode",
-        "exclusive_file",
-        "--json",
-        project_root=project,
-    )
-    assert scenario_dispatch.returncode == 0, scenario_dispatch.stderr or scenario_dispatch.stdout
-    scenario_dispatch_id = json.loads(scenario_dispatch.stdout)["dispatch"]["dispatch_id"]
-    claim_scenario = run_wavefront(
-        "claim",
+    claim_wavefront_task("TB_DRIVER_BFM")
+    claim_wavefront_task("TB_SCOREBOARD_SCHEMA")
+
+    active_close = run_wavefront(
+        "close",
         "--ip-dir",
         str(ip),
         "--run-id",
         run_id,
-        "--task-id",
-        "TB_SCENARIO_A",
-        "--dispatch-id",
-        scenario_dispatch_id,
+        "--allow-open",
         "--json",
         project_root=project,
     )
-    assert claim_scenario.returncode == 0, claim_scenario.stderr or claim_scenario.stdout
-    approve_wavefront_task("TB_SCENARIO_A", "scenario_import_clean")
+    assert active_close.returncode != 0, active_close.stdout
+    assert any(item["code"] == "ACTIVE_LOCKS" for item in json.loads(active_close.stdout)["issues"]), active_close.stdout
+
+    approve_wavefront_task("TB_DRIVER_BFM", "tb_driver_api_ready")
+    approve_wavefront_task("TB_SCOREBOARD_SCHEMA", "scoreboard_schema_frozen")
+    for task_id, barrier_output in role_barriers.items():
+        if task_id in {"TB_DRIVER_BFM", "TB_SCOREBOARD_SCHEMA"}:
+            continue
+        claim_wavefront_task(task_id)
+        approve_wavefront_task(task_id, barrier_output)
+
+    coverage_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert coverage_ready.returncode == 0, coverage_ready.stderr or coverage_ready.stdout
+    coverage_ready_ids = [task["task_id"] for task in json.loads(coverage_ready.stdout)["ready_tasks"]]
+    assert coverage_ready_ids == ["TB_COVERAGE_MODEL"], coverage_ready.stdout
+    claim_wavefront_task("TB_COVERAGE_MODEL")
+    approve_wavefront_task("TB_COVERAGE_MODEL", "tb_coverage_model_ready")
+
+    scenario_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert scenario_ready.returncode == 0, scenario_ready.stderr or scenario_ready.stdout
+    scenario_ready_ids = [task["task_id"] for task in json.loads(scenario_ready.stdout)["ready_tasks"]]
+    scenario_barriers = {
+        "TB_SCENARIO_RESET": "scenario_reset_import_clean",
+        "TB_SCENARIO_BACKPRESSURE": "scenario_backpressure_import_clean",
+        "TB_SCENARIO_PROTOCOL_ERROR": "scenario_protocol_error_import_clean",
+    }
+    assert sorted(scenario_ready_ids) == sorted(scenario_barriers), scenario_ready.stdout
+
+    for task_id, barrier_output in scenario_barriers.items():
+        claim_wavefront_task(task_id)
+        approve_wavefront_task(task_id, barrier_output)
+
+    runner_ready = run_wavefront("ready", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
+    assert runner_ready.returncode == 0, runner_ready.stderr or runner_ready.stdout
+    runner_ready_ids = [task["task_id"] for task in json.loads(runner_ready.stdout)["ready_tasks"]]
+    assert runner_ready_ids == ["TB_RUNNER_OWNER"], runner_ready.stdout
     verify = run_wavefront("verify", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert verify.returncode == 0, verify.stderr or verify.stdout
 
@@ -3962,6 +4093,7 @@ def main() -> int:
         assert windows_smoke_payload["checks"]["hook_commands"] == "pass", windows_smoke_payload
         assert windows_smoke_payload["checks"]["argv_command_split"] == "pass", windows_smoke_payload
         test_pyslang_lint_runner()
+        test_rtl_role_wavefront_template(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
         test_task5_dispatch_wavefront_matrix(Path(tmp))
         test_dispatch_hardening_guards(Path(tmp))
@@ -4029,6 +4161,7 @@ def main() -> int:
         assert OAG_WAVEFRONT_SKILL.is_file(), OAG_WAVEFRONT_SKILL
         assert OAG_TEAM_MODE_SKILL.is_file(), OAG_TEAM_MODE_SKILL
         assert OAG_WAVEFRONT_TEMPLATE.is_file(), OAG_WAVEFRONT_TEMPLATE
+        assert OAG_RTL_WAVEFRONT_TEMPLATE.is_file(), OAG_RTL_WAVEFRONT_TEMPLATE
         assert OAG_DATA_LIFECYCLE_POLICY.is_file(), OAG_DATA_LIFECYCLE_POLICY
         assert OAG_BASELINE_GIT_POLICY.is_file(), OAG_BASELINE_GIT_POLICY
         assert OAG_IP_VERSIONING_POLICY.is_file(), OAG_IP_VERSIONING_POLICY
@@ -4412,6 +4545,7 @@ def main() -> int:
         assert "oag_authoring_packet_check.py" in packet_skill_text, packet_skill_text
         assert "dependency" in wavefront_skill_text and "ownership" in wavefront_skill_text, wavefront_skill_text
         assert "oag_wavefront.py" in wavefront_skill_text, wavefront_skill_text
+        assert "spawn" in wavefront_skill_text and "whole ready wave" in wavefront_skill_text, wavefront_skill_text
         assert "oag_ip_version_check.py" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "oag_ip_git.py" in ip_versioning_skill_text, ip_versioning_skill_text
         assert "checkpoint" in ip_versioning_skill_text, ip_versioning_skill_text
@@ -4480,6 +4614,7 @@ def main() -> int:
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "first attempt a minimal explicit" in subagent_workflows and "native spawn" in subagent_workflows, subagent_workflows
         assert "observed" in subagent_workflows and "native-spawn blocker" in subagent_workflows, subagent_workflows
+        assert "spawn the whole ready wave as one native subagent batch" in subagent_workflows, subagent_workflows
         assert "BLOCKED: native Codex subagent unavailable in this surface" not in subagent_workflows, subagent_workflows
         config_text = (ROOT / "config.toml").read_text(encoding="utf-8")
         user_home_prefix = "/" + "Users/"

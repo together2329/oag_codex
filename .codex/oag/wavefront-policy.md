@@ -46,6 +46,13 @@ A task is ready only when:
 3. no active ownership lock conflicts with its write paths;
 4. the task keeps `may_claim_complete=false`.
 
+If two or more tasks are ready at the same time and their ownership boundaries
+do not conflict, parent orchestration should dispatch them as one native
+subagent batch. Serializing a ready wave requires an explicit blocker such as an
+active dependency, an ownership conflict, a runtime budget, or a user-stated
+scope limit. The unspawned ready tasks must remain visible in the run prompt and
+`dispatch_command_candidates`.
+
 For gap-driven work, parent orchestration should consume the latest
 `knowledge/gap_matrix/implementation_review.json` when present. Open
 implementation findings are scheduled by highest priority first (`P0` before
@@ -75,18 +82,32 @@ and the parent has integrated or rejected its receipt, close that native child
 thread before opening another fan-out batch. Completed child threads are not
 OAG evidence and should not consume runtime subagent slots.
 
-## TB Barrier Pattern
+## Role-Structured RTL/TB Pattern
 
-TB scenario tasks must wait for common helper/API and scoreboard schema tasks.
+RTL and TB dispatch should be role-structured before it is parallel. A generic
+single `RTL_MODULE_A` or monolithic `TB_IMPLEMENTATION` child is allowed only
+for trivial one-file work or when the parent records why role splitting would
+create more risk than it removes.
 
 ```text
-Wave TB-0: read-only extraction
-Wave TB-1: common helper, scoreboard, coverage schema
-Barrier: import-clean + helper API manifest + scoreboard schema
-Wave TB-2: scenario tests
-Wave TB-3: single runner owner
-Wave TB-4: read-only failure triage
+Wave RTL-0: read-only authoring packet / role split context
+Wave RTL-1: interface shell, control FSM, datapath/state, clock/reset lanes
+Barrier: role handoff tokens from each lane
+Wave RTL-2: single RTL integration owner for top, filelists, lint manifest
+
+Wave TB-0: read-only authoring packet / methodology context
+Wave TB-1: driver/BFM, monitor, predictor, scoreboard, assertion lanes
+Wave TB-2: coverage model after scoreboard schema
+Wave TB-3: scenario tests in parallel ready wave
+Wave TB-4: single runner owner for scripts, results, scoreboard rows, coverage
+Wave TB-5: read-only failure triage
 ```
+
+TB scenarios must not open until driver, monitor, predictor, scoreboard,
+coverage, and assertion hooks have produced their declared barriers. Predictor
+and expected-source work must remain independent of DUT/RTL-observed behavior.
+RTL integration must not be split across multiple children that edit the same
+top module, filelist, lint output, or generated manifest.
 
 ## Ontology Coupling
 

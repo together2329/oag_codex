@@ -40,6 +40,14 @@ are satisfied.
     rejected, before opening another fan-out batch.
 15. Let parent/gate decide closure.
 
+RTL/TB implementation should use role-structured templates by default. For RTL,
+start from `rtl_module_fanout.yaml`: context, interface shell, control FSM,
+datapath/state, clock/reset, then one integration owner. For TB, start from
+`tb_common_then_scenario_fanout.yaml`: context, driver/BFM, monitor,
+predictor, scoreboard, coverage, assertion hooks, scenario shards, then one
+runner owner. A monolithic RTL/TB child needs a recorded triviality or risk
+rationale.
+
 Child runtime latency is not implementation failure. If a write-capable child
 has not produced artifacts yet, steer it for status or let a timeout policy
 route `INCONCLUSIVE`/`BLOCKED`; do not close the child and have the parent edit
@@ -172,8 +180,13 @@ or whose target artifacts overlap within the batch.
 
 - Read-only extraction and failure triage may fan out aggressively.
 - Write tasks require disjoint paths.
+- If two or more dependency-ready tasks have non-conflicting ownership, spawn
+  the whole ready wave as one native subagent batch; serial dispatch needs an
+  explicit dependency, ownership, runtime-budget, or user-scope blocker.
 - Shared artifacts require one integration owner.
-- Scenario TB tasks must wait for helper/API/schema barriers.
+- Scenario TB tasks must wait for driver, monitor, predictor, scoreboard,
+  coverage, and assertion barriers.
+- RTL/TB waves should be role-structured before they are parallelized.
 - Worker tasks must not claim completion or signoff.
 - Worker receipts do not unlock downstream work; they move tasks to
   `review_pending`.

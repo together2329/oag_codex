@@ -29,6 +29,8 @@ Primary assets:
 - `oag/bounded-loop-hook-integration-plan.md`
 - `oag/wavefront-policy.md`
 - `oag/wavefront-task-graph.md`
+- `oag/wavefront-templates/rtl_module_fanout.yaml`
+- `oag/wavefront-templates/tb_common_then_scenario_fanout.yaml`
 - `oag/contract-projection.md`
 - `oag/rtl-implementation.md`
 - `oag/rtl-dialect-policy.md`
@@ -299,6 +301,13 @@ packets but must not create locked requirements, contracts, or closure
 decisions. Read-only triage can fan out aggressively, write tasks need disjoint
 ownership locks, shared artifacts need a single integration owner, and workers
 must keep `may_claim_complete=false`.
+Use the role-structured RTL/TB wavefront templates by default:
+`rtl_module_fanout.yaml` splits `RTL_INTERFACE_SHELL`, `RTL_CONTROL_FSM`,
+`RTL_DATAPATH_STATE`, `RTL_CLOCK_RESET_DOMAIN`, and one RTL integration owner;
+`tb_common_then_scenario_fanout.yaml` splits `TB_DRIVER_BFM`, `TB_MONITOR`,
+`TB_PREDICTOR_MODEL`, `TB_SCOREBOARD_SCHEMA`, `TB_COVERAGE_MODEL`,
+`TB_ASSERTION_HOOKS`, scenario shards, and one runner owner. A monolithic
+RTL/TB child needs a recorded triviality or risk rationale.
 Use `.codex/scripts/oag_trace_graph_check.py --ip-dir <ip> --json` to audit the
 source claim -> requirement -> atom -> obligation -> contract -> scenario ->
 evidence trace graph.
@@ -380,6 +389,19 @@ by the `SubagentStop` hook when they write implementation, validation, coverage,
 or gate-review evidence, and must end with `OAG_EVIDENCE_RECORDED:
 <relative-path>`. Subagents may never claim final completion from a receipt;
 final closure requires OAG check/decide and the gate reviewer role.
+For long RTL/TB work, a single quiet wait cycle is not a failure. Keep native
+children alive through repeated waits or a targeted follow-up while they are
+still running. Treat a lane as inconclusive only when the child has completed
+without the deliverable, emitted `BLOCKED:`, is no longer running, or remained
+silent across multiple wait cycles with the parent rationale recorded. Split TB
+work into driver/BFM, monitor, predictor, scoreboard/schema, coverage,
+assertion hooks, scenario shards, and runner integration instead of one large
+child that can be closed prematurely.
+When wavefront reports multiple dependency-ready tasks with non-conflicting
+ownership, dispatch the whole ready wave as one native subagent batch. Do not
+serialize ready tasks unless a dependency, ownership lock, runtime budget, or
+user-stated scope limit blocks the batch; keep any unspawned ready tasks visible
+in `dispatch_command_candidates`.
 The `SubagentStart` hook injects the OAG child-work contract and records a
 start event; it must not spawn subagents or replace native Codex orchestration.
 Before spawning a write-capable child, create a dispatch record with

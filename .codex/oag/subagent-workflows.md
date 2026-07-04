@@ -100,10 +100,28 @@ WORKING: <task> - <current phase>
 BLOCKED: <reason>
 ```
 
+For RTL/TB authoring, use a patience protocol instead of a single wait. The
+parent must not abandon an active child after one quiet wait cycle. Continue
+waiting or send one targeted follow-up while the child is still running. Mark a
+lane inconclusive only when the child completed without the deliverable, emitted
+`BLOCKED:`, is no longer running, or remained silent across multiple wait cycles
+and the parent records the reason. TB generation should be split into bounded
+children: driver/BFM, monitor, predictor, scoreboard/schema, coverage,
+assertion hooks, scenario groups, and runner integration. This keeps each child
+short enough to finish while still letting large TB work proceed without the
+parent prematurely closing the lane.
+
 Use native child steering only for targeted follow-up, and close child threads
 after integrating a completed or inconclusive lane.
 Do not mark a dependent step complete while an active child owns evidence for
 that step.
+When a wavefront-ready set contains two or more dependency-ready tasks with
+non-conflicting ownership, spawn the whole ready wave as one native subagent
+batch. Do not serialize ready tasks merely because the parent is easier to
+drive one at a time. Serial dispatch is allowed only when a dependency, active
+ownership lock, runtime budget, or user-stated scope limit blocks the batch; the
+parent must record that reason and keep the unspawned ready tasks visible.
+Normative shorthand: spawn the whole ready wave as one native subagent batch.
 Before opening a new parallel batch, close every completed child whose receipt
 has already been integrated, rejected, or routed. Keep only currently working
 children open. This is runtime hygiene, not an OAG closure action.
@@ -284,14 +302,47 @@ before any closure claim.
 ```text
 Use Codex subagents and wait for all results.
 
-Spawn:
-- agent_type=oag-rtl-implementation-agent for rtl/<module>.sv only.
+Plan a role-structured RTL/TB wavefront before spawning write-capable children.
+Use .codex/oag/wavefront-templates/rtl_module_fanout.yaml for RTL and
+.codex/oag/wavefront-templates/tb_common_then_scenario_fanout.yaml for TB
+unless the task is trivial enough to record a monolithic-lane rationale.
+
+Spawn RTL lanes only after RTL_PACKET_CONTEXT has reviewed rtl__*.json:
+- agent_type=oag-rtl-implementation-agent for RTL_INTERFACE_SHELL only:
+  ports, register shell, integration-facing interface declarations.
+- agent_type=oag-rtl-implementation-agent for RTL_CONTROL_FSM only:
+  sequencing, state transitions, event/commit ordering, backpressure control.
+- agent_type=oag-rtl-implementation-agent for RTL_DATAPATH_STATE only:
+  data transforms, storage, counters, FIFOs, payload state, and PPA notes.
+- agent_type=oag-rtl-implementation-agent for RTL_CLOCK_RESET_DOMAIN only:
+  reset behavior, clock/reset domain intent, CDC/RDC adapter hooks.
+- agent_type=oag-rtl-lint-static-agent as RTL_INTEGRATION_OWNER only after
+  the role lanes hand off; it owns top wiring, filelists, lint manifest, and
+  integration review, including optional pyslang syntax lint via
+  oag_pyslang_lint.py. Do not let multiple children edit the same top/filelist.
 - agent_type=oag-verification-strategy-agent for ontology/verification_plan.yaml
   and strategy evidence only.
-- agent_type=oag-tb-implementation-agent for tb/<test_or_monitor> only.
-- agent_type=oag-rtl-lint-static-agent as read-only reviewer for filelist,
-  compile, lint, optional pyslang syntax lint via oag_pyslang_lint.py, and
-  static risks after the write agents report.
+
+Spawn TB lanes only after TB_PACKET_CONTEXT has reviewed tb__*.json,
+ontology/verification_plan.yaml, and ontology/tb_methodology.yaml:
+- agent_type=oag-tb-implementation-agent for TB_DRIVER_BFM only:
+  DUT input driving and transaction/API shape.
+- agent_type=oag-tb-implementation-agent for TB_MONITOR only:
+  DUT-facing observed-source capture, transaction decoding, and timestamps.
+- agent_type=oag-tb-implementation-agent for TB_PREDICTOR_MODEL only:
+  independent expected behavior from contracts, never from RTL/DUT output.
+- agent_type=oag-tb-implementation-agent for TB_SCOREBOARD_SCHEMA only:
+  scoreboard_rows.v1 schema, compare keys, mismatch reporting, row writer.
+- agent_type=oag-tb-implementation-agent for TB_COVERAGE_MODEL only:
+  coverage refs and coverage JSON, after scoreboard schema is frozen.
+- agent_type=oag-tb-implementation-agent for TB_ASSERTION_HOOKS only:
+  local assertion/formal hooks named by the verification plan.
+- agent_type=oag-tb-implementation-agent for scenario shards only after the
+  driver, monitor, predictor, scoreboard, coverage, and assertion barriers are
+  present.
+- agent_type=oag-sim-execution-agent as TB_RUNNER_OWNER only after scenario
+  shards hand off; it owns run scripts, result aggregation, scoreboard event
+  files, coverage JSON, and scenario mapping.
 
 The RTL implementation agent must implement assigned behavior/cycle refs, stay
 within OAG SV-lite by default, avoid RTL `function`/`task` helper constructs,

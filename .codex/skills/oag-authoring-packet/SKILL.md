@@ -37,3 +37,9 @@ python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-pac
 When spawning a native OAG subagent, include the relevant packet path and keep
 the dispatch allowed paths narrow. RTL dispatch should reference `rtl__*.json`.
 TB dispatch should reference `tb__*.json`.
+For role-structured waves, multiple children may consume the same packet, but
+each child must receive a bounded role, such as RTL_INTERFACE_SHELL,
+RTL_CONTROL_FSM, TB_DRIVER_BFM, TB_MONITOR, TB_PREDICTOR_MODEL, or
+TB_SCOREBOARD_SCHEMA, and must be limited to that role's allowed paths. Shared
+top modules, filelists, result aggregation, and evidence manifests belong to a
+single integration or runner owner.
