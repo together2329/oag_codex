@@ -12,7 +12,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 from oag_wavefront_core import JsonObject, WavefrontRun, issue, resolve_project_path, resolve_read_path, result
 from oag_wavefront_graph import VALID_STATUSES, normalize_list
 from oag_wavefront_ops import ClaimRequest, PlanRequest, claim_wavefront_task, create_wavefront_run, load_wavefront_run_status
-from oag_wavefront_records import RecordRequest, close_wavefront_run, ready_wavefront_tasks, record_wavefront_task, verify_wavefront_run
+from oag_wavefront_records import HeartbeatRequest, RecordRequest, close_wavefront_run, ready_wavefront_tasks, record_wavefront_heartbeat, record_wavefront_task, verify_wavefront_run
 from oag_wavefront_templates import load_template
 
 
@@ -61,6 +61,16 @@ def cmd_record(args: argparse.Namespace) -> JsonObject:
             barrier_outputs=normalize_list(args.barrier_output),
             receipt=args.receipt or "",
             decision=args.decision or "",
+        )
+    )
+
+
+def cmd_heartbeat(args: argparse.Namespace) -> JsonObject:
+    return record_wavefront_heartbeat(
+        HeartbeatRequest(
+            run=_run(args.ip_dir, args.run_id),
+            task_id=args.task_id,
+            message=args.message or "",
         )
     )
 
@@ -124,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--decision", default="", help="Approved oag_wavefront_decision.v1 JSON required for handoff_pass.")
     record.add_argument("--json", action="store_true")
 
+    heartbeat = sub.add_parser("heartbeat", help="Record progress evidence for an active wavefront task.")
+    heartbeat.add_argument("--ip-dir", required=True)
+    heartbeat.add_argument("--run-id", required=True)
+    heartbeat.add_argument("--task-id", required=True)
+    heartbeat.add_argument("--message", default="")
+    heartbeat.add_argument("--json", action="store_true")
+
     verify = sub.add_parser("verify", help="Verify graph, lock, and barrier invariants.")
     verify.add_argument("--ip-dir", required=True)
     verify.add_argument("--run-id", required=True)
@@ -148,6 +165,8 @@ def dispatch(args: argparse.Namespace) -> JsonObject:
         return cmd_claim(args)
     if args.command == "record":
         return cmd_record(args)
+    if args.command == "heartbeat":
+        return cmd_heartbeat(args)
     if args.command == "verify":
         return cmd_verify(args)
     return cmd_close(args)

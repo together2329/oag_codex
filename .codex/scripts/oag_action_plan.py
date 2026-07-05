@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import re
 import sys
@@ -16,17 +17,19 @@ CODEX_ROOT = SCRIPTS_DIR.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import oag_authoring_packet_check  # noqa: E402
-import oag_contract_strength_check  # noqa: E402
-import oag_lock_readiness_check  # noqa: E402
-import oag_mission_runtime  # noqa: E402
-import oag_paths  # noqa: E402
-import oag_req_quality_check  # noqa: E402
-import oag_requirement_atom_check  # noqa: E402
-import oag_role_health  # noqa: E402
-import oag_run_control_common as run_common  # noqa: E402
-import oag_verification_plan_check  # noqa: E402
-from oag_validate_json import contextual_schema_issues  # noqa: E402
+oag_authoring_packet_check = importlib.import_module("oag_authoring_packet_check")
+oag_contract_strength_check = importlib.import_module("oag_contract_strength_check")
+oag_lock_readiness_check = importlib.import_module("oag_lock_readiness_check")
+oag_mission_runtime = importlib.import_module("oag_mission_runtime")
+oag_paths = importlib.import_module("oag_paths")
+oag_req_quality_check = importlib.import_module("oag_req_quality_check")
+oag_requirement_atom_check = importlib.import_module("oag_requirement_atom_check")
+oag_role_health = importlib.import_module("oag_role_health")
+run_common = importlib.import_module("oag_run_control_common")
+oag_verification_plan_check = importlib.import_module("oag_verification_plan_check")
+contextual_schema_issues = importlib.import_module("oag_validate_json").contextual_schema_issues
+oag_pending_questions = importlib.import_module("oag_pending_questions")
+oag_exploration_cleanup_check = importlib.import_module("oag_exploration_cleanup_check")
 
 
 SCHEMA_VERSION = "oag_action_candidates.v1"
@@ -56,6 +59,13 @@ SELF_EXPLORE_SOURCE_RELS = (
     "ontology/contracts.yaml",
     "ontology/verification_plan.yaml",
 )
+ARCH_CANDIDATE_GENERATE_ACTION = "ACT_ARCH_CANDIDATE_GENERATE"
+ARCH_BENCH_RUN_ACTION = "ACT_ARCH_BENCH_RUN"
+ARCH_SELECT_AND_DECIDE_ACTION = "ACT_ARCH_SELECT_AND_DECIDE"
+CHARTER_INTERVIEW_ACTION = "ACT_CHARTER_INTERVIEW"
+CHECKPOINT_REVIEW_ACTION = "ACT_CHECKPOINT_REVIEW"
+EXPLORATION_CLEANUP_ACTION = "ACT_EXPLORATION_CLEANUP"
+TERMINAL_ARCH_DECISION_STATUSES = {"decided", "waived"}
 
 
 JsonObject = dict[str, Any]
@@ -210,6 +220,220 @@ def decision_rows(ip_dir: Path) -> list[JsonObject]:
     return [item for item in as_list(doc.get("decisions")) if isinstance(item, dict)]
 
 
+def mission_charter(ip_dir: Path) -> JsonObject:
+    return read_yaml(oag_paths.legacy_or_hidden(ip_dir, "ontology/mission_charter.yaml"))
+
+
+def charter_approved_by_human(charter: JsonObject) -> bool:
+    approval_raw = charter.get("approval")
+    approval: JsonObject = approval_raw if isinstance(approval_raw, dict) else {}
+    actor_raw = approval.get("actor")
+    actor: JsonObject = actor_raw if isinstance(actor_raw, dict) else {}
+    approved_by_raw = charter.get("approved_by")
+    approved_by: JsonObject = approved_by_raw if isinstance(approved_by_raw, dict) else {}
+    approved = (
+        charter.get("approved") is True
+        or text(charter.get("status")).lower() == "approved"
+        or approval.get("approved") is True
+        or text(approval.get("status")).lower() == "approved"
+    )
+    human = text(actor.get("kind")).lower() == "human" or text(approved_by.get("kind")).lower() == "human"
+    return approved and human
+
+
+def charter_grants(charter: JsonObject) -> list[JsonObject]:
+    autonomy_raw = charter.get("autonomy")
+    autonomy: JsonObject = autonomy_raw if isinstance(autonomy_raw, dict) else {}
+    grants = [item for item in as_list(charter.get("autonomy_grants")) if isinstance(item, dict)]
+    grants.extend(item for item in as_list(autonomy.get("grants")) if isinstance(item, dict))
+    class_map_raw = autonomy.get("decision_classes")
+    class_map: JsonObject = class_map_raw if isinstance(class_map_raw, dict) else {}
+    for key, value in class_map.items():
+        if isinstance(value, dict):
+            grant = {"decision_class": key}
+            grant.update(value)
+            grants.append(grant)
+        elif value is True:
+            grants.append({"decision_class": key, "granted": True})
+    return grants
+
+
+def charter_grant_for_class(charter: JsonObject, decision_class: str) -> JsonObject:
+    if not charter_approved_by_human(charter):
+        return {}
+    for grant in charter_grants(charter):
+        if text(grant.get("decision_class") or grant.get("class")).lower() != decision_class:
+            continue
+        if grant.get("granted") is False or text(grant.get("status")).lower() in {"denied", "rejected", "revoked"}:
+            continue
+        return grant
+    return {}
+
+
+def architecture_tradeoff_rows(rows: list[JsonObject]) -> list[JsonObject]:
+    return [
+        row
+        for row in rows
+        if text(row.get("decision_class")).lower() == "architecture_tradeoff"
+        and text(row.get("status")).lower() not in TERMINAL_ARCH_DECISION_STATUSES
+    ]
+
+
+def nested_bool(payload: JsonObject, *keys: str) -> bool:
+    cursor: Any = payload
+    for key in keys:
+        if not isinstance(cursor, dict):
+            return False
+        cursor = cursor.get(key)
+    return cursor is True
+
+
+def nested_number(payload: JsonObject, *keys: str) -> float | None:
+    cursor: Any = payload
+    for key in keys:
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(key)
+    if isinstance(cursor, bool):
+        return None
+    return float(cursor) if isinstance(cursor, (int, float)) else None
+
+
+def charter_requires_tier2(charter: JsonObject, grant: JsonObject) -> bool:
+    return (
+        nested_bool(grant, "conditions", "require_tier2_evidence")
+        or nested_bool(charter, "conditions", "require_tier2_evidence")
+        or nested_bool(charter, "selection_policy", "require_tier2_evidence")
+    )
+
+
+def charter_min_win_margin_pct(charter: JsonObject, grant: JsonObject) -> float:
+    value = nested_number(grant, "conditions", "min_win_margin_pct")
+    if value is not None:
+        return value
+    value = nested_number(charter, "selection_policy", "min_win_margin_pct")
+    return value if value is not None else 0.0
+
+
+def charter_max_tier2_candidates(charter: JsonObject) -> int:
+    value = nested_number(charter, "budgets", "max_candidates_tier2")
+    if value is None:
+        return 2
+    return max(1, int(value))
+
+
+def architecture_artifacts(ip_dir: Path) -> list[JsonObject]:
+    root = oag_paths.legacy_or_hidden(ip_dir, "knowledge/arch_exploration")
+    if not root.is_dir():
+        return []
+    artifacts: list[JsonObject] = []
+    for run_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        candidates_path = run_dir / "candidates.json"
+        scoreboard_path = run_dir / "architecture_scoreboard.json"
+        candidates_doc = read_json(candidates_path)
+        scoreboard = read_json(scoreboard_path)
+        if not candidates_doc and not scoreboard:
+            continue
+        artifacts.append(
+            {
+                "run_id": text(candidates_doc.get("run_id") or scoreboard.get("run_id") or run_dir.name),
+                "path": run_common.rel_to_ip(ip_dir, run_dir),
+                "candidates_path": run_common.rel_to_ip(ip_dir, candidates_path),
+                "scoreboard_path": run_common.rel_to_ip(ip_dir, scoreboard_path),
+                "candidates": candidates_doc,
+                "scoreboard": scoreboard,
+                "mtime": max(candidates_path.stat().st_mtime if candidates_path.is_file() else 0, scoreboard_path.stat().st_mtime if scoreboard_path.is_file() else 0),
+            }
+        )
+    return sorted(artifacts, key=lambda item: (float(item.get("mtime") or 0), text(item.get("run_id"))), reverse=True)
+
+
+def candidate_rows(artifact: JsonObject) -> list[JsonObject]:
+    candidates_raw = artifact.get("candidates")
+    candidates_doc: JsonObject = candidates_raw if isinstance(candidates_raw, dict) else {}
+    return [item for item in as_list(candidates_doc.get("candidates")) if isinstance(item, dict)]
+
+
+def scoreboard_rows(artifact: JsonObject) -> list[JsonObject]:
+    scoreboard_raw = artifact.get("scoreboard")
+    scoreboard: JsonObject = scoreboard_raw if isinstance(scoreboard_raw, dict) else {}
+    rows = [item for item in as_list(scoreboard.get("rows")) if isinstance(item, dict)]
+    return sorted(rows, key=lambda item: row_rank(item))
+
+
+def row_rank(row: JsonObject) -> int:
+    rank = row.get("rank")
+    return rank if isinstance(rank, int) and not isinstance(rank, bool) else 999
+
+
+def top_architecture_candidate_ids(artifact: JsonObject, limit: int) -> list[str]:
+    rows = scoreboard_rows(artifact)
+    if rows:
+        return [text(row.get("candidate_id")) for row in rows[:limit] if text(row.get("candidate_id"))]
+    return [text(row.get("id")) for row in candidate_rows(artifact)[:limit] if text(row.get("id"))]
+
+
+def bench_result_path(ip_dir: Path, run_id: str, candidate_id: str) -> Path:
+    return oag_paths.legacy_or_hidden(ip_dir, Path("knowledge") / "arch_exploration" / run_id / candidate_id / "bench_result.json")
+
+
+def candidate_status_by_id(artifact: JsonObject) -> dict[str, str]:
+    return {text(row.get("id")): text(row.get("status")).lower() for row in candidate_rows(artifact) if text(row.get("id"))}
+
+
+def top_candidates_needing_tier2(ip_dir: Path, artifact: JsonObject, charter: JsonObject, grant: JsonObject) -> list[str]:
+    run_id = text(artifact.get("run_id"))
+    if not run_id:
+        return []
+    status_by_id = candidate_status_by_id(artifact)
+    top_ids = top_architecture_candidate_ids(artifact, charter_max_tier2_candidates(charter))
+    rows_by_id = {text(row.get("candidate_id")): row for row in scoreboard_rows(artifact)}
+    needs: list[str] = []
+    for candidate_id in top_ids:
+        if status_by_id.get(candidate_id) in {"benched", "selected", "pruned"}:
+            continue
+        row = rows_by_id.get(candidate_id, {})
+        explicit_need = row.get("requires_tier2_evidence") is True or text(row.get("evidence_tier")).lower() == "tier1_only"
+        if not (explicit_need or charter_requires_tier2(charter, grant)):
+            continue
+        if not bench_result_path(ip_dir, run_id, candidate_id).is_file():
+            needs.append(candidate_id)
+    return needs
+
+
+def top_candidate_has_bench_evidence(ip_dir: Path, artifact: JsonObject) -> bool:
+    run_id = text(artifact.get("run_id"))
+    top_ids = top_architecture_candidate_ids(artifact, 1)
+    if not run_id or not top_ids:
+        return False
+    row = next((item for item in scoreboard_rows(artifact) if text(item.get("candidate_id")) == top_ids[0]), {})
+    evidence_refs = as_list(row.get("evidence_refs") or row.get("bench_evidence_refs"))
+    if evidence_refs:
+        return True
+    return bench_result_path(ip_dir, run_id, top_ids[0]).is_file()
+
+
+def scoreboard_supports_selection(ip_dir: Path, artifact: JsonObject, charter: JsonObject, grant: JsonObject) -> bool:
+    rows = scoreboard_rows(artifact)
+    if not rows:
+        return False
+    scoreboard_raw = artifact.get("scoreboard")
+    scoreboard: JsonObject = scoreboard_raw if isinstance(scoreboard_raw, dict) else {}
+    margin = scoreboard.get("rank_margin_pct")
+    if not isinstance(margin, (int, float)) or isinstance(margin, bool):
+        margin = rows[0].get("rank_margin_pct")
+    margin_value = float(margin) if isinstance(margin, (int, float)) and not isinstance(margin, bool) else 0.0
+    if margin_value < charter_min_win_margin_pct(charter, grant):
+        return False
+    if not charter_requires_tier2(charter, grant):
+        return True
+    return top_candidate_has_bench_evidence(ip_dir, artifact)
+
+
+def pending_questions_state(ip_dir: Path, charter: JsonObject) -> JsonObject:
+    return oag_pending_questions.summary(ip_dir, charter)
+
+
 def count_issues(result: JsonObject) -> int:
     return len([item for item in result.get("issues", []) if isinstance(item, dict)])
 
@@ -291,7 +515,8 @@ def self_explore_current(ip_dir: Path, fingerprint_sha: str) -> bool:
         return False
     if payload.get("status") != "pass":
         return False
-    fingerprint = payload.get("input_fingerprint") if isinstance(payload.get("input_fingerprint"), dict) else {}
+    raw_fingerprint = payload.get("input_fingerprint")
+    fingerprint: JsonObject = raw_fingerprint if isinstance(raw_fingerprint, dict) else {}
     return str(fingerprint.get("sha256") or "") == fingerprint_sha
 
 
@@ -330,10 +555,13 @@ def role_health_by_role(role_health: JsonObject) -> dict[str, JsonObject]:
 
 
 def score_candidate(candidate: JsonObject, open_items_by_id: dict[str, JsonObject], mission_priority: dict[str, int], role_health_rows: dict[str, JsonObject] | None = None) -> JsonObject:
+    priority = text(candidate.get("priority"))
+    status = text(candidate.get("status"))
+    action_type = text(candidate.get("action_type"))
     factors: JsonObject = {
-        "priority": PRIORITY_SCORE.get(candidate.get("priority"), 0),
-        "status": STATUS_SCORE.get(candidate.get("status"), 0),
-        "mission_order": max(0, 30 - (mission_priority.get(candidate.get("action_type"), 999) * 2)),
+        "priority": PRIORITY_SCORE.get(priority, 0),
+        "status": STATUS_SCORE.get(status, 0),
+        "mission_order": max(0, 30 - (mission_priority.get(action_type, 999) * 2)),
         "open_item_severity": 0,
         "human_decision": 0,
         "recovery_or_gate": 0,
@@ -347,7 +575,7 @@ def score_candidate(candidate: JsonObject, open_items_by_id: dict[str, JsonObjec
     factors["open_item_severity"] = max((OPEN_ITEM_SCORE.get(severity, 0) for severity in severities), default=0)
     if str(candidate.get("owner_role") or "").startswith("human"):
         factors["human_decision"] = 8
-    if candidate.get("action_type") in RECOVERY_ACTIONS:
+    if action_type in RECOVERY_ACTIONS:
         factors["recovery_or_gate"] = 15
     role = str(candidate.get("owner_role") or "")
     role_row = (role_health_rows or {}).get(role, {})
@@ -355,7 +583,7 @@ def score_candidate(candidate: JsonObject, open_items_by_id: dict[str, JsonObjec
         factors["role_health"] = -35
     elif role_row.get("status") == "degraded":
         factors["role_health"] = -20
-    if candidate.get("action_type") == "ACT_ORCHESTRATION_RECOVERY" and role_health_rows:
+    if action_type == "ACT_ORCHESTRATION_RECOVERY" and role_health_rows:
         factors["role_health"] = max(int(factors["role_health"]), 15)
     total = sum(value for value in factors.values() if isinstance(value, int))
     return {"total": total, "factors": factors}
@@ -378,9 +606,11 @@ def build_dependency_graph(candidates: list[JsonObject], mission_id: str, missio
         )
         by_type.setdefault(str(candidate.get("action_type") or ""), candidate)
 
-    ordered = sorted(candidates, key=lambda item: mission_priority.get(item.get("action_type"), 999))
+    ordered = sorted(candidates, key=lambda item: mission_priority.get(text(item.get("action_type")), 999))
     for earlier, later in zip(ordered, ordered[1:]):
-        if mission_priority.get(earlier.get("action_type"), 999) == 999 or mission_priority.get(later.get("action_type"), 999) == 999:
+        earlier_action = text(earlier.get("action_type"))
+        later_action = text(later.get("action_type"))
+        if mission_priority.get(earlier_action, 999) == 999 or mission_priority.get(later_action, 999) == 999:
             continue
         edges.append(
             {
@@ -392,8 +622,8 @@ def build_dependency_graph(candidates: list[JsonObject], mission_id: str, missio
         )
 
     for blocked in [item for item in candidates if item.get("status") == "blocked"]:
-        blocked_order = mission_priority.get(blocked.get("action_type"), 999)
-        blockers = [item for item in candidates if item.get("status") == "ready" and mission_priority.get(item.get("action_type"), 999) < blocked_order]
+        blocked_order = mission_priority.get(text(blocked.get("action_type")), 999)
+        blockers = [item for item in candidates if item.get("status") == "ready" and mission_priority.get(text(item.get("action_type")), 999) < blocked_order]
         for blocker in blockers[:3]:
             edges.append(
                 {
@@ -422,7 +652,15 @@ def build_dependency_graph(candidates: list[JsonObject], mission_id: str, missio
     }
 
 
-def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, run_semantic_checks: bool = True, stuck_seconds: int = 900) -> JsonObject:
+def build_plan(
+    ip_dir: Path,
+    *,
+    mission_template: str = "",
+    write: bool = True,
+    run_semantic_checks: bool = True,
+    stuck_seconds: int = 900,
+    exclude_candidates: set[str] | None = None,
+) -> JsonObject:
     ip_dir = oag_paths.ip_root(ip_dir)
     if not ip_dir.is_dir():
         return {
@@ -441,6 +679,7 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
     checker_results: JsonObject = {}
     role_health = oag_role_health.collect_role_health(ip_dir, stuck_seconds=stuck_seconds)
     role_health_rows = role_health_by_role(role_health)
+    excluded_candidate_selectors = exclude_candidates or set()
 
     if run_semantic_checks:
         checker_results["lock_readiness"] = safe_check("lock_readiness", oag_lock_readiness_check.check, ip_dir, require_locked=locked)
@@ -448,6 +687,7 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
         checker_results["requirement_atom"] = safe_check("requirement_atom", oag_requirement_atom_check.check, ip_dir, require_locked=locked)
         checker_results["contract_strength"] = safe_check("contract_strength", oag_contract_strength_check.check, ip_dir, require_locked=locked)
         checker_results["verification_plan"] = safe_check("verification_plan", oag_verification_plan_check.check, ip_dir, require_locked=locked)
+        checker_results["exploration_cleanup"] = safe_check("exploration_cleanup", oag_exploration_cleanup_check.check, ip_dir)
         if locked:
             checker_results["authoring_packet"] = safe_check("authoring_packet", oag_authoring_packet_check.check, ip_dir, require_locked=False, require_packets=True, require_lifecycle=False)
 
@@ -607,6 +847,11 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
         )
 
     rows = decision_rows(ip_dir)
+    charter = mission_charter(ip_dir)
+    charter_is_approved = charter_approved_by_human(charter)
+    arch_rows = architecture_tradeoff_rows(rows)
+    arch_grant = charter_grant_for_class(charter, "architecture_tradeoff")
+    arch_artifacts = architecture_artifacts(ip_dir)
     unresolved = [
         row
         for row in rows
@@ -648,6 +893,30 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
                 command="python3 .codex/scripts/oag_exploration_plan.py --ip-dir <ip> --json",
                 mission_template=mission_id,
             )
+        if not charter_is_approved:
+            charter_item_id = add_open_item(
+                open_items,
+                "MISSION_CHARTER_NOT_APPROVED",
+                "No approved human mission charter is available for deferred or autonomous architecture exploration.",
+                severity="P0",
+                source="ontology/mission_charter.yaml",
+                path="ontology/mission_charter.yaml",
+                target_objects={"decisions": target_decisions, "charter_status": text(charter.get("status") or "missing")},
+            )
+            make_candidate(
+                candidates,
+                action_types,
+                action_type=CHARTER_INTERVIEW_ACTION,
+                priority="P0",
+                status="ready",
+                reason="Capture or approve the mission charter before deep interview asks proceed for architecture-exploration autonomy.",
+                target_objects={"decisions": target_decisions, "charter_path": "ontology/mission_charter.yaml"},
+                open_item_ids=[item_id, charter_item_id],
+                preconditions={"approved_human_charter": False, "charter_status": text(charter.get("status") or "missing")},
+                expected_effects={"writes": ["ontology/mission_charter.yaml"], "creates": ["human_approval_request"]},
+                command="python3 .codex/scripts/oag_mission_charter.py propose --ip-dir <ip> --grant architecture_tradeoff --question-batching checkpoint --json",
+                mission_template=mission_id,
+            )
         action = "ACT_ASK_DEEP_INTERVIEW_QUESTION" if not locked else "ACT_RESOLVE_DECISION"
         make_candidate(
             candidates,
@@ -663,6 +932,137 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
             command="python3 .codex/scripts/oag_deep_interview_round.py template --ip-dir <ip> --dimension decision --json",
             mission_template=mission_id,
         )
+
+    pending_questions = pending_questions_state(ip_dir, charter)
+    if pending_questions.get("ready") is True:
+        item_id = add_open_item(
+            open_items,
+            "PENDING_QUESTIONS_CHECKPOINT_READY",
+            "Pending question state requests a consolidated checkpoint review.",
+            severity="P0",
+            source="knowledge/mission_loop/pending_questions.json",
+            path="knowledge/mission_loop/pending_questions.json",
+            target_objects={"question_count": pending_questions.get("question_count", 0), "status": pending_questions.get("status", "")},
+        )
+        make_candidate(
+            candidates,
+            action_types,
+            action_type=CHECKPOINT_REVIEW_ACTION,
+            priority="P0",
+            status="ready",
+            reason="A pending-question checkpoint is ready; route the batched human review before continuing deferred work.",
+            target_objects={"pending_questions": pending_questions},
+            open_item_ids=[item_id],
+            preconditions={"checkpoint_ready": True, "question_count": pending_questions.get("question_count", 0)},
+            expected_effects={"writes": ["knowledge/mission_loop/pending_questions.json"], "creates": ["checkpoint_answers", "refreshed_action_candidates"]},
+            command="python3 .codex/scripts/oag_lock_preview_frame.py --ip-dir <ip> --json",
+            mission_template=mission_id,
+        )
+
+    if arch_rows and arch_grant:
+        arch_decisions = [text(row.get("id")) or f"architecture_tradeoff[{idx}]" for idx, row in enumerate(arch_rows)]
+        if not arch_artifacts:
+            item_id = add_open_item(
+                open_items,
+                "ARCH_CANDIDATES_MISSING",
+                "Approved architecture_tradeoff charter exists but no architecture candidates are present.",
+                severity="P1",
+                source="knowledge/arch_exploration",
+                target_objects={"decisions": arch_decisions},
+            )
+            make_candidate(
+                candidates,
+                action_types,
+                action_type=ARCH_CANDIDATE_GENERATE_ACTION,
+                priority="P1",
+                status="ready",
+                reason="Generate Tier-1 architecture candidates because approved charter grants architecture_tradeoff and open architecture decisions exist.",
+                target_objects={"decisions": arch_decisions, "charter_ref": "ontology/mission_charter.yaml"},
+                open_item_ids=[item_id],
+                preconditions={"approved_human_charter": True, "architecture_tradeoff_decision_count": len(arch_rows), "architecture_candidates_present": False},
+                expected_effects={"writes": ["knowledge/arch_exploration/*/candidates.json", "knowledge/arch_exploration/*/architecture_scoreboard.json"]},
+                command="python3 .codex/scripts/oag_architecture_options.py generate --ip-dir <ip> --json",
+                mission_template=mission_id,
+            )
+        else:
+            artifact = arch_artifacts[0]
+            tier2_needed = top_candidates_needing_tier2(ip_dir, artifact, charter, arch_grant)
+            if tier2_needed:
+                item_id = add_open_item(
+                    open_items,
+                    "ARCH_TIER2_EVIDENCE_NEEDED",
+                    "Top architecture candidates need Tier-2 evidence before provisional selection.",
+                    severity="P1",
+                    source="knowledge/arch_exploration",
+                    target_objects={"run_id": artifact.get("run_id"), "candidate_ids": tier2_needed},
+                )
+                make_candidate(
+                    candidates,
+                    action_types,
+                    action_type=ARCH_BENCH_RUN_ACTION,
+                    priority="P1",
+                    status="ready",
+                    reason="Run Tier-2 bench for top candidates because the approved charter or scoreboard requires measured evidence.",
+                    target_objects={"run_id": artifact.get("run_id"), "candidate_ids": tier2_needed},
+                    open_item_ids=[item_id],
+                    preconditions={"architecture_scoreboard_exists": True, "tier2_needed_candidate_count": len(tier2_needed)},
+                    expected_effects={"writes": ["knowledge/arch_exploration/<run_id>/<candidate>/bench_result.json"], "creates": ["bench_evidence_ref"]},
+                    command="python3 .codex/scripts/oag_arch_bench.py run --ip-dir <ip> --run-id <run_id> --candidate <candidate> --json",
+                    mission_template=mission_id,
+                )
+            if scoreboard_supports_selection(ip_dir, artifact, charter, arch_grant):
+                item_id = add_open_item(
+                    open_items,
+                    "ARCH_SELECTION_READY",
+                    "Architecture scoreboard and required evidence are sufficient for provisional selection.",
+                    severity="P1",
+                    source="knowledge/arch_exploration",
+                    target_objects={"run_id": artifact.get("run_id"), "top_candidate_ids": top_architecture_candidate_ids(artifact, 1)},
+                )
+                make_candidate(
+                    candidates,
+                    action_types,
+                    action_type=ARCH_SELECT_AND_DECIDE_ACTION,
+                    priority="P1",
+                    status="ready",
+                    reason="Select the top architecture candidate and record provisional architecture_tradeoff decisions under the approved charter.",
+                    target_objects={"run_id": artifact.get("run_id"), "decisions": arch_decisions, "top_candidate_ids": top_architecture_candidate_ids(artifact, 1)},
+                    open_item_ids=[item_id],
+                    preconditions={"architecture_scoreboard_exists": True, "evidence_tier_satisfies_charter": True},
+                    expected_effects={"writes": ["ontology/decision_matrix.yaml", "knowledge/decisions/*.json"], "records": ["agent_decision_receipt"]},
+                    command="python3 .codex/scripts/oag_decision_autoresolve.py apply --ip-dir <ip> --candidate-id <candidate> --json",
+                    mission_template=mission_id,
+                )
+
+    if run_semantic_checks:
+        cleanup = checker_results.get("exploration_cleanup", {})
+        if count_issues(cleanup):
+            item_id = add_open_item(
+                open_items,
+                "EXPLORATION_CLEANUP_BLOCKERS",
+                "Architecture exploration cleanup blockers are present.",
+                severity="P0",
+                source="oag_exploration_cleanup_check",
+                target_objects={
+                    "issue_count": count_issues(cleanup),
+                    "exploration_present": cleanup.get("exploration_present"),
+                    "cleanup_state": cleanup.get("cleanup_state"),
+                },
+            )
+            make_candidate(
+                candidates,
+                action_types,
+                action_type=EXPLORATION_CLEANUP_ACTION,
+                priority="P0",
+                status="ready",
+                reason="Pre-lock cleanup must remove provisional leakage, stale worktrees, unpruned candidates, and unmapped retained generate options before lock readiness can pass.",
+                target_objects={"issue_count": count_issues(cleanup), "sample_issues": cleanup.get("issues", [])[:5]},
+                open_item_ids=[item_id],
+                preconditions={"exploration_cleanup_status": cleanup.get("status"), "scope_locked": locked},
+                expected_effects={"writes": ["knowledge/arch_exploration cleanup edits", ".oag_worktrees prune"], "creates": ["cleanup receipt"]},
+                command="python3 .codex/scripts/oag_exploration_cleanup_check.py --ip-dir <ip> --json",
+                mission_template=mission_id,
+            )
 
     if run_semantic_checks:
         req_quality = checker_results.get("req_quality", {})
@@ -903,6 +1303,27 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
             mission_template=mission_id,
         )
 
+    excluded_candidates: list[JsonObject] = []
+    if excluded_candidate_selectors:
+        retained: list[JsonObject] = []
+        for candidate in candidates:
+            candidate_id = text(candidate.get("id"))
+            action_type = text(candidate.get("action_type"))
+            target_objects_raw = candidate.get("target_objects")
+            target_objects: JsonObject = target_objects_raw if isinstance(target_objects_raw, dict) else {}
+            decision_selectors = {f"decision:{text(item)}" for item in as_list(target_objects.get("decisions")) if text(item)}
+            if candidate_id in excluded_candidate_selectors or action_type in excluded_candidate_selectors or decision_selectors & excluded_candidate_selectors:
+                excluded_candidates.append(
+                    {
+                        "id": candidate_id,
+                        "action_type": action_type,
+                        "status_reason": "excluded_by_deferred_candidate_selector",
+                    }
+                )
+                continue
+            retained.append(candidate)
+        candidates = retained
+
     mission_priority = {aid: idx for idx, aid in enumerate(missions.get(mission_id, {}).get("action_priority", []))}
     open_items_by_id = {str(item.get("id") or ""): item for item in open_items}
     for candidate in candidates:
@@ -910,9 +1331,9 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
     candidates.sort(
         key=lambda item: (
             -int(item.get("score", {}).get("total", 0) if isinstance(item.get("score"), dict) else 0),
-            PRIORITY_RANK.get(item.get("priority"), 99),
-            STATUS_RANK.get(item.get("status"), 99),
-            mission_priority.get(item.get("action_type"), 999),
+            PRIORITY_RANK.get(text(item.get("priority")), 99),
+            STATUS_RANK.get(text(item.get("status")), 99),
+            mission_priority.get(text(item.get("action_type")), 999),
             item.get("id", ""),
         )
     )
@@ -938,6 +1359,7 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
         "role_health": role_health,
         "checker_results": checker_results,
         "catalog_issues": catalog_issues + mission_issues,
+        "excluded_candidates": excluded_candidates,
         "state_summary": {
             "scope_lock": state.get("scope_lock", {}).get("state"),
             "compile_manifest": compile_status,
@@ -945,6 +1367,7 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
             "pending_gate_count": state.get("gates", {}).get("pending_gate_count", 0),
             "ssot_status": ssot.get("status"),
             "gate_decision_stale": gate_stale,
+            "excluded_candidate_count": len(excluded_candidates),
         },
     }
     schema_issues = contextual_schema_issues(
@@ -999,14 +1422,23 @@ def build_plan(ip_dir: Path, *, mission_template: str = "", write: bool = True, 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("command", nargs="?", choices=["build"], default="build")
     parser.add_argument("--ip-dir", required=True)
     parser.add_argument("--mission-template", default="")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--quick", action="store_true", help="Skip semantic checker calls and use run-state only.")
     parser.add_argument("--stuck-seconds", type=int, default=900)
+    parser.add_argument("--exclude-candidate", action="append", default=[], help="Candidate id or action type to omit from recommendation after deferral.")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
-    result = build_plan(Path(args.ip_dir), mission_template=args.mission_template, write=not args.no_write, run_semantic_checks=not args.quick, stuck_seconds=args.stuck_seconds)
+    result = build_plan(
+        Path(args.ip_dir),
+        mission_template=args.mission_template,
+        write=not args.no_write,
+        run_semantic_checks=not args.quick,
+        stuck_seconds=args.stuck_seconds,
+        exclude_candidates={text(item) for item in args.exclude_candidate if text(item)},
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif result["status"] == "pass":

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import platform
 import subprocess
@@ -17,8 +18,10 @@ CODEX_ROOT = SCRIPTS_DIR.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import oag_ip_git  # noqa: E402
-import oag_spec_to_rtl_loop  # noqa: E402
+oag_ip_git = importlib.import_module("oag_ip_git")
+oag_spec_to_rtl_loop = importlib.import_module("oag_spec_to_rtl_loop")
+oag_arch_bench = importlib.import_module("oag_arch_bench")
+oag_dse_worktree = importlib.import_module("oag_dse_worktree")
 
 
 SCHEMA_VERSION = "oag_windows_smoke.v1"
@@ -80,6 +83,28 @@ def check_command_splitting() -> list[dict[str, str]]:
     return issues
 
 
+def check_arch_bench_path_guard() -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for value in ("../escape", "nested/candidate"):
+        try:
+            oag_arch_bench.clean_id("candidate", value)
+        except ValueError:
+            continue
+        issues.append(issue("ARCH_BENCH_PATH_ESCAPE_ALLOWED", f"candidate path escape should be rejected: {value}"))
+    return issues
+
+
+def check_dse_worktree_path_guard() -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for value in ("../escape", "nested/candidate"):
+        try:
+            oag_dse_worktree.clean_id("candidate", value)
+        except oag_dse_worktree.DseError:
+            continue
+        issues.append(issue("DSE_WORKTREE_PATH_ESCAPE_ALLOWED", f"DSE candidate path escape should be rejected: {value}"))
+    return issues
+
+
 def check_git_probe() -> tuple[list[dict[str, str]], list[dict[str, str]], dict[str, Any]]:
     issues: list[dict[str, str]] = []
     warnings: list[dict[str, str]] = []
@@ -106,6 +131,8 @@ def check_git_probe() -> tuple[list[dict[str, str]], list[dict[str, str]], dict[
 def run() -> dict[str, Any]:
     issues, warnings = scan_runtime_sources()
     issues.extend(check_command_splitting())
+    issues.extend(check_arch_bench_path_guard())
+    issues.extend(check_dse_worktree_path_guard())
     git_issues, git_warnings, git_probe = check_git_probe()
     issues.extend(git_issues)
     warnings.extend(git_warnings)
@@ -122,6 +149,8 @@ def run() -> dict[str, Any]:
             "runtime_source_scan": "pass" if not [item for item in issues if item.get("code") == "WINDOWS_SHELL_ASSUMPTION"] else "fail",
             "hook_commands": "pass" if not [item for item in issues if item.get("code") == "HOOK_COMMAND_SHELL_ASSUMPTION"] else "fail",
             "argv_command_split": "pass" if not [item for item in issues if item.get("code", "").startswith("ARGV_SPLIT")] else "fail",
+            "arch_bench_path_guard": "pass" if not [item for item in issues if item.get("code", "").startswith("ARCH_BENCH_PATH")] else "fail",
+            "dse_worktree_path_guard": "pass" if not [item for item in issues if item.get("code", "").startswith("DSE_WORKTREE_PATH")] else "fail",
             "git_probe": "pass" if not git_issues else "fail",
         },
         "issues": issues,

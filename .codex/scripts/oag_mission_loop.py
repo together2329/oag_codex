@@ -10,6 +10,7 @@ do next, and stops whenever human input or an ownership boundary is required.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -23,11 +24,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import oag_action_plan  # noqa: E402
 import oag_action_record  # noqa: E402
+import oag_decision_autoresolve  # noqa: E402
 import oag_exploration_plan  # noqa: E402
 import oag_mission_runtime  # noqa: E402
 import oag_orchestration_guard  # noqa: E402
 import oag_paths  # noqa: E402
 import oag_run_control_common as run_common  # noqa: E402
+
+oag_pending_questions = importlib.import_module("oag_pending_questions")
 
 
 STATE_SCHEMA = "oag_mission_loop_state.v1"
@@ -40,6 +44,10 @@ HUMAN_ACTION_TYPES = {
     "ACT_RESOLVE_PENDING_GATE",
     "ACT_LOCK_SCOPE",
     "ACT_CUSTOM_OPERATOR_INPUT",
+}
+
+CHECKPOINT_ACTION_TYPES = {
+    "ACT_CHECKPOINT_REVIEW",
 }
 
 DISPATCH_ACTION_TYPES = {
@@ -218,12 +226,19 @@ def recommended_candidate(plan_result: JsonObject) -> JsonObject:
     return next((item for item in candidates if item.get("recommended") is True), candidates[0] if candidates else {})
 
 
-def classify_candidate(candidate: JsonObject) -> tuple[str, str]:
+def classify_candidate(candidate: JsonObject, ip_dir: Path | None = None) -> tuple[str, str]:
     action_type = str(candidate.get("action_type") or "")
     owner_role = str(candidate.get("owner_role") or "")
+    if action_type in CHECKPOINT_ACTION_TYPES:
+        return "checkpoint_ready", "pending_questions_checkpoint_ready"
     if action_type in SELF_EXPLORE_ACTION_TYPES:
         return "self_explore", "local_research_before_user_question"
     if action_type in HUMAN_ACTION_TYPES or owner_role == "human_via_main":
+        if ip_dir is not None:
+            policy = oag_decision_autoresolve.resolve_candidate_policy(ip_dir, candidate)
+            policy_decision = str(policy.get("decision") or "")
+            if policy_decision in {"auto_decide", "route_dse", "defer_question"}:
+                return policy_decision, str(policy.get("reason") or "charter_autonomy_policy")
         return "needs_user", "human_input_required"
     if action_type in DISPATCH_ACTION_TYPES or str(candidate.get("allowed_write_policy", "")) == "dispatch":
         return "dispatch_required", "bounded_subagent_or_dispatch_required"
@@ -312,11 +327,20 @@ def tick(args: argparse.Namespace) -> JsonObject:
         guard = oag_orchestration_guard.audit(ip_dir, stale_seconds=args.stale_seconds)
         active_locks = guard.get("active_locks") if isinstance(guard.get("active_locks"), list) else []
         open_action_rows = open_actions(ip_dir)
-        plan_result = oag_action_plan.build_plan(ip_dir, write=not args.no_write_plan, run_semantic_checks=not args.quick, stuck_seconds=args.stuck_seconds)
+        charter = oag_action_plan.mission_charter(ip_dir)
+        pending_before = oag_pending_questions.summary(ip_dir, charter)
+        exclude_candidates = set(pending_before.get("excluded_selectors") if isinstance(pending_before.get("excluded_selectors"), list) else [])
+        plan_result = oag_action_plan.build_plan(
+            ip_dir,
+            write=not args.no_write_plan,
+            run_semantic_checks=not args.quick,
+            stuck_seconds=args.stuck_seconds,
+            exclude_candidates=exclude_candidates,
+        )
         candidate = recommended_candidate(plan_result)
-        decision, reason = classify_candidate(candidate)
+        decision, reason = classify_candidate(candidate, ip_dir)
         exploration_plan: JsonObject = {}
-        if str(candidate.get("action_type") or "") in SELF_EXPLORE_ACTION_TYPES or decision == "needs_user":
+        if str(candidate.get("action_type") or "") in SELF_EXPLORE_ACTION_TYPES or decision in {"needs_user", "auto_decide", "route_dse", "defer_question"}:
             exploration_plan = oag_exploration_plan.build_plan(ip_dir, write=False)
 
         issues: list[dict[str, str]] = []
@@ -339,8 +363,37 @@ def tick(args: argparse.Namespace) -> JsonObject:
             decision = "idle"
             reason = "no_candidate"
 
+        pending_queue: JsonObject = pending_before
+        if decision == "defer_question":
+            policy = oag_decision_autoresolve.resolve_candidate_policy(ip_dir, candidate)
+            queued = oag_pending_questions.enqueue(
+                ip_dir,
+                candidate=candidate_summary(candidate),
+                question=build_question(candidate),
+                policy=policy,
+                charter=charter,
+            )
+            pending_queue = oag_pending_questions.summary(ip_dir, charter)
+            if queued.get("status") == "not_queued":
+                decision = "needs_user"
+                reason = str(queued.get("reason") or "checkpoint_question_batching_not_approved")
+            elif queued.get("checkpoint_ready") is True:
+                decision = "checkpoint_ready"
+                reason = str(queued.get("reason") or "pending_questions_checkpoint_ready")
+        if decision == "idle" and int(pending_queue.get("question_count") or 0) > 0:
+            oag_pending_questions.mark_checkpoint_ready(ip_dir, "no_runnable_non_user_work")
+            pending_queue = oag_pending_questions.summary(ip_dir, charter)
+            decision = "checkpoint_ready"
+            reason = "no_runnable_non_user_work"
+        next_tick_count = int(state.get("tick_count") or 0) + 1
+        if decision not in {"needs_user", "blocked", "checkpoint_ready"} and int(pending_queue.get("question_count") or 0) > 0 and oag_pending_questions.budget_exhausted(charter, next_tick_count):
+            oag_pending_questions.mark_checkpoint_ready(ip_dir, "mission_loop_checkpoint_budget_exhausted")
+            pending_queue = oag_pending_questions.summary(ip_dir, charter)
+            decision = "checkpoint_ready"
+            reason = "mission_loop_checkpoint_budget_exhausted"
+
         action_record: JsonObject = {}
-        if decision in {"record_ready", "tool_ready", "dispatch_required", "self_explore"} and not args.dry_run:
+        if decision in {"record_ready", "tool_ready", "dispatch_required", "self_explore", "auto_decide", "route_dse"} and not args.dry_run:
             action_record = maybe_start_action(ip_dir, candidate, mode=args.mode, allow_blocked=args.allow_blocked)
             if action_record.get("status") == "pass":
                 decision = "action_started"
@@ -373,6 +426,10 @@ def tick(args: argparse.Namespace) -> JsonObject:
             },
             "candidate": candidate_summary(candidate),
             "human_question": build_question(candidate) if decision == "needs_user" else {},
+            "decision_autonomy": oag_decision_autoresolve.resolve_candidate_policy(ip_dir, candidate)
+            if decision in {"auto_decide", "route_dse", "defer_question", "checkpoint_ready"}
+            else {},
+            "pending_questions": pending_queue,
             "exploration_plan": {
                 "status": exploration_plan.get("status") or "",
                 "decision": exploration_plan.get("ask_vs_explore", {}).get("decision") if isinstance(exploration_plan.get("ask_vs_explore"), dict) else "",
@@ -396,7 +453,7 @@ def tick(args: argparse.Namespace) -> JsonObject:
             "next_instruction": next_instruction(decision, reason, candidate, action_record),
         }
 
-        state["status"] = "blocked" if decision == "blocked" else "waiting_for_user" if decision == "needs_user" else "active"
+        state["status"] = "blocked" if decision == "blocked" else "waiting_for_user" if decision in {"needs_user", "checkpoint_ready"} else "active"
         state["mode"] = args.mode
         state["tick_count"] = int(state.get("tick_count") or 0) + 1
         state["last_tick"] = payload
@@ -419,6 +476,14 @@ def next_instruction(decision: str, reason: str, candidate: JsonObject, action_r
     command = str(candidate.get("command") or "")
     if decision == "needs_user":
         return "Ask the user the one highest-impact question, with four options and a recommendation."
+    if decision == "auto_decide":
+        return "Run oag_decision_autoresolve.py with cited evidence, then refresh the Action plan."
+    if decision == "route_dse":
+        return "Route a bounded architecture exploration/DSE action before deciding this tradeoff."
+    if decision == "defer_question":
+        return "Queue this product-defining question for the consolidated checkpoint review."
+    if decision == "checkpoint_ready":
+        return "Review the batched pending questions at the mission-loop checkpoint before continuing deferred work."
     if decision == "self_explore":
         return "Explore local specs, RTL, and OAG truth first; run the exploration command, then ask only one residual question if needed."
     if decision == "dispatch_required":
@@ -443,7 +508,7 @@ def run_loop(args: argparse.Namespace) -> JsonObject:
         ticks.append(result.get("tick") if isinstance(result.get("tick"), dict) else result)
         final = result
         decision = str(result.get("tick", {}).get("decision") if isinstance(result.get("tick"), dict) else "")
-        if decision in {"blocked", "needs_user", "self_explore", "action_started", "idle"}:
+        if decision in {"blocked", "needs_user", "checkpoint_ready", "self_explore", "auto_decide", "route_dse", "action_started", "idle"}:
             break
     return {
         "schema_version": RESULT_SCHEMA,

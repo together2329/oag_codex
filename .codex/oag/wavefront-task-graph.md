@@ -57,5 +57,8 @@ It lives under:
   `oag_wavefront_decision.v1`.
 - Allowing a worker receipt to claim closure.
 - Repairing failing simulation before read-only failure triage.
-- Leaving completed child threads open after their receipts have been
-  integrated, which can exhaust native subagent slots in later batches.
+- Serializing a ready wave when the tasks have satisfied dependencies and
+  non-conflicting ownership.
+- Treating completed child thread cleanup as a progress gate instead of routing
+  the receipt/task state first. Stale native cleanup must not block the next
+  OAG dispatch.

@@ -30,7 +30,7 @@
       "type": "string"
     },
     "event": {
-      "enum": ["planned", "ready", "claimed", "recorded", "verified", "closed", "blocked"]
+      "enum": ["planned", "ready", "claimed", "heartbeat", "recorded", "verified", "closed", "blocked"]
     },
     "status": {
       "type": "string"

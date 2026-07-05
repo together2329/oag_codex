@@ -23,6 +23,7 @@ ABORT_SCHEMA_VERSION = "oag_orchestration_guard_abort.v1"
 FALLBACK_SCHEMA_VERSION = "oag_gate_fallback_plan.v1"
 TERMINAL_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
 GATE_MARKERS = ("gate", "GATE", "gate-reviewer", "GATE_REVIEW")
+DEFAULT_PROGRESS_SECONDS = 600
 
 
 def _load_json(path: Path) -> JsonObject:
@@ -74,6 +75,16 @@ def _rel_to_ip(ip_dir: Path, path: Path) -> str:
         return str(path)
 
 
+def _project_rel(path: Path) -> str:
+    root = oag_paths.project_root()
+    if root is not None:
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            pass
+    return str(path)
+
+
 def _contains_gate_marker(*values: Any) -> bool:
     text = " ".join(str(value or "") for value in values)
     return any(marker in text for marker in GATE_MARKERS)
@@ -108,7 +119,134 @@ def _gate_lock_candidates(ip_dir: Path, locks: list[JsonObject], *, stale_second
     return rows
 
 
-def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800) -> JsonObject:
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
+
+
+def _ip_local_rel(ip_dir: Path, raw: Any) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    path = Path(text).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(ip_dir.resolve()).as_posix()
+        except ValueError:
+            return ""
+    normalized = text.strip("/")
+    ip_name = ip_dir.name.strip("/")
+    if normalized == ip_name:
+        return ""
+    ip_prefix = f"{ip_name}/"
+    if normalized.startswith(ip_prefix):
+        return normalized[len(ip_prefix):]
+    return normalized
+
+
+def _recent_path_evidence(ip_dir: Path, raw: Any, *, claimed_at: Any) -> str:
+    claimed = parse_utc(claimed_at)
+    if claimed is None:
+        return ""
+    rel = _ip_local_rel(ip_dir, raw)
+    if not rel:
+        return ""
+    try:
+        path = oag_paths.legacy_or_hidden(ip_dir, rel)
+    except ValueError:
+        return ""
+    cutoff = claimed.timestamp()
+    try:
+        if path.is_file() and path.stat().st_size > 0 and path.stat().st_mtime >= cutoff:
+            return _rel_to_ip(ip_dir, path)
+        if path.is_dir():
+            for item in path.rglob("*"):
+                if item.is_file() and item.stat().st_size > 0 and item.stat().st_mtime >= cutoff:
+                    return _rel_to_ip(ip_dir, item)
+    except OSError:
+        return ""
+    return ""
+
+
+def _progress_evidence(ip_dir: Path, task: JsonObject, dispatch: JsonObject, *, claimed_at: Any) -> list[str]:
+    evidence: list[str] = []
+    claimed = parse_utc(claimed_at)
+    heartbeat = parse_utc(task.get("heartbeat_at"))
+    if claimed is not None and heartbeat is not None and heartbeat >= claimed:
+        evidence.append(f"heartbeat:{task.get('heartbeat_at')}")
+
+    receipt_paths = [task.get("receipt_path"), dispatch.get("receipt_path")]
+    for raw_receipt in receipt_paths:
+        receipt_evidence = _recent_path_evidence(ip_dir, raw_receipt, claimed_at=claimed_at)
+        if receipt_evidence:
+            evidence.append(f"receipt:{receipt_evidence}")
+
+    receipt_parent_rels = {
+        str(Path(rel).parent).strip("/")
+        for rel in (_ip_local_rel(ip_dir, raw) for raw in receipt_paths)
+        if rel
+    }
+    owned_paths = [
+        *_string_list(task.get("allowed_write_paths")),
+        *_string_list(task.get("shared_artifacts")),
+        *_string_list(dispatch.get("allowed_write_paths")),
+    ]
+    for raw_path in owned_paths:
+        rel = _ip_local_rel(ip_dir, raw_path).strip("/")
+        if not rel or rel in receipt_parent_rels:
+            continue
+        owned_evidence = _recent_path_evidence(ip_dir, rel, claimed_at=claimed_at)
+        if owned_evidence:
+            evidence.append(f"owned_path:{owned_evidence}")
+    return sorted(set(evidence))
+
+
+def detect_claimed_tasks_without_progress(ip_dir: Path, *, run_id: str = "", progress_seconds: int = DEFAULT_PROGRESS_SECONDS) -> list[JsonObject]:
+    rows: list[JsonObject] = []
+    for run_dir in _iter_run_dirs(ip_dir, run_id):
+        graph = _load_json(run_dir / "wavefront_task_graph.json")
+        locks = _load_json(run_dir / "ownership_locks.json")
+        lock_by_task = {
+            str(lock.get("task_id") or ""): lock
+            for lock in locks.get("locks", []) if isinstance(lock, dict)
+        } if isinstance(locks.get("locks"), list) else {}
+        for task in graph.get("tasks", []) if isinstance(graph.get("tasks"), list) else []:
+            if not isinstance(task, dict) or str(task.get("status") or "") != "claimed":
+                continue
+            task_id = str(task.get("task_id") or "")
+            lock = lock_by_task.get(task_id, {})
+            claimed_at = task.get("claimed_at") or lock.get("claimed_at")
+            claimed_age = age_seconds(claimed_at)
+            if claimed_age is None or claimed_age < progress_seconds:
+                continue
+            dispatch_id = str(task.get("dispatch_id") or lock.get("dispatch_id") or "").strip()
+            dispatch_path, dispatch = _find_dispatch(ip_dir, dispatch_id)
+            evidence = _progress_evidence(ip_dir, task, dispatch, claimed_at=claimed_at)
+            if evidence:
+                continue
+            rows.append(
+                {
+                    "run_id": run_dir.name,
+                    "task_id": task_id,
+                    "dispatch_id": dispatch_id,
+                    "dispatch_path": _rel_to_ip(ip_dir, dispatch_path) if dispatch_path else "",
+                    "age_seconds": int(claimed_age),
+                    "claimed_at": claimed_at or "",
+                    "agent_type": dispatch.get("agent_type") or task.get("agent_type") or "",
+                    "stage": dispatch.get("stage") or task.get("phase") or "",
+                    "receipt_path": dispatch.get("receipt_path") or task.get("receipt_path") or "",
+                    "heartbeat_command": (
+                        "python3 .codex/scripts/oag_wavefront.py heartbeat "
+                        f"--ip-dir {_project_rel(ip_dir)} --run-id {run_dir.name} --task-id {task_id} "
+                        '--message "<phase>" --json'
+                    ),
+                }
+            )
+    return rows
+
+
+def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800, progress_seconds: int = DEFAULT_PROGRESS_SECONDS) -> JsonObject:
     ip_dir = oag_paths.ip_root(ip_dir)
     state = collect_run_state(ip_dir)
     issues: list[dict[str, str]] = []
@@ -161,6 +299,25 @@ def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800) -> JsonO
             },
         )
 
+    no_progress = detect_claimed_tasks_without_progress(ip_dir, run_id=run_id, progress_seconds=progress_seconds)
+    for row in no_progress:
+        issues.append(
+            issue(
+                "CLAIMED_TASK_NO_PROGRESS_EVIDENCE",
+                f"claimed task is older than {progress_seconds} seconds and has no heartbeat, receipt, or owned-path evidence",
+                f"{row.get('run_id', '')}/{row.get('task_id', '')}",
+            )
+        )
+    if no_progress:
+        recommendations.insert(
+            0,
+            {
+                "id": "record-heartbeat-or-route-task",
+                "recommended": True,
+                "description": "Ask for one bounded heartbeat/receipt/status response; if none appears, record the task as INCONCLUSIVE/BLOCKED before replacement.",
+            },
+        )
+
     late_receipts = detect_late_receipts(ip_dir, run_id=run_id)
     for row in late_receipts:
         issues.append(issue("LATE_RECEIPT_AFTER_ABORT", "receipt exists after task abort marker and is not a valid handoff", row["receipt_path"]))
@@ -190,9 +347,11 @@ def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800) -> JsonO
         "ip": ip_dir.name,
         "run_id": run_id,
         "stale_seconds": stale_seconds,
+        "progress_seconds": progress_seconds,
         "active_locks": state.get("wavefront", {}).get("active_locks", []),
         "stale_locks": stale_locks,
         "stale_gate_locks": gate_locks,
+        "claimed_without_progress": no_progress,
         "late_receipts": late_receipts,
         "repeated_blockers": repeated,
         "issues": issues,
@@ -374,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     audit_cmd.add_argument("--ip-dir", required=True)
     audit_cmd.add_argument("--run-id", default="")
     audit_cmd.add_argument("--stale-seconds", type=int, default=1800)
+    audit_cmd.add_argument("--progress-seconds", type=int, default=DEFAULT_PROGRESS_SECONDS)
     audit_cmd.add_argument("--json", action="store_true")
 
     abort_cmd = sub.add_parser("abort-task", help="Explicitly record a stuck task terminal status and release its wavefront lock.")
@@ -394,7 +554,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "audit":
-            payload = audit(Path(args.ip_dir), run_id=args.run_id, stale_seconds=args.stale_seconds)
+            payload = audit(Path(args.ip_dir), run_id=args.run_id, stale_seconds=args.stale_seconds, progress_seconds=args.progress_seconds)
         elif args.command == "abort-task":
             payload = abort_task(Path(args.ip_dir), run_id=args.run_id, task_id=args.task_id, status=args.status, receipt=args.receipt)
         else:

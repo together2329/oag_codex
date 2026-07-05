@@ -36,8 +36,8 @@ are satisfied.
     owner, criteria, required evidence, approval policy, and approved reason.
     Stop/run prompts should expose the open edge set so parent orchestration can
     choose all open items, one item, a scoped module, or a bounded batch.
-14. Close completed child threads after their receipts are integrated or
-    rejected, before opening another fan-out batch.
+14. Integrate, reject, or route completed child receipts before opening another
+    fan-out batch; defer native child cleanup outside the critical path.
 15. Let parent/gate decide closure.
 
 RTL/TB implementation should use role-structured templates by default. For RTL,
@@ -55,11 +55,31 @@ the child's RTL, TB, simulation, coverage, filelist, or signoff-owned files.
 Parent implementation after lock requires a human waiver decision and must be
 visible to the main-write gate.
 
+Long write-capable RTL/TB children need an explicit heartbeat contract in the
+spawn prompt: the child should emit `WORKING: <task> - <phase>` within the first
+wait cycle and at major phase changes, or produce an owned draft file, receipt,
+or `BLOCKED:` reason. A child that stays silent and produces no owned-path
+evidence after a bounded status request is a wavefront state problem, not a
+reason for parent implementation.
+For wavefront-backed children, also include the machine-readable heartbeat
+command from the dispatch prompt:
+`python3 .codex/scripts/oag_wavefront.py heartbeat --ip-dir <ip> --run-id <run> --task-id <task> --message "<phase>" --json`.
+`oag_orchestration_guard.py audit` uses that `heartbeat_at`, a fresh receipt, or
+claim-newer owned-path mtimes as progress evidence.
+
+Treat large TB scenario shards as runtime-budget constrained by default. Even
+when three or more scenario tasks are dependency-ready and path-disjoint, open
+only one or two long write-capable scenario children until the first heartbeat,
+owned file, or receipt proves runtime throughput. Record the unspawned ready
+tasks and the runtime-budget reason; this is not serialization for convenience.
+
 Use bounded handoff for stalled children. After the configured wait budget,
 request a minimal receipt with the current status, changed paths, commands, and
-blockers. If the child does not respond, close or park that child only after the
-wavefront task is recorded as `INCONCLUSIVE`, `BLOCKED`, or `failed` according
-to available evidence, then create a new dispatch from the current baseline.
+blockers. If the child does not respond, record the wavefront task as
+`INCONCLUSIVE`, `BLOCKED`, or `failed` according to available evidence, then
+create a new dispatch from the current baseline. Park or clean up the stale
+child only after that OAG state transition, and never as part of a parallel
+status/dispatch/receipt-review batch.
 Do not keep an ownership lock open while starting an untracked replacement.
 Do not widen an old dispatch to absorb the replacement's paths or artifacts.
 When a task is recorded as `blocked`, `failed`, or `inconclusive`, treat the
@@ -183,6 +203,10 @@ or whose target artifacts overlap within the batch.
 - If two or more dependency-ready tasks have non-conflicting ownership, spawn
   the whole ready wave as one native subagent batch; serial dispatch needs an
   explicit dependency, ownership, runtime-budget, or user-scope blocker.
+- For large write-capable TB scenario shards, runtime budget is presumed
+  constrained until early heartbeat or owned-path evidence proves otherwise;
+  default to one or two concurrent scenario children and keep the rest visible
+  as ready-but-unspawned.
 - Shared artifacts require one integration owner.
 - Scenario TB tasks must wait for driver, monitor, predictor, scoreboard,
   coverage, and assertion barriers.
@@ -193,9 +217,14 @@ or whose target artifacts overlap within the batch.
 - No approved reviewer decision, no `handoff_pass`.
 - No completion claim without an explicit approval reason on the final OAG
   decision receipt.
-- No new fan-out batch while completed child threads remain open after receipt
-  integration.
+- Child-thread closedness is not a progress gate. No new fan-out batch while
+  prior ready-wave receipts remain unintegrated, unrejected, or unrouted; native
+  cleanup may be deferred.
 - Do not record `handoff_pass` before the child receipt has passed the stop
   hook or has been routed as a bounded `INCONCLUSIVE`/`BLOCKED`/`FAIL` receipt.
+- Do not start a replacement dispatch under an active lock. If a claimed child
+  has no heartbeat, owned file, or receipt after a bounded status request, route
+  the existing dispatch to `INCONCLUSIVE`/`BLOCKED` first; late receipts from
+  that dispatch are invalid handoffs.
 - Do not widen a dispatch or baseline after verifier failure. Create a new
   dispatch from a clean baseline instead.

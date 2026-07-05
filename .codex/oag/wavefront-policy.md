@@ -53,6 +53,26 @@ active dependency, an ownership conflict, a runtime budget, or a user-stated
 scope limit. The unspawned ready tasks must remain visible in the run prompt and
 `dispatch_command_candidates`.
 
+Long write-capable TB scenario waves are runtime-budget constrained until
+proven otherwise. Open one or two scenario children first and require a
+`WORKING:` heartbeat, owned draft file, receipt, or `BLOCKED:` reason before
+opening the next scenario shard. If a claimed child has no heartbeat, owned
+file, or receipt after a bounded status request, route the existing dispatch to
+`INCONCLUSIVE`/`BLOCKED` before replacement; do not clear the path by closing
+native children.
+
+For wavefront-backed children, `WORKING:` should be paired with machine-readable
+progress evidence:
+
+```bash
+python3 .codex/scripts/oag_wavefront.py heartbeat \
+  --ip-dir <ip> --run-id <run> --task-id <task> --message "<phase>" --json
+```
+
+`oag_orchestration_guard.py audit` treats `heartbeat_at`, a fresh receipt, or a
+claim-newer owned-path mtime as progress evidence. If all three are missing
+after the progress budget, the task is a routing problem, not a cleanup problem.
+
 For gap-driven work, parent orchestration should consume the latest
 `knowledge/gap_matrix/implementation_review.json` when present. Open
 implementation findings are scheduled by highest priority first (`P0` before
@@ -77,10 +97,11 @@ Parent orchestration records worker `HANDOFF_PASS` receipts as
 `review_pending` until `oag-custom-reviewer` or a narrower reviewer approves
 the handoff rationale.
 
-After a child reaches `handoff_pass`, `blocked`, `failed`, or `inconclusive`
-and the parent has integrated or rejected its receipt, close that native child
-thread before opening another fan-out batch. Completed child threads are not
-OAG evidence and should not consume runtime subagent slots.
+After a child reaches `handoff_pass`, `blocked`, `failed`, or `inconclusive`,
+the parent must integrate, reject, or route the receipt before opening another
+fan-out batch. Native child cleanup is runtime hygiene, not an OAG evidence
+gate; defer it outside status checks, dispatch planning, receipt review, and
+RTL/TB critical-path work.
 
 ## Role-Structured RTL/TB Pattern
 

@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import oag_cli  # noqa: E402
+import oag_paths  # noqa: E402
 from oag_loop_core import loop_decision_from_plan, loop_policy_storage, resolve_loop_policy, write_loop_decision  # noqa: E402
 
 
@@ -69,10 +71,12 @@ def _run_next(ip: Path, run_id: str, policy: dict[str, Any]) -> dict[str, Any]:
             "loop_policy": loop_policy_storage(policy),
             "recommended_batch": None,
         }
-    result = response.get("result") if isinstance(response.get("result"), dict) else {}
-    plan = result.get("loop_plan") if isinstance(result.get("loop_plan"), dict) else {}
+    raw_result = response.get("result")
+    result: dict[str, Any] = raw_result if isinstance(raw_result, dict) else {}
+    raw_plan = result.get("loop_plan")
+    plan: dict[str, Any] = raw_plan if isinstance(raw_plan, dict) else {}
     if plan:
-        decision = loop_decision_from_plan(plan)
+        decision: dict[str, Any] = loop_decision_from_plan(plan)
     else:
         batch = result.get("next_batch") if isinstance(result.get("next_batch"), dict) else None
         decision = {
@@ -99,6 +103,118 @@ def _run_next(ip: Path, run_id: str, policy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _safe_segment(value: str, fallback: str) -> str:
+    text = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in str(value or "").strip())
+    return text.strip("._-") or fallback
+
+
+def _execute_receipt_path(ip: Path, run_id: str, batch_id: str) -> Path:
+    run_name = _safe_segment(run_id, "run")
+    batch_name = _safe_segment(batch_id, "batch")
+    return oag_paths.state_path(ip, Path("knowledge") / "loop_runner" / run_name / f"{batch_name}.json")
+
+
+def _execute_validation_record_task(ip: Path, run_id: str, batch_id: str, task: dict[str, Any], index: int) -> dict[str, Any]:
+    task_id = str(task.get("task_id") or f"task_{index}")
+    obligations = [str(item).strip() for item in task.get("obligations", []) if str(item).strip()] if isinstance(task.get("obligations"), list) else []
+    contracts = [str(item).strip() for item in task.get("contracts", []) if str(item).strip()] if isinstance(task.get("contracts"), list) else []
+    evidence_refs = [str(item).strip() for item in task.get("required_evidence", []) if str(item).strip()] if isinstance(task.get("required_evidence"), list) else []
+    record_response = oag_cli.dispatch_call(
+        {
+            "tool": "oag.record",
+            "arguments": {
+                "ip_dir": str(ip),
+                "stage": "record",
+                "type": "validation",
+                "claim": f"loop runner validation record for {task_id}",
+                "summary": f"Bounded execute mode recorded validation task {task_id} from {batch_id}.",
+                "tags": ["loop_runner_execute", "validation_record"],
+                "actor": {"kind": "ai", "id": "oag_loop_runner", "surface": "bounded_execute"},
+                "status": "open",
+                "rocev": {
+                    "evidence": {"files": evidence_refs, "tests": []},
+                    "validation": {
+                        "status": "open",
+                        "verdict": "pending",
+                        "rationale": "automatic bounded validation-record execution; closure still requires normal gates",
+                    },
+                },
+                "obligations": obligations,
+                "contracts": contracts,
+            },
+        }
+    )
+    return {
+        "task_id": task_id,
+        "status": "pass" if record_response.get("ok") else "fail",
+        "record_response": record_response,
+    }
+
+
+def _execute_batch(ip: Path, run_id: str, result: dict[str, Any], batch: dict[str, Any]) -> dict[str, Any]:
+    if batch.get("can_execute") is not True:
+        return {
+            **result,
+            "mode": "execute",
+            "decision": "stop",
+            "reason": "execute_not_allowed",
+            "execution_guard": {
+                "can_execute": False,
+                "job_type": str(batch.get("job_type") or ""),
+                "message": "recommended batch is not marked safe for bounded execute mode",
+            },
+        }
+    if str(batch.get("job_type") or "") != "VALIDATION_RECORD_JOB":
+        return {
+            **result,
+            "mode": "execute",
+            "decision": "stop",
+            "reason": "execute_job_type_not_allowed",
+            "execution_guard": {
+                "can_execute": False,
+                "job_type": str(batch.get("job_type") or ""),
+                "message": "bounded execute mode only supports VALIDATION_RECORD_JOB",
+            },
+        }
+    receipt_path = _execute_receipt_path(ip, run_id, str(batch.get("batch_id") or "batch"))
+    raw_tasks = batch.get("tasks")
+    tasks = raw_tasks if isinstance(raw_tasks, list) else []
+    task_results = [
+        _execute_validation_record_task(ip, run_id, str(batch.get("batch_id") or "batch"), task, index)
+        for index, task in enumerate(tasks)
+        if isinstance(task, dict)
+    ]
+    compile_response = oag_cli.dispatch_call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
+    check_response = oag_cli.dispatch_call({"tool": "oag.check", "arguments": {"ip_dir": str(ip)}})
+    execution_passed = all(item.get("status") == "pass" for item in task_results) and compile_response.get("ok") is True and check_response.get("ok") is True
+    receipt = {
+        "schema_version": "oag_loop_runner_execute_receipt.v1",
+        "status": "pass" if execution_passed else "fail",
+        "run_id": run_id,
+        "batch_id": str(batch.get("batch_id") or ""),
+        "job_type": str(batch.get("job_type") or ""),
+        "executed_at_epoch": int(time.time()),
+        "tasks": tasks,
+        "task_results": task_results,
+        "post_checks": {"compile": compile_response, "check": check_response},
+        "action": "bounded_execute_validation_record",
+    }
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        **result,
+        "mode": "execute",
+        "decision": "continue" if execution_passed else "stop",
+        "reason": "executed_batch" if execution_passed else "execute_batch_failed",
+        "execution": {
+            "status": receipt["status"],
+            "receipt_path": str(receipt_path),
+            "batch_id": receipt["batch_id"],
+            "job_type": receipt["job_type"],
+        },
+    }
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     ip = Path(args.ip_dir).resolve()
     run_id = str(args.run_id or "")
@@ -113,17 +229,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     elif mode == "dispatch":
         payload = {**result, "mode": mode, "decision": "continue", "reason": "dispatch_ready"}
     elif mode == "execute":
-        payload = {
-            **result,
-            "mode": mode,
-            "decision": "stop",
-            "reason": "execute_not_implemented",
-            "execution_guard": {
-                "can_execute": bool(batch.get("can_execute")),
-                "job_type": str(batch.get("job_type") or ""),
-                "message": "bounded runner does not execute RTL, TB, or record jobs in this release",
-            },
-        }
+        payload = _execute_batch(ip, run_id, result, batch)
     else:
         payload = {**result, "mode": mode, "decision": "continue", "reason": "plan_available"}
     if args.write_decision and run_id:

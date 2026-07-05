@@ -122,6 +122,12 @@
           "claimed_at": {
             "type": "string"
           },
+          "heartbeat_at": {
+            "type": "string"
+          },
+          "heartbeat_message": {
+            "type": "string"
+          },
           "may_claim_complete": {
             "const": false
           }

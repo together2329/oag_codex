@@ -113,7 +113,9 @@ The TB template intentionally models the dependency barrier:
 ```text
 TB_COMMON_API
 TB_SCOREBOARD_SCHEMA
-  -> TB_SCENARIO_A
+  -> TB_SCENARIO_RESET
+  -> TB_SCENARIO_BACKPRESSURE
+  -> TB_SCENARIO_PROTOCOL_ERROR
     -> TB_INTEGRATION_RUNNER
 ```
 
@@ -234,13 +236,13 @@ closure.
 Before:
 
 ```text
-scenario test agent starts before common TB API exists
+scenario test agents start before common TB API exists
 ```
 
 After:
 
 ```text
-TB_SCENARIO_A is not ready until TB_COMMON_API and TB_SCOREBOARD_SCHEMA pass
+TB scenario shards are not ready until TB_COMMON_API and TB_SCOREBOARD_SCHEMA pass
 ```
 
 ### File Ownership Safety

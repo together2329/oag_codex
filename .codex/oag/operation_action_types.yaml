@@ -109,6 +109,141 @@ action_types:
       option_count: 4
       require_recommendation: true
       allow_custom_answer: true
+  - id: ACT_CHARTER_INTERVIEW
+    label: Charter Interview
+    phase: intake
+    owner_role: human_via_main
+    consumes:
+      - mission_template
+      - decision_row
+      - source_claim
+      - architecture_tradeoff_need
+    preconditions:
+      - no_approved_human_mission_charter
+      - lock_or_architecture_decision_needs_human_authorization
+    produces:
+      - mission_charter_proposal
+      - human_approval_request
+      - autonomy_grant_decision
+    allowed_write_policy:
+      source: main
+      required: false
+    question_policy:
+      grouped_form: true
+      require_human_approval: true
+      product_defining_grants_forbidden: true
+  - id: ACT_ARCH_CANDIDATE_GENERATE
+    label: Architecture Candidate Generate
+    phase: architecture
+    owner_role: main
+    consumes:
+      - approved_mission_charter
+      - architecture_tradeoff_decision
+      - source_claim
+      - constraint
+      - objective_weight
+    preconditions:
+      - approved_human_charter_grants_architecture_tradeoff
+      - architecture_tradeoff_decisions_exist
+      - architecture_candidates_missing_or_stale
+    produces:
+      - architecture_candidate_set
+      - tier1_estimates
+      - architecture_scoreboard
+    allowed_write_policy:
+      source: tool
+      required: false
+  - id: ACT_ARCH_BENCH_RUN
+    label: Architecture Bench Run
+    phase: architecture
+    owner_role: oag-custom-worker
+    consumes:
+      - architecture_candidate_set
+      - architecture_scoreboard
+      - approved_mission_charter
+      - tier2_bench_policy
+    preconditions:
+      - architecture_scoreboard_exists
+      - top_candidates_need_tier2_evidence
+      - exploration_write_scope_only
+    produces:
+      - bench_result
+      - tier2_metric_update
+      - bench_evidence_ref
+    allowed_write_policy:
+      source: dispatch
+      required: true
+    cannot_claim:
+      - product_rtl_implementation
+      - final_completion
+      - closure
+  - id: ACT_ARCH_SELECT_AND_DECIDE
+    label: Architecture Select and Decide
+    phase: architecture
+    owner_role: main
+    consumes:
+      - architecture_scoreboard
+      - bench_result
+      - approved_mission_charter
+      - architecture_tradeoff_decision
+    preconditions:
+      - architecture_scoreboard_current
+      - evidence_tier_satisfies_charter
+      - provisional_selection_threshold_met
+    produces:
+      - provisional_architecture_selection
+      - agent_decision_receipt
+      - refreshed_decision_matrix
+    allowed_write_policy:
+      source: main
+      required: false
+    fallback_policy:
+      selection_margin_too_small: ACT_CHECKPOINT_REVIEW
+      tier2_evidence_missing: ACT_ARCH_BENCH_RUN
+  - id: ACT_EXPLORATION_CLEANUP
+    label: Exploration Cleanup
+    phase: architecture
+    owner_role: main
+    consumes:
+      - architecture_candidate_set
+      - architecture_scoreboard
+      - provisional_marker_scan
+      - dse_worktree_state
+    preconditions:
+      - architecture_exploration_artifacts_exist
+      - cleanup_blockers_exist
+    produces:
+      - cleanup_blocker_report
+      - pruned_or_archived_candidate_plan
+      - worktree_prune_instruction
+    allowed_write_policy:
+      source: main
+      required: false
+    cannot_claim:
+      - product_rtl_implementation
+      - final_completion
+      - closure
+  - id: ACT_CHECKPOINT_REVIEW
+    label: Checkpoint Review
+    phase: review
+    owner_role: human_via_main
+    consumes:
+      - pending_question_queue
+      - mission_charter
+      - architecture_scoreboard
+      - provisional_decision
+    preconditions:
+      - pending_question_checkpoint_ready
+    produces:
+      - checkpoint_answers
+      - accepted_or_overridden_provisional_decisions
+      - refreshed_action_candidates
+    allowed_write_policy:
+      source: main
+      required: false
+    question_policy:
+      grouped_form: true
+      checkpoint_exception_to_one_question_rule: true
   - id: ACT_CAPTURE_SOURCE_CLAIM
     label: Capture Source Claim
     phase: intake

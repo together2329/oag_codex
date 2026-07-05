@@ -50,6 +50,13 @@ class RecordRequest:
     decision: str = ""
 
 
+@dataclass(frozen=True)
+class HeartbeatRequest:
+    run: WavefrontRun
+    task_id: str
+    message: str = ""
+
+
 def ready_wavefront_tasks(run: WavefrontRun) -> JsonObject:
     graph = load_graph(run)
     locks = load_locks(run)
@@ -133,6 +140,41 @@ def record_wavefront_task(request: RecordRequest) -> JsonObject:
             barrier_tokens=barriers.get("tokens", []),
             active_locks=locks.get("locks", []),
         )
+
+
+def record_wavefront_heartbeat(request: HeartbeatRequest) -> JsonObject:
+    with run_state_lock(request.run):
+        graph = load_graph(request.run)
+        locks = load_locks(request.run)
+        barriers = load_barriers(request.run)
+        tasks = task_map(graph)
+        task = tasks.get(request.task_id)
+        if not task:
+            return result("fail", "oag_wavefront_heartbeat_result.v1", issues=[issue("TASK_NOT_FOUND", f"task not found: {request.task_id}")])
+        current_status = str(task.get("status") or "")
+        if current_status not in ACTIVE_STATUSES:
+            return result(
+                "fail",
+                "oag_wavefront_heartbeat_result.v1",
+                issues=[issue("TASK_NOT_ACTIVE", f"heartbeat requires active task status, got {current_status}", request.task_id)],
+            )
+        issues = verify_invariants(graph, locks, barriers)
+        if issues:
+            return result("fail", "oag_wavefront_heartbeat_result.v1", issues=issues)
+        heartbeat_at = utc_now()
+        task["heartbeat_at"] = heartbeat_at
+        task["heartbeat_message"] = request.message
+        write_graph(request.run, graph)
+        append_event(
+            WavefrontEvent(
+                request.run,
+                "heartbeat",
+                task_id=request.task_id,
+                status=current_status,
+                details={"message": request.message, "heartbeat_at": heartbeat_at},
+            )
+        )
+        return result("pass", "oag_wavefront_heartbeat_result.v1", task=task, active_locks=locks.get("locks", []))
 
 
 def _undeclared_barrier_outputs(request: RecordRequest, task: JsonObject) -> list[str]:
