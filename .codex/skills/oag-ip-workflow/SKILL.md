@@ -374,6 +374,66 @@ writes require native OAG subagent dispatch + receipt. If native subagents are
 unavailable, stop with BLOCKED unless the user records a human
 `main_agent_subagent_waiver` decision receipt.
 
+Keep parent/orchestrator authority separate from subagent implementation
+authority. The parent creates or claims the dispatch, owns wavefront routing,
+records validation decisions, controls barriers, and defers native child cleanup
+until the OAG state transition is recorded. The child receives one
+parent-provided dispatch and must stay inside explicit `allowed_write_paths`;
+it must not create replacement dispatches, run `oag_decision_harness.py
+record`, open barrier tokens, close or release wavefront tasks, call
+`close_agent`, or claim final completion. `HANDOFF_PASS` from a worker is only
+the assigned deliverable handoff, not IP closure, canonical simulation
+evidence, DUT functional PASS, or barrier readiness.
+
+For evidence-schema repair, use a two-surface prompt. Parent surface: audit
+locks, create or claim one narrow repair dispatch, spawn exactly the native
+implementation child required by the ready work, verify the receipt, record an
+`evidence_validation` decision with supported verdict enums, and keep
+`tb_uvm_dual_sim_evidence_ready` closed unless real canonical simulator
+evidence exists. Child surface: read `scoreboard_rows.v1.yaml`, inspect the
+failing rows and writer, repair only the allowed writer/output paths, preserve
+`BLOCKED` or `INCONCLUSIVE` rows when no DUT observations exist, regenerate
+blocked artifacts, run local checks, and write one receipt. Fix the generator
+before hand-editing JSONL where safe. A blocked pre-sim `coverage.json` should
+mean not observed/not sampled, not 0% sampled coverage; `results.xml` should
+classify missing UVM or simulator setup as an environment blocker, not a DUT
+functional failure.
+
+After a child receipt, the parent must verify the exact dispatch/receipt pair
+for the current task, not a stale schema-repair receipt from an earlier
+dispatch. Treat `--schema-only` as a receipt-shape preflight only; `HANDOFF_PASS`
+is safe only after the full dispatch verifier passes against the current
+receipt and actual path delta. If full verification fails because the baseline
+or external delta changed, route the task as `INCONCLUSIVE` with that blocker
+while preserving successful schema, trace, or verification-plan checks. Then
+rerun trace graph, verification-plan, `oag.check`, closure, and an
+`evidence_validation` decision before opening any barrier. If canonical DUT
+simulation is still blocked, keep dual-sim evidence barriers closed.
+
+Coverage and observation artifacts should be explicit when simulation never
+ran. Prefer `status=BLOCKED`, `coverage_observed=false`,
+`coverage_sampled=false`, `closure_coverage_counted=false`, and a blocker
+reason such as `missing_uvm_library` when the repo schema or existing writer
+convention supports those fields. Do not add ad hoc fields that break the
+local coverage schema. If `observed_source.kind=monitor` is required for schema
+compatibility, use only `scoreboard_rows.v1`-allowed fields and make the
+no-DUT-execution condition explicit through allowed metadata, blocker,
+mismatch, observed object, or `evidence_notes`; do not imply that a real DUT
+monitor observed a failing value.
+Full or non-smoke runner paths must not silently fall back to the smoke subset
+after `verification_plan.yaml` parse failure; they should emit blocked or
+inconclusive runner-configuration evidence instead. Full/non-smoke receipts or
+evidence notes should record scenario provenance such as `scenario_count`,
+`scenario_source=ontology/verification_plan.yaml`, `plan_parse_success=true`,
+and `smoke_fallback_used=false` when the receipt schema or local convention
+allows those fields.
+
+When reporting `oag.check`, do not collapse the result into overall PASS unless
+the tool actually passes. If the scoreboard repair succeeded but closure,
+freshness, or domain metadata issues remain, say that `oag.check` ran and no
+scoreboard schema issue remains, while the remaining non-scoreboard issues
+still block closure.
+
 For a new IP, scaffold the ontology-first folder layout before creating RTL,
 TB, or evidence artifacts:
 
@@ -460,7 +520,7 @@ ontology edits. Use `oag.context` for prompt-ready ontology records. When Codex
 hooks are enabled, `codex_context_inject.py` can inject this context
 automatically on relevant UserPromptSubmit events. `codex_deep_interview_prompt_guard.py`
 stays silent for normal work and injects a compact one-question/four-option
-reminder only when OAG deep interview wording is present or recently active.
+reminder only when the current prompt explicitly requests OAG deep interview mode.
 
 For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:
@@ -590,8 +650,23 @@ multi_agent_v1.spawn_agent({
 ```
 
 Use native waiting/mailbox behavior for child results; timeout means no new
-update, not failure. Use native child steering for targeted follow-up and close
-child threads after integrating a completed or inconclusive lane.
+update, not failure. Use native child steering for targeted follow-up. Integrate
+or route completed/inconclusive lane receipts before new dispatch; defer native
+child cleanup outside the critical path.
+For long write-capable RTL/TB children, include an explicit heartbeat contract
+in the spawn prompt: `WORKING: <task> - <phase>` within the first wait cycle and
+at major phase changes, or an owned draft file, receipt, or `BLOCKED:` reason.
+For wavefront-backed children, include the matching machine-readable heartbeat
+command:
+`python3 .codex/scripts/oag_wavefront.py heartbeat --ip-dir <ip> --run-id <run> --task-id <task> --message "<phase>" --json`.
+`oag_orchestration_guard.py audit` uses `heartbeat_at`, fresh receipts, and
+claim-newer owned-path mtimes as progress evidence.
+Large TB scenario shards are runtime-budget constrained by default; open one or
+two scenario children first, then open the next shard after heartbeat or
+owned-path evidence proves throughput. If a claimed child has no heartbeat,
+owned file, or receipt after a bounded status request, route that dispatch to
+`INCONCLUSIVE`/`BLOCKED` before any replacement and treat late receipts as
+invalid handoffs.
 Treat `agent_type` as a routing hint and paste role requirements into the child
 message. See `.codex/oag/subagent-workflows.md` for more prompt shapes. Custom
 subagents are execution actors only. They must stay inside the prompted shard,
@@ -628,7 +703,7 @@ python3 .codex/scripts/oag_dispatch.py create \
   --agent-type <oag-write-agent> \
   --stage <stage> \
   --allowed-write-path <ip>/<owned-path> \
-  --allowed-write-path <ip>/knowledge/subagents/ \
+  --allowed-write-path <ip>/knowledge/subagents/<receipt>.json \
   --allowed-tool-side-effect <ip>/ontology/generated/ \
   --receipt-path <ip>/knowledge/subagents/<receipt>.json \
   --json

@@ -111,8 +111,26 @@ assertion hooks, scenario groups, and runner integration. This keeps each child
 short enough to finish while still letting large TB work proceed without the
 parent prematurely closing the lane.
 
-Use native child steering only for targeted follow-up, and close child threads
-after integrating a completed or inconclusive lane.
+Every long write-capable RTL/TB child prompt must include an early evidence
+contract: emit `WORKING: <task> - <phase>` within the first wait cycle and at
+major phase changes, or create an owned draft file, receipt, or `BLOCKED:`
+reason. If a claimed child stays silent and produces no owned-path evidence
+after one bounded status request, route the existing dispatch to
+`INCONCLUSIVE`/`BLOCKED` before opening replacement work. Late receipts from
+that abandoned dispatch are not valid handoffs.
+For wavefront-backed work, pair `WORKING:` with:
+
+```bash
+python3 .codex/scripts/oag_wavefront.py heartbeat \
+  --ip-dir <ip> --run-id <run> --task-id <task> --message "<phase>" --json
+```
+
+This gives `oag_orchestration_guard.py audit` a durable progress signal instead
+of relying on mailbox text alone.
+
+Use native child steering only for targeted follow-up. Integrate, reject, or
+route the completed/inconclusive lane first; native child cleanup is deferred
+runtime hygiene, not a progress gate.
 Do not mark a dependent step complete while an active child owns evidence for
 that step.
 When a wavefront-ready set contains two or more dependency-ready tasks with
@@ -122,9 +140,14 @@ drive one at a time. Serial dispatch is allowed only when a dependency, active
 ownership lock, runtime budget, or user-stated scope limit blocks the batch; the
 parent must record that reason and keep the unspawned ready tasks visible.
 Normative shorthand: spawn the whole ready wave as one native subagent batch.
-Before opening a new parallel batch, close every completed child whose receipt
-has already been integrated, rejected, or routed. Keep only currently working
-children open. This is runtime hygiene, not an OAG closure action.
+For large write-capable TB scenario shards, presume runtime budget is
+constrained until throughput is proven. Open one or two scenario children first,
+require early heartbeat or owned-path evidence, and leave the remaining
+dependency-ready scenario tasks visible as ready-but-unspawned.
+Before opening a new parallel batch, ensure every prior ready-wave child receipt
+has been integrated, rejected, or routed. Keep only currently working children
+on the critical path; cleanup of completed native child threads may be deferred
+as a standalone bounded runtime hygiene step.
 
 Use subagents when the work is naturally parallel and bounded:
 
@@ -156,6 +179,69 @@ unavailable, stop with BLOCKED unless the user records a human
 `main_agent_subagent_waiver` decision receipt. Requirement detail work before
 lock may stay with main, but read-heavy spec/reference/obligation research
 should use subagents when useful and remains draft evidence until lock.
+
+Keep parent-only and subagent-only authority separate. The parent creates
+dispatches, claims or routes wavefront tasks, records `evidence_validation` or
+other decisions, opens or withholds barrier tokens, and handles native child
+cleanup outside the critical path. A write-capable subagent implements only the
+parent-provided dispatch inside explicit `allowed_write_paths`, uses listed
+tool side effects only for generated/wavefront bookkeeping, and writes one
+receipt. The child must not create replacement dispatches, run
+`oag_decision_harness.py record`, open `tb_uvm_dual_sim_evidence_ready`, release
+or close wavefront tasks, or convert its handoff into a closure claim.
+
+For evidence-schema repair, split the prompt into two surfaces. Parent prompt:
+audit locks, create or claim one narrow repair dispatch, spawn the native child,
+verify the receipt, record the evidence-validation decision, and keep the
+dual-sim evidence barrier closed unless real canonical simulator evidence
+exists. Child prompt: read `ontology/evidence/scoreboard_rows.v1.yaml`, compare
+the failing rows and writer, repair only the writer/output in allowed paths,
+preserve `BLOCKED`/`INCONCLUSIVE` semantics, regenerate blocked artifacts, and
+write the receipt. `HANDOFF_PASS` from the child means only that the schema
+repair deliverable is complete; it does not imply DUT functional PASS,
+canonical simulation evidence, IP closure, or barrier readiness.
+
+Blocked evidence must still be traceable. Do not hand-edit only the current
+JSONL when the generator can be safely fixed; repair the writer first and then
+regenerate artifacts. `results.xml` should distinguish simulator/UVM setup
+blockers from DUT functional failures. `coverage.json` for a blocked pre-sim
+run should report blocked, not observed, or not sampled rather than a misleading
+0% sampled-coverage result.
+
+After a child receipt, the parent must verify the exact dispatch/receipt pair
+for the current task, not a stale schema-repair receipt from an earlier
+dispatch. Use `--schema-only` only as a receipt-shape preflight; `HANDOFF_PASS`
+is safe only after the full dispatch verifier passes against the current
+receipt and actual path delta. If full verification fails because the baseline
+or external delta changed, route the task as `INCONCLUSIVE` with that blocker
+while preserving any successful schema, trace, or verification-plan checks.
+Then rerun trace graph, verification-plan, `oag.check`, closure, and an
+`evidence_validation` decision before opening any barrier. If canonical DUT
+simulation is still blocked, keep dual-sim evidence barriers closed.
+
+Coverage and observation artifacts should be explicit when simulation never
+ran. Prefer `status=BLOCKED`, `coverage_observed=false`,
+`coverage_sampled=false`, `closure_coverage_counted=false`, and a blocker
+reason such as `missing_uvm_library` when the repo schema or existing writer
+convention supports those fields. Do not add ad hoc fields that break the
+local coverage schema. If `observed_source.kind=monitor` is required for schema
+compatibility, use only `scoreboard_rows.v1`-allowed fields and make the
+no-DUT-execution condition explicit through allowed metadata, blocker,
+mismatch, observed object, or `evidence_notes`; do not imply that a real DUT
+monitor observed a failing value.
+Full or non-smoke runner paths must not silently fall back to the smoke subset
+after `verification_plan.yaml` parse failure; they should emit blocked or
+inconclusive runner-configuration evidence instead. Full/non-smoke receipts or
+evidence notes should record scenario provenance such as `scenario_count`,
+`scenario_source=ontology/verification_plan.yaml`, `plan_parse_success=true`,
+and `smoke_fallback_used=false` when the receipt schema or local convention
+allows those fields.
+
+When reporting `oag.check`, do not collapse the result into overall PASS unless
+the tool actually passes. If the scoreboard repair succeeded but closure,
+freshness, or domain metadata issues remain, say that `oag.check` ran and no
+scoreboard schema issue remains, while the remaining non-scoreboard issues
+still block closure.
 The parent or single integration owner should record IP-local git checkpoints
 with `python3 .codex/scripts/oag_ip_git.py checkpoint --ip-dir <ip> --message
 "OAG <stage>: <summary>" --json` after meaningful stage boundaries. Subagents
@@ -198,7 +284,7 @@ python3 .codex/scripts/oag_dispatch.py create \
   --agent-type <oag-write-agent> \
   --stage <stage> \
   --allowed-write-path <ip>/rtl/<file>.sv \
-  --allowed-write-path <ip>/knowledge/subagents/ \
+  --allowed-write-path <ip>/knowledge/subagents/<receipt>.json \
   --allowed-tool-side-effect <ip>/ontology/generated/ \
   --receipt-path <ip>/knowledge/subagents/<receipt>.json \
   --json
@@ -228,7 +314,7 @@ dispatch create
 -> wavefront record review_pending
 -> reviewer decision
 -> wavefront record handoff_pass
--> close child thread
+-> defer native child cleanup outside the critical path
 ```
 
 The realistic stop boundary is receipt validity, not forced integration

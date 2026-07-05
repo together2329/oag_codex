@@ -21,7 +21,7 @@ except ModuleNotFoundError:  # Python 3.10 and older
 FEATURES = ("multi_agent", "child_agents_md", "hooks")
 OPTIONAL_OMO_FEATURES = ("plugins", "plugin_hooks")
 OAG_MCP_SERVER_NAMES = ("ip-dev-agent-oag", "ontology" + "-ip-agent-oag")
-MULTI_AGENT_V2_MAX_THREADS = 10000
+MULTI_AGENT_V2_MAX_THREADS = 1000
 MULTI_AGENT_V2_GUARD_COMMENT = (
     "# Managed by IP Dev Agent: multi_agent_v2 is re-disabled on every Codex session start\n"
     "# because v2 can fail every turn with HTTP 400 in current Codex runtimes (openai/codex#26753).\n"
@@ -210,7 +210,7 @@ def config_status(config: dict[str, Any], *, include_omo_plugin_features: bool) 
     if not isinstance(v2, dict) or v2.get("enabled") is not False:
         issues.append(issue("MULTI_AGENT_V2_ENABLED", "[features.multi_agent_v2].enabled must be false."))
     if not isinstance(v2, dict) or int(v2.get("max_concurrent_threads_per_session") or 0) < MULTI_AGENT_V2_MAX_THREADS:
-        issues.append(issue("MULTI_AGENT_V2_LIMIT", "[features.multi_agent_v2].max_concurrent_threads_per_session should be 10000."))
+        issues.append(issue("MULTI_AGENT_V2_LIMIT", "[features.multi_agent_v2].max_concurrent_threads_per_session should be 1000."))
     if int(agents.get("max_depth") or 0) < 1:
         issues.append(issue("AGENT_DEPTH", "[agents].max_depth must be at least 1."))
     mcp_servers = config.get("mcp_servers") if isinstance(config.get("mcp_servers"), dict) else {}

@@ -90,6 +90,7 @@ Primary assets:
 - `scripts/oag_loop_core.py`
 - `scripts/oag_loop_hook.py`
 - `scripts/oag_loop_runner.py`
+- `scripts/oag_common.py`
 - `scripts/oag_deep_interview_round.py`
 - `scripts/oag_scaffold_ip.py`
 - `scripts/oag_graph.py`
@@ -106,6 +107,7 @@ Primary assets:
 - `scripts/oag_req_quality_check.py`
 - `scripts/oag_requirement_atom_check.py`
 - `scripts/oag_lock_readiness_check.py`
+- `scripts/oag_decision_rtl_consistency_check.py`
 - `scripts/oag_contract_strength_check.py`
 - `scripts/oag_authoring_packet_check.py`
 - `scripts/oag_lifecycle_check.py`
@@ -122,6 +124,7 @@ Primary assets:
 - `scripts/oag_decision_matrix_generate.py`
 - `scripts/oag_verification_plan_check.py`
 - `scripts/oag_validate_json.py`
+- `scripts/oag_rule_index_meta_check.py`
 - `scripts/oag_protected_receipt_audit.py`
 - `scripts/oag_pack_release_check.py`
 - `scripts/oag_workflow_whole_db.py`
@@ -261,6 +264,31 @@ post-lock readiness screen for `ontology/decision_matrix.yaml` plus the
 requirement atom, contract-strength, VPlan, and trace graph gates. It blocks
 implementation when any lock-required decision is still unresolved, proposed,
 or blocked.
+Use `.codex/scripts/oag_architecture_options.py generate|estimate|score|promote --ip-dir <ip> --json`
+for charter-bounded Tier-1 architecture exploration under
+`knowledge/arch_exploration/`. It consumes approved mission-charter objective
+weights and hard constraints; `promote` selects one candidate, prunes the rest,
+copies selected evidence into `knowledge/views/promoted/arch/`, and rewrites
+decision evidence refs before lock. It does not create product RTL or locked truth.
+Use `.codex/scripts/oag_arch_bench.py run|sweep|status --ip-dir <ip> --run-id <id> --candidate <id> --json`
+for Tier-2 candidate-local skeleton probes and parameter-sweep artifacts under
+`knowledge/arch_exploration/<run>/<candidate>/`. Sweep `--metric-point` values
+must carry `@artifact#sha256:<hash>` provenance.
+Use `.codex/scripts/oag_dse_worktree.py create|list|copy-back|prune|prune-all --ip-dir <ip> --json`
+to isolate non-trivial DSE worktrees. Worktrees live under `.oag_worktrees/`;
+copy-back is limited to `knowledge/arch_exploration/`, and prune preserves
+receipts, bench results, sweeps, scoreboards, and candidate archives.
+Use `.codex/scripts/oag_exploration_cleanup_check.py --ip-dir <ip> --json`
+before scope lock when architecture exploration exists. It enforces selected
+candidate collapse, pruned alternatives, retained generate-option verification
+mapping, public-parameter rationale, provisional decision cleanup, product-path
+marker removal, and stale DSE worktree/branch pruning. See
+`.codex/oag/decision-autonomy-policy.md`,
+`.codex/oag/mission-charter-policy.md`,
+`.codex/oag/architecture-option-policy.md`,
+`.codex/oag/architecture-bench-policy.md`,
+`.codex/oag/dse-worktree-policy.md`, and
+`.codex/oag/exploration-cleanup-policy.md`.
 Use `.codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --json` as the
 verification strategy screen for `ontology/verification_plan.yaml`. After lock,
 TB implementation should consume the verification plan rather than define the
@@ -268,7 +296,12 @@ proof strategy it is trying to satisfy.
 Use `.codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --require-lifecycle --json`
 before RTL/TB native subagent dispatch to ensure `oag.compile` produced
 role-specific `rtl__*.json` and `tb__*.json` packets with independent truth
-sources and approved/current lifecycle inputs.
+sources, approved/current lifecycle inputs, and `decision_refs_to_honor` for
+locked decisions that affect the packet role.
+Use `.codex/scripts/oag_decision_rtl_consistency_check.py --ip-dir <ip> --json`
+after RTL is authored to ensure locked parameter and generate-option decisions
+still match RTL declarations and verification-plan configurations. Lock
+readiness imports this checker and reports its issues in the readiness surface.
 Use `.codex/scripts/oag_lifecycle_check.py --ip-dir <ip> --consumer rtl_authoring_packet --json`
 or `--consumer tb_authoring_packet` before handing artifacts to RTL/TB workers.
 Lifecycle checks are fail-closed: draft/candidate/stale artifacts, missing
@@ -407,8 +440,11 @@ start event; it must not spawn subagents or replace native Codex orchestration.
 Before spawning a write-capable child, create a dispatch record with
 `python3 .codex/scripts/oag_dispatch.py create`. Put the resulting
 `dispatch_id`, `dispatch_path`, allowed write paths, allowed tool side effects,
-and receipt path in the spawn prompt. The child receipt must include those
-dispatch fields plus `changed_paths` and `generated_side_effects`. The
+and receipt path in the spawn prompt. For wavefront-backed children, also put
+the durable heartbeat command in the prompt:
+`python3 .codex/scripts/oag_wavefront.py heartbeat --ip-dir <ip> --run-id <run> --task-id <task> --message "<phase>" --json`.
+The child receipt must include those dispatch fields plus `changed_paths` and
+`generated_side_effects`. The
 `SubagentStop` hook calls `python3 .codex/scripts/oag_dispatch.py verify` and
 blocks receipts that fail schema validation, dispatch matching, or child-owned
 path scope checks. In parallel waves, `ACTUAL_PATH_OUT_OF_SCOPE` can reflect
@@ -480,8 +516,8 @@ stateless output contract and records a recovery marker that the next
 UserPromptSubmit consumes to force one context re-injection.
 The Codex deep-interview prompt guard in
 `hooks/codex_deep_interview_prompt_guard.py` also runs from
-`UserPromptSubmit`, but stays silent unless an OAG deep interview is active or
-explicitly requested. It injects only a compact reminder: ask the single
+`UserPromptSubmit`, but stays silent unless an OAG deep interview is explicitly
+requested in the current prompt. It injects only a compact reminder: ask the single
 highest-impact ambiguity, present four candidate answers with one
 `(Recommended)` option, include `Other / refine`, tell the user they may type a
 custom answer if A-D do not fit, read supplied documents/specs/RTL before

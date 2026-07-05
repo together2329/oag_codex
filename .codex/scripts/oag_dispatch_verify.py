@@ -131,6 +131,48 @@ def wavefront_task_for_dispatch(dispatch: JsonObject) -> JsonObject:
     return {}
 
 
+def wavefront_sibling_scope_paths(dispatch: JsonObject) -> list[str]:
+    run_id = str(dispatch.get("wavefront_run_id") or "")
+    task_id = str(dispatch.get("task_id") or "")
+    ip_rel = str(dispatch.get("ip_dir") or "")
+    if not run_id or not task_id or not ip_rel:
+        return []
+
+    graph_path = oag_paths.legacy_or_hidden(resolve_project_path(ip_rel), f"ontology/runs/{run_id}/wavefront_task_graph.json")
+    try:
+        graph = load_json(graph_path)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(graph, dict):
+        return []
+
+    sibling_paths: list[str] = []
+    active_statuses = {"claimed", "review_pending", "handoff_pass"}
+    ip_prefix = ip_rel.rstrip("/")
+    for task in graph.get("tasks", []):
+        if not isinstance(task, dict):
+            continue
+        sibling_task_id = str(task.get("task_id") or "")
+        if not sibling_task_id or sibling_task_id == task_id:
+            continue
+        if str(task.get("status") or "") not in active_statuses:
+            continue
+
+        dispatch_id = str(task.get("dispatch_id") or "")
+        if dispatch_id:
+            sibling_paths.append(f"{ip_prefix}/knowledge/dispatches/{dispatch_id}.json")
+        receipt_path = str(task.get("receipt_path") or "")
+        if receipt_path:
+            sibling_paths.append(normalize_rel(receipt_path))
+
+        for raw_path in task.get("allowed_write_paths") or []:
+            rel_path = str(raw_path).strip("/")
+            if rel_path:
+                sibling_paths.append(f"{ip_prefix}/{rel_path}")
+
+    return sorted(set(sibling_paths))
+
+
 def append_wavefront_abort_issues(issues: list[Issue], dispatch: JsonObject, receipt_path: Path) -> None:
     task = wavefront_task_for_dispatch(dispatch)
     if not task:
@@ -155,6 +197,7 @@ def append_wavefront_abort_issues(issues: list[Issue], dispatch: JsonObject, rec
 
 def verify_dispatch(args: argparse.Namespace) -> JsonObject:
     issues: list[Issue] = []
+    parallel_wavefront_paths: list[str] = []
     dispatch_path = resolve_project_path(args.dispatch)
     receipt_path = resolve_project_path(args.receipt)
     dispatch = load_json_object(dispatch_path, "dispatch", "DISPATCH_LOAD", issues)
@@ -256,7 +299,12 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
 
         current_paths, delta_paths = actual_delta(dispatch)
         expected_paths = [*allowed_write_paths, *allowed_tool_side_effects, str(dispatch.get("receipt_path") or ""), str(dispatch.get("dispatch_path") or "")]
-        out_of_scope_actual = [path for path in delta_paths if not path_matches(path, expected_paths)]
+        parallel_wavefront_paths = wavefront_sibling_scope_paths(dispatch) if dispatch_has_wavefront_metadata(dispatch) else []
+        out_of_scope_actual = [
+            path
+            for path in delta_paths
+            if not path_matches(path, expected_paths) and not path_matches(path, parallel_wavefront_paths)
+        ]
         for path in delta_paths:
             if nested_ip_generated_artifact(path, ip_rel, ip_name):
                 issues.append(
@@ -297,6 +345,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
         "generated_side_effects": generated,
         "actual_status_paths": current_paths,
         "actual_delta_paths": delta_paths,
+        "parallel_wavefront_exempted_paths": parallel_wavefront_paths if dispatch_has_wavefront_metadata(dispatch) else [],
         "out_of_scope_paths": out_of_scope_actual,
         "issues": issues,
     }

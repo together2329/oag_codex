@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,8 @@ LOCK_READINESS_CHECK = ROOT / "scripts" / "oag_lock_readiness_check.py"
 LOCK_PREVIEW_FRAME = ROOT / "scripts" / "oag_lock_preview_frame.py"
 CONTRACT_STRENGTH_CHECK = ROOT / "scripts" / "oag_contract_strength_check.py"
 AUTHORING_PACKET_CHECK = ROOT / "scripts" / "oag_authoring_packet_check.py"
+DECISION_RTL_CONSISTENCY_CHECK = ROOT / "scripts" / "oag_decision_rtl_consistency_check.py"
+RULE_INDEX_META_CHECK = ROOT / "scripts" / "oag_rule_index_meta_check.py"
 TRACE_GRAPH_CHECK = ROOT / "scripts" / "oag_trace_graph_check.py"
 DEEP_SEMANTIC_INTAKE = ROOT / "scripts" / "oag_deep_semantic_intake.py"
 DEEP_INTERVIEW_ROUND = ROOT / "scripts" / "oag_deep_interview_round.py"
@@ -74,8 +77,10 @@ GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
 AGENT_CATALOG = ROOT / "oag" / "agent-catalog.toml"
 OAG_MODE_DIRECTIVE = ROOT / "oag" / "oag-mode-directive.md"
+OAG_DECISION_AUTONOMY_POLICY = ROOT / "oag" / "decision-autonomy-policy.md"
 SUBAGENT_WORKFLOWS = ROOT / "oag" / "subagent-workflows.md"
 OAG_RULE_INDEX = ROOT / "rules" / "oag-rule-index.yaml"
+OAG_DECISION_AUTONOMY_RULES = ROOT / "rules" / "oag-decision-autonomy.rules.md"
 OAG_IP_WORKFLOW_SKILL = ROOT / "skills" / "oag-ip-workflow" / "SKILL.md"
 OAG_DEEP_INTERVIEW_SKILL = ROOT / "skills" / "oag-deep-interview" / "SKILL.md"
 OAG_DEEP_SEMANTIC_SKILL = ROOT / "skills" / "oag-deep-semantic-intake" / "SKILL.md"
@@ -478,6 +483,49 @@ def verify_task5_dispatch(project: Path, dispatch_path: Path, receipt_path: Path
     if result.returncode != 0 and payload["status"] == "pass":
         raise AssertionError(payload)
     return payload
+
+
+def test_dispatch_prompt_contract_subagent_boundary() -> None:
+    scripts_dir = str(ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    spec = importlib.util.spec_from_file_location("oag_dispatch_prompt_smoke", ROOT / "scripts" / "oag_dispatch_prompt.py")
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    prompt = module.build_prompt_contract(
+        {
+            "dispatch_id": "DISPATCH_SMOKE",
+            "dispatch_path": "smoke_ip/knowledge/dispatches/dispatch.json",
+            "agent_type": "oag-custom-worker",
+            "ip_dir": "smoke_ip",
+            "stage": "sim",
+            "receipt_path": "smoke_ip/knowledge/subagents/receipt.json",
+            "allowed_write_paths": ["smoke_ip/scripts/run_sim.py"],
+            "allowed_tool_side_effects": ["smoke_ip/ontology/generated"],
+            "wavefront_run_id": "RUN_SMOKE",
+            "task_id": "TASK_SMOKE",
+            "ownership_mode": "exclusive_file",
+        }
+    )
+
+    assert "Subagent implementation boundary:" in prompt, prompt
+    assert "Do not create a new dispatch" in prompt, prompt
+    assert "Do not run decision_harness record" in prompt, prompt
+    assert "Do not open or claim wavefront barriers" in prompt, prompt
+    assert "HANDOFF_PASS is only for the assigned deliverable" in prompt, prompt
+    assert "coverage_observed=false" in prompt, prompt
+    assert "Do not report coverage_percent=0" in prompt, prompt
+    assert "do not fall back to the smoke subset" in prompt, prompt
+    assert "observed_source.kind=monitor" in prompt, prompt
+    assert "repo schema or writer convention" in prompt, prompt
+    assert "scoreboard_rows.v1-allowed fields" in prompt, prompt
+    assert "scenario_count" in prompt, prompt
+    assert "scenario_source" in prompt, prompt
+    assert "plan_parse_success=true" in prompt, prompt
+    assert "smoke_fallback_used=false" in prompt, prompt
+    assert "results.xml" in prompt and "environment blocked" in prompt, prompt
 
 
 def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
@@ -1220,6 +1268,30 @@ def run_authoring_packet_check(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_decision_rtl_consistency_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(DECISION_RTL_CONSISTENCY_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
+def run_rule_index_meta_check(*args: str) -> subprocess.CompletedProcess[str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    return subprocess.run(
+        [sys.executable, str(RULE_INDEX_META_CHECK), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=ROOT,
+        env=env,
+    )
+
+
 def run_stale_check(*args: str) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
     return subprocess.run(
@@ -1778,6 +1850,220 @@ def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: 
         + "\n",
         encoding="utf-8",
     )
+
+
+def test_authoring_packets_honor_locked_decision_refs(tmp_root: Path) -> None:
+    ip = tmp_root / "packet_decision_refs_ip"
+    (ip / "ontology").mkdir(parents=True)
+    write_minimal_rtl_dispatch_readiness(
+        ip,
+        module_id="demo",
+        rtl_file="rtl/demo.sv",
+        contract_id="CONTRACT_DEMO",
+        obligation_id="OBL_DEMO",
+    )
+    (ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": ip.name,
+                "decisions": [
+                    {
+                        "id": "D_FIFO_DEPTH",
+                        "question": "Which public FIFO depth must RTL/TB honor?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "parameterizable",
+                        "representation": "parameter",
+                        "decision": 8,
+                        "affects": ["rtl", "tb"],
+                        "contract_refs": ["CONTRACT_DEMO"],
+                    },
+                    {
+                        "id": "D_MODULE_ONLY",
+                        "question": "Which module-local implementation decision must packets honor?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "parameterizable",
+                        "representation": "parameter",
+                        "decision": 1,
+                        "target_modules": ["demo"],
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    missing = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--json")
+    assert missing.returncode != 0, missing.stdout
+    missing_payload = json.loads(missing.stdout)
+    assert any(item["code"] == "PACKET_DECISION_REF_TO_HONOR_MISSING" for item in missing_payload["issues"]), missing_payload
+    assert "D_MODULE_ONLY" in json.dumps(missing_payload), missing_payload
+
+    packet_dir = ip / "ontology" / "generated" / "authoring_packets"
+    for packet_name in (f"rtl__{ip.name}.json", f"tb__{ip.name}.json"):
+        packet_path = packet_dir / packet_name
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        packet["decision_refs_to_honor"] = ["D_FIFO_DEPTH", "D_MODULE_ONLY"]
+        packet_path.write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    clean = run_authoring_packet_check("--ip-dir", str(ip), "--require-packets", "--json")
+    assert clean.returncode == 0, clean.stderr or clean.stdout
+
+
+def test_decision_rtl_consistency_check(tmp_root: Path) -> None:
+    ip = tmp_root / "decision_rtl_consistency_ip"
+    (ip / "ontology").mkdir(parents=True)
+    (ip / "rtl").mkdir(parents=True)
+    (ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": ip.name,
+                "decisions": [
+                    {
+                        "id": "D_DEPTH",
+                        "question": "What is the public FIFO depth?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "parameterizable",
+                        "representation": "parameter",
+                        "parameter": "FIFO_DEPTH",
+                        "decision": 8,
+                    },
+                    {
+                        "id": "D_ZERO",
+                        "question": "Can zero-valued locked parameters mismatch?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "parameterizable",
+                        "representation": "parameter",
+                        "parameter": "ENABLE_FAST_PATH",
+                        "decision": 0,
+                    },
+                    {
+                        "id": "D_PIPE",
+                        "question": "Is pipelining generated in RTL and vplan?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "architecture_tradeoff",
+                        "representation": "generate_option",
+                        "selected_option": "PIPELINED",
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "verification_plan.yaml").write_text(
+        json.dumps({"schema_version": "oag_verification_plan.v1", "ip": ip.name, "verification_configurations": [{"id": "PIPELINED"}]}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    rtl_path = ip / "rtl" / "demo.sv"
+    rtl_path.write_text("module demo; parameter FIFO_DEPTH = 4; parameter ENABLE_FAST_PATH = 1; if (PIPELINED) begin end endmodule\n", encoding="utf-8")
+    bad = run_decision_rtl_consistency_check("--ip-dir", str(ip), "--json")
+    assert bad.returncode != 0, bad.stdout
+    bad_payload = json.loads(bad.stdout)
+    assert any(item["code"] == "DECISION_RTL_PARAMETER_MISMATCH" for item in bad_payload["issues"]), bad_payload
+    assert "ENABLE_FAST_PATH" in json.dumps(bad_payload), bad_payload
+
+    rtl_path.write_text("module demo; parameter FIFO_DEPTH = 8; parameter ENABLE_FAST_PATH = 0; if (PIPELINED) begin end endmodule\n", encoding="utf-8")
+    good = run_decision_rtl_consistency_check("--ip-dir", str(ip), "--json")
+    assert good.returncode == 0, good.stderr or good.stdout
+    assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    readiness_spec = importlib.util.spec_from_file_location("oag_lock_readiness_pre_rtl_smoke", LOCK_READINESS_CHECK)
+    assert readiness_spec and readiness_spec.loader
+    readiness_module = importlib.util.module_from_spec(readiness_spec)
+    readiness_spec.loader.exec_module(readiness_module)
+    pre_rtl_ip = tmp_root / "decision_rtl_pre_rtl_ip"
+    (pre_rtl_ip / "ontology").mkdir(parents=True)
+    (pre_rtl_ip / "ontology" / "scope_lock.json").write_text(json.dumps({"state": "locked"}) + "\n", encoding="utf-8")
+    (pre_rtl_ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": pre_rtl_ip.name,
+                "decisions": [
+                    {
+                        "id": "D_PRE_RTL",
+                        "question": "Pre-RTL parameter?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "human",
+                        "decision_class": "parameterizable",
+                        "representation": "parameter",
+                        "parameter": "WIDTH",
+                        "decision": 0,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pre_rtl = readiness_module.check(pre_rtl_ip)
+    assert pre_rtl["decision_rtl_consistency"]["status"] == "skipped", pre_rtl
+    assert not any(item.get("code") == "DECISION_RTL_PARAMETER_MISSING" for item in pre_rtl["issues"]), pre_rtl
+
+
+def test_loop_runner_execute_mode_writes_receipt(tmp_root: Path) -> None:
+    spec = importlib.util.spec_from_file_location("oag_loop_runner_execute_smoke", LOOP_RUNNER)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    ip = make_ip(tmp_root / "loop_runner_execute")
+    run_id = "RUN_EXECUTE"
+    batch = {
+        "schema_version": "oag_recommended_batch.v1",
+        "batch_id": "batch.execute",
+        "job_type": "VALIDATION_RECORD_JOB",
+        "can_execute": True,
+        "tasks": [{"task_id": "record.OBL_1", "can_execute": True, "required_evidence": ["sim/results.xml"]}],
+    }
+    result = {
+        "schema_version": "oag_loop_runner.v1",
+        "status": "pass",
+        "run_id": run_id,
+        "decision": "continue",
+        "reason": "batch_available",
+        "loop_policy": {"mode": "execute"},
+        "recommended_batch": batch,
+        "plan": {},
+        "dispatch_command_candidates": [],
+    }
+    payload = module._execute_batch(ip, run_id, result, batch)
+    assert payload["reason"] == "executed_batch", payload
+    receipt_path = Path(payload["execution"]["receipt_path"])
+    assert receipt_path.is_file(), payload
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["job_type"] == "VALIDATION_RECORD_JOB", receipt
+    assert receipt["action"] == "bounded_execute_validation_record", receipt
+    assert receipt["task_results"][0]["record_response"]["ok"] is True, receipt
+    assert receipt["post_checks"]["compile"]["ok"] is True, receipt
+    assert receipt["post_checks"]["check"]["ok"] is True, receipt
+
+    blocked = module._execute_batch(ip, run_id, result, {**batch, "can_execute": False})
+    assert blocked["reason"] == "execute_not_allowed", blocked
+    wrong_job = module._execute_batch(ip, run_id, result, {**batch, "job_type": "RTL_IMPLEMENT_JOB"})
+    assert wrong_job["reason"] == "execute_job_type_not_allowed", wrong_job
+
+
+def test_rule_index_meta_check() -> None:
+    meta = run_rule_index_meta_check("--json")
+    assert meta.returncode == 0, meta.stderr or meta.stdout
+    payload = json.loads(meta.stdout)
+    assert payload["status"] == "pass", payload
+    assert payload["counts"]["rules"] >= 1, payload
 
 
 def make_ip(root: Path) -> Path:
@@ -2398,6 +2684,768 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     status = run_wavefront("status", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert status.returncode == 0, status.stderr or status.stdout
     assert json.loads(status.stdout)["active_locks"] == [], status.stdout
+
+
+def test_oag_decision_autonomy_policy(tmp_root: Path) -> None:
+    ip = tmp_root / "decision_autonomy_ip"
+    (ip / "ontology").mkdir(parents=True)
+    matrix_path = ip / "ontology" / "decision_matrix.yaml"
+    matrix_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": ip.name,
+                "decisions": [
+                    {
+                        "id": "D_FACT",
+                        "question": "Which source fact applies?",
+                        "status": "unresolved",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "fact",
+                        "refs": ["doc/fact.txt"],
+                    },
+                    {
+                        "id": "D_ARCH",
+                        "question": "Which queue architecture wins the target envelope?",
+                        "status": "unresolved",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "architecture_tradeoff",
+                    },
+                    {
+                        "id": "D_PARAM",
+                        "question": "Which timeout value should remain integrator-selectable?",
+                        "status": "unresolved",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "parameterizable",
+                    },
+                    {
+                        "id": "D_PRODUCT",
+                        "question": "Which product-visible protocol mode is in scope?",
+                        "status": "unresolved",
+                        "lock_required": True,
+                        "owner": "user",
+                    },
+                    {
+                        "id": "D_MISSING_CLASS",
+                        "question": "Which unclassified decision should fail closed?",
+                        "status": "unresolved",
+                        "lock_required": True,
+                        "owner": "agent",
+                    },
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (ip / "doc").mkdir(exist_ok=True)
+    (ip / "doc" / "fact.txt").write_text("fact source\n", encoding="utf-8")
+    (ip / "ontology" / "mission_charter.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_mission_charter.v1",
+                "status": "approved",
+                "approved": True,
+                "approval": {"status": "approved", "approved": True, "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"}},
+                "question_batching": "checkpoint",
+                "autonomy_grants": [
+                    {
+                        "id": "AUT_PARAMETER",
+                        "decision_class": "parameterizable",
+                        "granted": True,
+                    },
+                    {
+                        "id": "AUT_ARCH_TRADEOFF",
+                        "decision_class": "architecture_tradeoff",
+                        "granted": True,
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    spec = importlib.util.spec_from_file_location("oag_mission_loop_autonomy_smoke", MISSION_LOOP)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(ROOT / "scripts"))
+    spec.loader.exec_module(module)
+
+    fact_candidate = {"action_type": "ACT_RESOLVE_DECISION", "target_objects": {"decisions": ["D_FACT"]}}
+    arch_candidate = {"action_type": "ACT_RESOLVE_DECISION", "target_objects": {"decisions": ["D_ARCH"]}}
+    param_candidate = {"action_type": "ACT_RESOLVE_DECISION", "target_objects": {"decisions": ["D_PARAM"]}}
+    product_candidate = {"action_type": "ACT_RESOLVE_DECISION", "target_objects": {"decisions": ["D_PRODUCT"]}}
+    missing_class_candidate = {"action_type": "ACT_RESOLVE_DECISION", "target_objects": {"decisions": ["D_MISSING_CLASS"]}}
+
+    assert module.classify_candidate(fact_candidate, ip) == ("auto_decide", "fact_decision_has_local_citation")
+    assert module.classify_candidate(arch_candidate, ip) == ("route_dse", "measured_tradeoff_granted_requires_measurement")
+    assert module.classify_candidate(param_candidate, ip) == ("auto_decide", "parameterizable_decision_promoted_to_parameter_policy")
+    assert module.classify_candidate(product_candidate, ip) == ("defer_question", "product_defining_question_batched_to_checkpoint")
+    assert module.classify_candidate(missing_class_candidate, ip) == ("defer_question", "product_defining_question_batched_to_checkpoint")
+
+    autoresolve_spec = importlib.util.spec_from_file_location("oag_decision_autoresolve_smoke", ROOT / "scripts" / "oag_decision_autoresolve.py")
+    assert autoresolve_spec and autoresolve_spec.loader
+    oag_decision_autoresolve = importlib.util.module_from_spec(autoresolve_spec)
+    autoresolve_spec.loader.exec_module(oag_decision_autoresolve)
+    readiness_spec = importlib.util.spec_from_file_location("oag_lock_readiness_check_smoke", LOCK_READINESS_CHECK)
+    assert readiness_spec and readiness_spec.loader
+    oag_lock_readiness_check = importlib.util.module_from_spec(readiness_spec)
+    readiness_spec.loader.exec_module(oag_lock_readiness_check)
+    validate_spec = importlib.util.spec_from_file_location("oag_validate_json_smoke", VALIDATE_JSON)
+    assert validate_spec and validate_spec.loader
+    oag_validate_json = importlib.util.module_from_spec(validate_spec)
+    validate_spec.loader.exec_module(oag_validate_json)
+
+    missing_policy = oag_decision_autoresolve.resolve_candidate_policy(ip, missing_class_candidate)
+    assert missing_policy["decision_class"] == "product_defining", missing_policy
+    assert missing_policy["decision"] != "auto_decide", missing_policy
+
+    receipt_dir = ip / "knowledge" / "decisions"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = receipt_dir / "D_MISSING_CLASS.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_agent_decision_receipt.v1",
+                "id": "D_MISSING_CLASS",
+                "decision_id": "D_MISSING_CLASS",
+                "decision_class": "product_defining",
+                "decision": "unsafe",
+                "provisional": True,
+                "evidence_refs": ["doc/fact.txt"],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+    missing_row = next(item for item in matrix["decisions"] if item["id"] == "D_MISSING_CLASS")
+    missing_row.update(
+        {
+            "status": "decided",
+            "decision": "unsafe",
+            "decided_by": {"kind": "agent_with_charter", "id": "smoke"},
+            "evidence_refs": ["doc/fact.txt"],
+            "decision_receipt_ref": "knowledge/decisions/D_MISSING_CLASS.json",
+        }
+    )
+    matrix_path.write_text(json.dumps(matrix, indent=2) + "\n", encoding="utf-8")
+    readiness_issues, _, _ = oag_lock_readiness_check.check_decisions(ip, hard_gate=True)
+    assert any(item["code"] == "DECISION_PRODUCT_AGENT" for item in readiness_issues), readiness_issues
+
+    exploration_doc = {
+        "schema_version": "oag_exploration_plan.v1",
+        "status": "pass",
+        "generated_at": "2026-01-01T00:00:00Z",
+        "ip": ip.name,
+        "ask_vs_explore": {
+            "decision": "auto_decide",
+            "reason": "fact_decision_has_local_citation",
+            "question_required_now": False,
+            "lock_critical": True,
+            "decision_class": "fact",
+            "decision_id": "D_FACT",
+            "charter_grant_id": "",
+            "evidence_plan": {"required": True, "available_refs": ["doc/fact.txt"]},
+        },
+        "input_fingerprint": {"sha256": "smoke"},
+        "source_targets": [],
+        "option_axes": [{"id": "FACT", "label": "Fact"}],
+        "research_prompt": "No user question is required for a cited fact.",
+        "issues": [],
+    }
+    assert oag_validate_json.schema_issues("oag_exploration_plan.schema.json", exploration_doc) == []
+
+    no_charter = tmp_root / "decision_autonomy_no_charter_ip"
+    (no_charter / "ontology").mkdir(parents=True)
+    (no_charter / "ontology" / "decision_matrix.yaml").write_text(matrix_path.read_text(encoding="utf-8"), encoding="utf-8")
+    assert module.classify_candidate(product_candidate, no_charter) == ("needs_user", "human_input_required")
+
+    no_grant = tmp_root / "decision_autonomy_no_grant_ip"
+    (no_grant / "ontology").mkdir(parents=True)
+    (no_grant / "ontology" / "decision_matrix.yaml").write_text(matrix_path.read_text(encoding="utf-8"), encoding="utf-8")
+    (no_grant / "ontology" / "mission_charter.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_mission_charter.v1",
+                "status": "approved",
+                "approved": True,
+                "approval": {"status": "approved", "approved": True, "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"}},
+                "question_batching": "checkpoint",
+                "autonomy_grants": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert module.classify_candidate(param_candidate, no_grant) == ("needs_user", "human_input_required")
+
+
+def test_oag_arch_exploration_blocker_regressions(tmp_root: Path) -> None:
+    sweep_doc = tmp_root / "sweep.json"
+    sweep_doc.write_text(
+        json.dumps(
+            {
+                "parameter": "depth",
+                "constraint": {"metric": "throughput", "objective": "max", "target": 100, "margin": 5},
+                "candidate_values": [4, 8, 16],
+                "metric_curve": [
+                    {"value": 4, "metrics": {"throughput": 80}},
+                    {"value": 8, "metrics": {"throughput": 96}},
+                    {"value": 16, "metrics": {"throughput": 110}},
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sweep = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "oag_parameter_sweep.py"), "select", "--input", str(sweep_doc), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert sweep.returncode == 0, sweep.stderr or sweep.stdout
+    assert json.loads(sweep.stdout)["selected"]["value"] == 8.0
+
+    min_sweep_doc = tmp_root / "sweep_min.json"
+    min_sweep_doc.write_text(
+        json.dumps(
+            {
+                "parameter": "depth",
+                "constraint": {"metric": "latency", "objective": "min", "target": 10, "margin": 1},
+                "candidate_values": [4, 8, 16],
+                "metric_curve": [
+                    {"value": 4, "metrics": {"latency": 12}},
+                    {"value": 8, "metrics": {"latency": 11}},
+                    {"value": 16, "metrics": {"latency": 8}},
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    min_sweep = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "oag_parameter_sweep.py"), "select", "--input", str(min_sweep_doc), "--json"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert min_sweep.returncode == 0, min_sweep.stderr or min_sweep.stdout
+    assert json.loads(min_sweep.stdout)["selected"]["value"] == 8.0
+
+    ip = tmp_root / "dse_prune_evidence_ip"
+    ip.mkdir()
+    subprocess.run(["git", "-C", str(ip), "init", "-q"], check=True)
+    subprocess.run(["git", "-C", str(ip), "config", "user.email", "smoke@example.com"], check=True)
+    subprocess.run(["git", "-C", str(ip), "config", "user.name", "Smoke"], check=True)
+    (ip / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(ip), "add", "seed.txt"], check=True)
+    subprocess.run(["git", "-C", str(ip), "commit", "-q", "-m", "seed"], check=True)
+    evidence_dir = ip / "knowledge" / "arch_exploration" / "RUN1" / "CAND1"
+    evidence_dir.mkdir(parents=True)
+    evidence_file = evidence_dir / "bench_result.json"
+    evidence_file.write_text('{"status":"pass"}\n', encoding="utf-8")
+    subprocess.run(["git", "-C", str(ip), "branch", "oag/dse/M1/CAND1"], check=True)
+    prune = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "oag_dse_worktree.py"),
+            "prune",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            "RUN1",
+            "--candidate",
+            "CAND1",
+            "--mission",
+            "M1",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert prune.returncode == 0, prune.stderr or prune.stdout
+    assert evidence_file.is_file()
+    branches = subprocess.run(["git", "-C", str(ip), "branch", "--list", "oag/dse/*"], text=True, capture_output=True, check=True)
+    assert branches.stdout.strip() == ""
+
+
+def test_oag_arch_exploration_remaining_review_gates(tmp_root: Path) -> None:
+    ip = tmp_root / "arch_remaining_gates_ip"
+    (ip / "ontology").mkdir(parents=True)
+    (ip / "knowledge" / "mission_loop").mkdir(parents=True)
+    (ip / "ontology" / "mission_charter.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_mission_charter.v1",
+                "ip": ip.name,
+                "status": "approved",
+                "approved": True,
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-01T00:00:00Z",
+                "actor": {"kind": "ai", "id": "smoke", "surface": "smoke"},
+                "autonomy": {"question_batching": "checkpoint", "grants": [{"id": "G_ARCH", "decision_class": "architecture_tradeoff", "granted": True, "rationale": "smoke"}]},
+                "approval": {"status": "approved", "approved": True, "actor": {"kind": "human", "id": "owner", "surface": "smoke"}},
+                "objective_weights": {"throughput": 1.0},
+                "constraints": {"required": ["pipeline"], "forbidden": ["huge"]},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    matrix: dict[str, Any] = {
+        "schema_version": "oag_decision_matrix.v1",
+        "ip": ip.name,
+        "decisions": [
+            {
+                "id": "D_ARCH",
+                "question": "Which queue architecture?",
+                "status": "unresolved",
+                "lock_required": True,
+                "owner": "agent",
+                "decision_class": "architecture_tradeoff",
+                "options": [
+                    {"id": "pipeline_small", "label": "pipeline small", "metrics": {"throughput": 120}, "parameters": {"depth": 8}},
+                    {"id": "simple_small", "label": "simple small", "metrics": {"throughput": 100}, "parameters": {"depth": 4}},
+                    {"id": "huge_pipeline", "label": "huge pipeline", "metrics": {"throughput": 200}, "parameters": {"depth": 32}},
+                ],
+            }
+        ],
+    }
+    matrix_path = ip / "ontology" / "decision_matrix.yaml"
+    matrix_path.write_text(json.dumps(matrix, indent=2) + "\n", encoding="utf-8")
+    gen = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_architecture_options.py"), "generate", "--ip-dir", str(ip), "--run-id", "RUNX", "--json"], text=True, capture_output=True, check=False)
+    assert gen.returncode == 0, gen.stderr or gen.stdout
+    estimate = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_architecture_options.py"), "estimate", "--ip-dir", str(ip), "--run-id", "RUNX", "--json"], text=True, capture_output=True, check=False)
+    assert estimate.returncode == 0, estimate.stderr or estimate.stdout
+    score = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_architecture_options.py"), "score", "--ip-dir", str(ip), "--run-id", "RUNX", "--json"], text=True, capture_output=True, check=False)
+    assert score.returncode == 0, score.stderr or score.stdout
+    rows = json.loads(score.stdout)["artifact"]["rows"]
+    assert any(row["hard_constraint_pass"] is True for row in rows), rows
+    assert any(row["hard_constraint_pass"] is False and "required constraint missing: pipeline" in row["constraint_issues"] for row in rows), rows
+
+    bench = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_arch_bench.py"), "run", "--ip-dir", str(ip), "--run-id", "RUNX", "--candidate", "CAND_001", "--json"], text=True, capture_output=True, check=False)
+    assert bench.returncode == 0, bench.stderr or bench.stdout
+    bench_artifact = json.loads(bench.stdout)["artifact"]
+    assert bench_artifact["evidence_tier"] == "tier2_probe", bench_artifact
+    assert "exploration_comparison" in bench_artifact["valid_for"], bench_artifact
+    assert "scope_lock" in bench_artifact["not_valid_for"], bench_artifact
+    assert all(path.startswith("knowledge/arch_exploration/") for path in bench_artifact["generated_artifacts"]), bench_artifact
+    assert (ip / "knowledge" / "arch_exploration" / "RUNX" / "CAND_001" / "generated" / "CAND_001_skeleton.v").is_file()
+    bad_bench = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_arch_bench.py"), "run", "--ip-dir", str(ip), "--run-id", "RUNX", "--candidate", "../rtl", "--json"], text=True, capture_output=True, check=False)
+    assert bad_bench.returncode != 0, bad_bench.stdout
+    assert not (ip / "rtl").exists()
+    missing_provenance_sweep = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "oag_arch_bench.py"),
+            "sweep",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            "RUNX",
+            "--candidate",
+            "CAND_001",
+            "--parameter",
+            "depth",
+            "--metric",
+            "throughput",
+            "--objective",
+            "max",
+            "--target",
+            "100",
+            "--candidate-value",
+            "4",
+            "--metric-point",
+            "4=80",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert missing_provenance_sweep.returncode != 0, missing_provenance_sweep.stdout
+    missing_provenance_payload = json.loads(missing_provenance_sweep.stdout)
+    assert any(item["code"] == "SWEEP_POINT_PROVENANCE_MISSING" for item in missing_provenance_payload["issues"]), missing_provenance_payload
+    missing_input_sweep_path = ip / "missing_input_sweep.json"
+    missing_input_sweep_path.write_text(
+        json.dumps(
+            {
+                "parameter": "depth",
+                "constraint": {"metric": "throughput", "objective": "max", "target": 100, "margin": 5},
+                "candidate_values": [4, 8],
+                "metric_curve": [{"value": 4, "metrics": {"throughput": 80}}, {"value": 8, "metrics": {"throughput": 100}}],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    missing_input_sweep = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "oag_arch_bench.py"),
+            "sweep",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            "RUNX",
+            "--candidate",
+            "CAND_001",
+            "--input",
+            str(missing_input_sweep_path),
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert missing_input_sweep.returncode != 0, missing_input_sweep.stdout
+    missing_input_payload = json.loads(missing_input_sweep.stdout)
+    assert any(item["code"] == "SWEEP_POINT_PROVENANCE_MISSING" for item in missing_input_payload["issues"]), missing_input_payload
+    bench_ref = "knowledge/arch_exploration/RUNX/CAND_001/bench_result.json"
+    bench_hash = sha256(ip / bench_ref)
+    sweep = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "oag_arch_bench.py"),
+            "sweep",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            "RUNX",
+            "--candidate",
+            "CAND_001",
+            "--parameter",
+            "depth",
+            "--metric",
+            "throughput",
+            "--objective",
+            "max",
+            "--target",
+            "100",
+            "--margin",
+            "5",
+            "--candidate-value",
+            "4",
+            "--candidate-value",
+            "8",
+            "--candidate-value",
+            "16",
+            "--metric-point",
+            f"4=80@{bench_ref}#sha256:{bench_hash}",
+            "--metric-point",
+            f"8=96@{bench_ref}#sha256:{bench_hash}",
+            "--metric-point",
+            f"16=110@{bench_ref}#sha256:{bench_hash}",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert sweep.returncode == 0, sweep.stderr or sweep.stdout
+    sweep_artifact = json.loads(sweep.stdout)["artifact"]
+    assert sweep_artifact["selected"]["value"] == 8.0
+    assert sweep_artifact["evidence_tier"] == "tier2_probe", sweep_artifact
+    assert "scope_lock" in sweep_artifact["not_valid_for"], sweep_artifact
+    assert (ip / "knowledge" / "arch_exploration" / "RUNX" / "CAND_001" / "parameter_sweep_depth.json").is_file()
+
+    candidates_path = ip / "knowledge" / "arch_exploration" / "RUNX" / "candidates.json"
+    candidates_doc = json.loads(candidates_path.read_text(encoding="utf-8"))
+    for candidate in candidates_doc["candidates"]:
+        if candidate["id"] == "CAND_001":
+            candidate["parameter_draft"] = {"depth": {"value": 8, "public": True}}
+            candidate["generate_options"] = [
+                {
+                    "id": "GEN_PIPE",
+                    "retain": True,
+                    "decision_ref": "D_ARCH",
+                    "configuration_model_entry": "CFG_PIPE",
+                    "verification_plan_config_mapping": "CFG_UNKNOWN",
+                }
+            ]
+    candidates_path.write_text(json.dumps(candidates_doc, indent=2) + "\n", encoding="utf-8")
+    raw_sweep_ref = "knowledge/arch_exploration/RUNX/CAND_001/parameter_sweep_depth.json"
+    promoted_sweep_ref = "knowledge/views/promoted/arch/RUNX/CAND_001/parameter_sweep_depth.json"
+    receipt_path = ip / "knowledge" / "decisions" / "D_PARAM.json"
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_agent_decision_receipt.v1",
+                "decision_id": "D_PARAM",
+                "decision_class": "parameterizable",
+                "autonomy_class": "reversible_internal",
+                "candidate_set": ["CAND_001"],
+                "bench_command": "oag_arch_bench.py sweep --candidate CAND_001 --parameter depth",
+                "metrics": {"throughput": 96.0},
+                "comparison": "depth sweep selected the smallest satisfying value",
+                "selection_rule": "smallest_satisfying_with_margin",
+                "artifact_paths": [raw_sweep_ref],
+                "rollback_path": "knowledge/arch_exploration/RUNX",
+                "evidence_refs": [raw_sweep_ref],
+                "evidence_required": [raw_sweep_ref],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    matrix["decisions"].append(
+        {
+            "id": "D_PARAM",
+            "question": "Public depth parameter?",
+            "status": "decided",
+            "lock_required": True,
+            "owner": "agent",
+            "decision_class": "parameterizable",
+            "representation": "parameter",
+            "external_contract_impact": "indirect",
+            "provisional": True,
+            "decision": 8,
+            "autonomy_class": "reversible_internal",
+            "decided_by": {"kind": "agent_with_charter", "id": "smoke"},
+            "evidence_refs": [raw_sweep_ref],
+            "evidence_required": [raw_sweep_ref],
+            "decision_receipt_ref": "knowledge/decisions/D_PARAM.json",
+        }
+    )
+    matrix_path.write_text(json.dumps(matrix, indent=2) + "\n", encoding="utf-8")
+    cleanup_before_promote = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_exploration_cleanup_check.py"), "--ip-dir", str(ip), "--json"], text=True, capture_output=True, check=False)
+    assert cleanup_before_promote.returncode != 0, cleanup_before_promote.stdout
+    cleanup_before_codes = {item["code"] for item in json.loads(cleanup_before_promote.stdout)["issues"]}
+    assert "PRODUCT_ARCH_EXPLORATION_REFERENCE" in cleanup_before_codes, cleanup_before_codes
+    promote = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "oag_architecture_options.py"),
+            "promote",
+            "--ip-dir",
+            str(ip),
+            "--run-id",
+            "RUNX",
+            "--candidate",
+            "CAND_001",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert promote.returncode == 0, promote.stderr or promote.stdout
+    promote_result = json.loads(promote.stdout)
+    assert promote_result["artifact"]["candidate_id"] == "CAND_001", promote_result
+    assert (ip / promoted_sweep_ref).is_file()
+    assert (ip / "knowledge" / "views" / "promoted" / "arch" / "RUNX" / "CAND_001" / "structure_draft.json").is_file()
+    assert (ip / "knowledge" / "views" / "promoted" / "arch" / "RUNX" / "CAND_001" / "parameter_decision_draft.json").is_file()
+    candidates_after_promote = json.loads(candidates_path.read_text(encoding="utf-8"))
+    selected_rows = [item for item in candidates_after_promote["candidates"] if item.get("status") == "selected"]
+    assert [item["id"] for item in selected_rows] == ["CAND_001"], candidates_after_promote
+    assert all(item.get("status") in {"selected", "pruned"} for item in candidates_after_promote["candidates"]), candidates_after_promote
+    import yaml  # type: ignore
+
+    matrix_after_promote = yaml.safe_load(matrix_path.read_text(encoding="utf-8"))
+    d_param = next(item for item in matrix_after_promote["decisions"] if item["id"] == "D_PARAM")
+    assert d_param["evidence_refs"] == [promoted_sweep_ref], d_param
+    assert d_param["evidence_required"] == [promoted_sweep_ref], d_param
+    promoted_receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert promoted_receipt["evidence_refs"] == [promoted_sweep_ref], promoted_receipt
+    assert promoted_receipt["evidence_required"] == [promoted_sweep_ref], promoted_receipt
+    assert raw_sweep_ref in promoted_receipt["promotion"]["original_exploration_refs"], promoted_receipt
+    (ip / "knowledge" / "mission_loop" / "pending_questions.json").write_text(
+        json.dumps({"schema_version": "oag_pending_questions.v1", "ip": ip.name, "status": "checkpoint_ready", "created_at": "x", "updated_at": "x", "questions": []}) + "\n",
+        encoding="utf-8",
+    )
+    (ip / "ontology" / "verification_plan.yaml").write_text(json.dumps({"schema_version": "oag_verification_plan.v1", "ip": ip.name, "verification_configurations": [{"id": "CFG_PIPE"}], "verification_objectives": []}) + "\n", encoding="utf-8")
+    cleanup = subprocess.run([sys.executable, str(ROOT / "scripts" / "oag_exploration_cleanup_check.py"), "--ip-dir", str(ip), "--json"], text=True, capture_output=True, check=False)
+    assert cleanup.returncode != 0, cleanup.stdout
+    cleanup_codes = {item["code"] for item in json.loads(cleanup.stdout)["issues"]}
+    assert "PRODUCT_ARCH_EXPLORATION_REFERENCE" not in cleanup_codes, cleanup_codes
+    assert "PUBLIC_PARAMETER_RATIONALE_MISSING" in cleanup_codes, cleanup_codes
+    assert "PROVISIONAL_DECISION_REMAINS" in cleanup_codes, cleanup_codes
+    assert "GENERATE_OPTION_VERIFICATION_MAPPING_UNKNOWN" in cleanup_codes, cleanup_codes
+
+    pending_spec = importlib.util.spec_from_file_location("oag_pending_questions_smoke", ROOT / "scripts" / "oag_pending_questions.py")
+    assert pending_spec and pending_spec.loader
+    oag_pending_questions = importlib.util.module_from_spec(pending_spec)
+    pending_spec.loader.exec_module(oag_pending_questions)
+    mismatch_ip = tmp_root / "pending_schema_mismatch_ip"
+    (mismatch_ip / "knowledge" / "mission_loop").mkdir(parents=True)
+    (mismatch_ip / "knowledge" / "mission_loop" / "pending_questions.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "old_schema",
+                "ip": mismatch_ip.name,
+                "status": "active",
+                "created_at": "x",
+                "updated_at": "x",
+                "questions": [{"id": "PQ_0001", "status": "pending", "candidate_selector": "decision:D1"}],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pending_summary = oag_pending_questions.summary(mismatch_ip)
+    assert pending_summary["ready"] is True, pending_summary
+    assert pending_summary["question_count"] == 1, pending_summary
+    assert pending_summary["checkpoint_reason"] == "pending_questions_schema_mismatch", pending_summary
+
+    readiness_spec = importlib.util.spec_from_file_location("oag_lock_readiness_agent_receipt_smoke", LOCK_READINESS_CHECK)
+    assert readiness_spec and readiness_spec.loader
+    oag_lock_readiness_check = importlib.util.module_from_spec(readiness_spec)
+    readiness_spec.loader.exec_module(oag_lock_readiness_check)
+    receipt_ip = tmp_root / "agent_receipt_required_ip"
+    (receipt_ip / "ontology").mkdir(parents=True)
+    (receipt_ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": receipt_ip.name,
+                "decisions": [
+                    {
+                        "id": "D_AGENT",
+                        "question": "Agent evidence final decision?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "architecture_tradeoff",
+                        "autonomy_class": "measured_tradeoff",
+                        "decision": "x",
+                        "provisional": False,
+                        "decided_by": {"kind": "agent_with_evidence", "id": "smoke"},
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    readiness_issues, _, _ = oag_lock_readiness_check.check_decisions(receipt_ip, hard_gate=True)
+    assert any(item["code"] == "DECISION_EVIDENCE_REFS" for item in readiness_issues), readiness_issues
+    assert any(item["code"] == "DECISION_RECEIPT_REF" for item in readiness_issues), readiness_issues
+
+    bypass_ip = tmp_root / "agent_decided_by_bypass_ip"
+    (bypass_ip / "ontology").mkdir(parents=True)
+    (bypass_ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": bypass_ip.name,
+                "decisions": [
+                    {
+                        "id": "D_AGENT_BYPASS",
+                        "question": "Can an agent-owned row omit decided_by?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "product_defining",
+                        "decision": "unsafe",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    bypass_issues, _, _ = oag_lock_readiness_check.check_decisions(bypass_ip, hard_gate=True)
+    assert any(item["code"] == "DECISION_AGENT_DECIDED_BY" for item in bypass_issues), bypass_issues
+    assert any(item["code"] == "DECISION_PRODUCT_AGENT" for item in bypass_issues), bypass_issues
+
+    tier2_ip = tmp_root / "tier2_only_evidence_ip"
+    tier2_evidence = tier2_ip / "knowledge" / "arch_exploration" / "RUN_LOCK" / "CAND_LOCK" / "bench_result.json"
+    tier2_receipt = tier2_ip / "knowledge" / "decisions" / "D_TIER2.json"
+    tier2_evidence.parent.mkdir(parents=True)
+    tier2_receipt.parent.mkdir(parents=True)
+    (tier2_ip / "ontology").mkdir(parents=True)
+    tier2_evidence.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_arch_bench_result.v1",
+                "status": "pass",
+                "ip": tier2_ip.name,
+                "run_id": "RUN_LOCK",
+                "candidate_id": "CAND_LOCK",
+                "candidate_ref": "knowledge/arch_exploration/RUN_LOCK/CAND_LOCK",
+                "result_ref": "knowledge/arch_exploration/RUN_LOCK/CAND_LOCK/bench_result.json",
+                "evidence_tier": "tier2_probe",
+                "valid_for": ["exploration_comparison"],
+                "not_valid_for": ["scope_lock", "product_rtl_claim", "external_contract_claim", "product_defining_claim"],
+                "measurement_kind": "adapter_probe",
+                "adapter_status": {},
+                "probes": {},
+                "metrics": {},
+                "generated_artifacts": ["knowledge/arch_exploration/RUN_LOCK/CAND_LOCK/generated/CAND_LOCK_skeleton.v"],
+                "issues": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tier2_receipt.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_agent_decision_receipt.v1",
+                "decision_id": "D_TIER2",
+                "decision_class": "architecture_tradeoff",
+                "autonomy_class": "measured_tradeoff",
+                "candidate_set": ["CAND_LOCK"],
+                "bench_command": "smoke",
+                "metrics": {},
+                "comparison": {},
+                "selection_rule": "smoke",
+                "artifact_paths": ["knowledge/arch_exploration/RUN_LOCK/CAND_LOCK/bench_result.json"],
+                "rollback_path": "git:smoke",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tier2_ip / "ontology" / "decision_matrix.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_decision_matrix.v1",
+                "ip": tier2_ip.name,
+                "decisions": [
+                    {
+                        "id": "D_TIER2",
+                        "question": "Can Tier-2-only evidence lock an architecture?",
+                        "status": "decided",
+                        "lock_required": True,
+                        "owner": "agent",
+                        "decision_class": "architecture_tradeoff",
+                        "autonomy_class": "measured_tradeoff",
+                        "decision": "CAND_LOCK",
+                        "provisional": False,
+                        "decided_by": {"kind": "agent_with_evidence", "id": "smoke"},
+                        "evidence_refs": ["knowledge/arch_exploration/RUN_LOCK/CAND_LOCK/bench_result.json"],
+                        "decision_receipt_ref": "knowledge/decisions/D_TIER2.json",
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tier2_issues, _, _ = oag_lock_readiness_check.check_decisions(tier2_ip, hard_gate=True)
+    assert any(item["code"] == "DECISION_TIER2_ONLY_EVIDENCE" for item in tier2_issues), tier2_issues
 
 
 def test_deep_interview_handoff_persists_decision_rows(tmp_root: Path) -> None:
@@ -4095,6 +5143,7 @@ def main() -> int:
         test_pyslang_lint_runner()
         test_rtl_role_wavefront_template(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
+        test_dispatch_prompt_contract_subagent_boundary()
         test_task5_dispatch_wavefront_matrix(Path(tmp))
         test_dispatch_hardening_guards(Path(tmp))
         test_dispatch_authoring_packet_retry_classifier()
@@ -4110,6 +5159,9 @@ def main() -> int:
         test_lock_preview_frame_preserves_verbatim_source(Path(tmp))
         test_oag_team_plan_mode(Path(tmp))
         test_oag_run_control_layer(Path(tmp))
+        test_oag_decision_autonomy_policy(Path(tmp))
+        test_oag_arch_exploration_blocker_regressions(Path(tmp))
+        test_oag_arch_exploration_remaining_review_gates(Path(tmp))
         test_deep_interview_handoff_persists_decision_rows(Path(tmp))
         assert DISPATCH.is_file(), DISPATCH
         assert WAVEFRONT.is_file(), WAVEFRONT
@@ -4149,8 +5201,10 @@ def main() -> int:
         assert SSOT_SECTION_CHECK.is_file(), SSOT_SECTION_CHECK
         assert AGENT_CATALOG.is_file(), AGENT_CATALOG
         assert OAG_MODE_DIRECTIVE.is_file(), OAG_MODE_DIRECTIVE
+        assert OAG_DECISION_AUTONOMY_POLICY.is_file(), OAG_DECISION_AUTONOMY_POLICY
         assert SUBAGENT_WORKFLOWS.is_file(), SUBAGENT_WORKFLOWS
         assert OAG_RULE_INDEX.is_file(), OAG_RULE_INDEX
+        assert OAG_DECISION_AUTONOMY_RULES.is_file(), OAG_DECISION_AUTONOMY_RULES
         assert OAG_IP_WORKFLOW_SKILL.is_file(), OAG_IP_WORKFLOW_SKILL
         assert OAG_DEEP_SEMANTIC_SKILL.is_file(), OAG_DEEP_SEMANTIC_SKILL
         assert OAG_DECISION_MATRIX_SKILL.is_file(), OAG_DECISION_MATRIX_SKILL
@@ -4295,6 +5349,10 @@ def main() -> int:
         assert "spawn_agent" in subagent_workflows and ".codex/runs/auto_research/" in subagent_workflows, subagent_workflows
         assert "oag-verification-strategy-agent" in subagent_workflows, subagent_workflows
         assert "ontology/verification_plan.yaml" in subagent_workflows, subagent_workflows
+        assert "repo schema or existing writer" in subagent_workflows and "convention supports those fields" in subagent_workflows, subagent_workflows
+        assert "scoreboard_rows.v1" in subagent_workflows, subagent_workflows
+        assert "smoke_fallback_used=false" in subagent_workflows, subagent_workflows
+        assert "scoreboard schema issue remains" in subagent_workflows, subagent_workflows
         skill_text = OAG_IP_WORKFLOW_SKILL.read_text(encoding="utf-8")
         agents_text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         directive_text = OAG_MODE_DIRECTIVE.read_text(encoding="utf-8")
@@ -4526,6 +5584,8 @@ def main() -> int:
         assert "RULE-TRACE-001" in rule_index_text, rule_index_text
         assert "RULE-WAVE-001" in rule_index_text, rule_index_text
         assert "RULE-IPVER-001" in rule_index_text, rule_index_text
+        assert "RULE-AUTO-001" in rule_index_text, rule_index_text
+        assert "RULE-AUTO-004" in rule_index_text, rule_index_text
         decision_skill_text = OAG_DECISION_MATRIX_SKILL.read_text(encoding="utf-8")
         lock_preview_skill_text = OAG_LOCK_PREVIEW_FRAME_SKILL.read_text(encoding="utf-8")
         contract_skill_text = OAG_CONTRACT_PROJECTION_SKILL.read_text(encoding="utf-8")
@@ -4611,6 +5671,9 @@ def main() -> int:
         assert "After user lock, main agent orchestrates" in directive_text, directive_text
         assert "oag_main_write_gate.py" in directive_text, directive_text
         assert "find .. -name AGENTS.md" in skill_text, skill_text
+        assert "repo schema or existing writer" in skill_text and "convention supports those fields" in skill_text, skill_text
+        assert "scenario_source=ontology/verification_plan.yaml" in skill_text, skill_text
+        assert "scoreboard schema issue remains" in skill_text, skill_text
         assert "Do not run a Python" in subagent_workflows and "manual role-play substitute" in subagent_workflows, subagent_workflows
         assert "first attempt a minimal explicit" in subagent_workflows and "native spawn" in subagent_workflows, subagent_workflows
         assert "observed" in subagent_workflows and "native-spawn blocker" in subagent_workflows, subagent_workflows
@@ -4622,7 +5685,7 @@ def main() -> int:
         assert 'multi_agent = true' in config_text, config_text
         assert 'child_agents_md = true' in config_text, config_text
         assert 'enabled = false' in config_text, config_text
-        assert 'max_concurrent_threads_per_session = 10000' in config_text, config_text
+        assert 'max_concurrent_threads_per_session = 1000' in config_text, config_text
         assert 'max_depth = 1' in config_text, config_text
         assert "mcp_servers" not in config_text, config_text
 
@@ -4715,7 +5778,7 @@ def main() -> int:
         assert "plugin_hooks = true" in migrated_config, migrated_config
         assert "multi_agent_v2 = true" not in migrated_config, migrated_config
         assert "enabled = false" in migrated_config, migrated_config
-        assert "max_concurrent_threads_per_session = 10000" in migrated_config, migrated_config
+        assert "max_concurrent_threads_per_session = 1000" in migrated_config, migrated_config
         assert "max_depth = 1" in migrated_config, migrated_config
         assert "openai/codex#26753" in migrated_config, migrated_config
         assert "ip-dev-agent-oag" not in migrated_config, migrated_config
@@ -4746,6 +5809,9 @@ def main() -> int:
         assert "Do not answer BLOCKED or report an observed native-spawn blocker before an actual `spawn_agent` attempt fails" in guard_context, guard_on.stdout
         assert "Do not decide native-spawn availability from the visible callable tool namespace alone" in guard_context, guard_on.stdout
         assert "explicitly request the native `spawn_agent` collaboration event" in guard_context, guard_on.stdout
+        assert "A wait timeout only means no new child update arrived" in guard_context, guard_on.stdout
+        assert "spawn the whole ready wave as a native subagent batch" in guard_context, guard_on.stdout
+        assert "TB generation should be sharded" in guard_context, guard_on.stdout
         assert "Do not run `omo run --agent`" in guard_context, guard_on.stdout
         assert "observed native-spawn blocker" in guard_context, guard_on.stdout
         assert "BLOCKED: native Codex subagent unavailable in this surface" not in guard_context, guard_on.stdout
@@ -4938,6 +6004,13 @@ def main() -> int:
         assert dispatch["wavefront_run_id"] == "RUN_DISPATCH_SMOKE", dispatch
         assert dispatch["task_id"] == "RTL_SMOKE_TASK", dispatch
         assert "wavefront_run_id" in dispatch["prompt_contract"], dispatch
+        assert "Subagent implementation boundary:" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "Do not create a new dispatch" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "Do not run decision_harness record" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "HANDOFF_PASS is only for the assigned deliverable" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "repo schema or writer convention" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "scenario_count" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "smoke_fallback_used=false" in dispatch["prompt_contract"], dispatch["prompt_contract"]
         dispatch_nonce = dispatch["dispatch_id"].rsplit("_", 1)[-1]
         assert len(dispatch_nonce) == 8 and all(char in "0123456789ABCDEF" for char in dispatch_nonce), dispatch
         write_task5_ownership_locks(hook_ip, "RUN_DISPATCH_SMOKE", "RTL_SMOKE_TASK", dispatch["dispatch_id"])
@@ -5109,6 +6182,59 @@ def main() -> int:
         assert any(item["code"] == "CUSTOM_COMPLETION_CLAIM" for item in closure_custom_claim_result["issues"]), closure_custom_claim_result
 
         ip = make_ip(Path(tmp))
+        (ip / "ontology" / "decision_matrix.yaml").write_text(
+            json.dumps(
+                {
+                    "schema_version": "oag_decision_matrix.v1",
+                    "ip": ip.name,
+                    "decisions": [
+                        {
+                            "id": "D_AUTHORING_PACKET_REF",
+                            "question": "Which locked decision must RTL/TB authoring packets honor?",
+                            "status": "decided",
+                            "lock_required": True,
+                            "owner": "human",
+                            "decision_class": "parameterizable",
+                            "representation": "parameter",
+                            "decision": 4,
+                            "affects": ["rtl", "tb"],
+                            "contract_refs": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
+                        },
+                        {
+                            "id": "D_AUTHORING_PACKET_MODULE_REF",
+                            "question": "Which module-scoped decision must generated top-level packets honor?",
+                            "status": "decided",
+                            "lock_required": True,
+                            "owner": "human",
+                            "decision_class": "parameterizable",
+                            "representation": "parameter",
+                            "decision": 1,
+                            "target_modules": ["demo_counter_cx1"],
+                        }
+                    ],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        decision_matrix_approval = call(
+            {
+                "tool": "oag.record",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "stage": "requirements",
+                    "type": "decision",
+                    "claim": "protected decision_matrix.yaml change approved",
+                    "summary": "Human owner approved adding a locked decision for authoring packet compile coverage.",
+                    "tags": ["human_approval", "protected_truth"],
+                    "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                    "approval": {"kind": "human", "approved": True, "reason": "authoring packet compile smoke"},
+                    "status": "open",
+                },
+            }
+        )
+        assert decision_matrix_approval["result"]["ledger_event"], decision_matrix_approval
         compiled = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
         assert compiled["result"]["status"] == "pass", compiled
         assert compiled["result"]["stats"]["design_rules"] >= 13, compiled
@@ -5123,6 +6249,13 @@ def main() -> int:
         assert (ip / "ontology" / "generated" / "domain_crossing_matrix.json").is_file()
         assert (ip / "ontology" / "generated" / "tb_methodology_matrix.json").is_file()
         assert (ip / "ontology" / "generated" / "compile_manifest.json").is_file()
+        authoring_packet_dir = ip / "ontology" / "generated" / "authoring_packets"
+        rtl_packet = json.loads((authoring_packet_dir / f"rtl__{ip.name}.json").read_text(encoding="utf-8"))
+        tb_packet = json.loads((authoring_packet_dir / f"tb__{ip.name}.json").read_text(encoding="utf-8"))
+        assert "D_AUTHORING_PACKET_REF" in rtl_packet.get("decision_refs_to_honor", []), rtl_packet
+        assert "D_AUTHORING_PACKET_REF" in tb_packet.get("decision_refs_to_honor", []), tb_packet
+        assert "D_AUTHORING_PACKET_MODULE_REF" in rtl_packet.get("decision_refs_to_honor", []), rtl_packet
+        assert "D_AUTHORING_PACKET_MODULE_REF" in tb_packet.get("decision_refs_to_honor", []), tb_packet
         compile_cached = call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
         assert compile_cached["result"]["status"] == "pass", compile_cached
         assert compile_cached["result"]["skipped"] is True, compile_cached
@@ -5386,9 +6519,10 @@ def main() -> int:
         run_id = run_start["result"]["run_id"]
         assert run_start["result"]["status"] == "in_progress", run_start
         assert run_start["result"]["next_action"]["active_obligation"] == "OBL_DEMO_COUNTER_CX1_RESET_KNOWN", run_start
+        assert run_start["result"]["next_action"]["next_action"]["kind"] == "dispatch_ready_wave", run_start
         assert "OAG NEXT ACTION" in run_start["result"]["next_action"]["prompt_block"], run_start
         run_start_candidates = run_start["result"]["dispatch_command_candidates"]
-        assert run_start_candidates, run_start
+        assert len(run_start_candidates) >= 2, run_start
         first_candidate = run_start_candidates[0]
         assert "oag_dispatch.py create" in first_candidate["dispatch_create_command"], first_candidate
         assert "--wavefront-run-id" in first_candidate["dispatch_create_command"], first_candidate
@@ -5400,6 +6534,7 @@ def main() -> int:
         ], first_candidate
         run_start_prompt = run_start["result"]["next_action"]["prompt_block"]
         assert "dispatch_candidates=" in run_start_prompt, run_start_prompt
+        assert "parallel_spawn_batch=required" in run_start_prompt, run_start_prompt
         assert "oag_dispatch.py create" in run_start_prompt, run_start_prompt
         assert "--dispatch-id <dispatch_id>" in run_start_prompt, run_start_prompt
         assert (ip / "ontology" / "runs" / run_id / "run_state.json").is_file(), run_start

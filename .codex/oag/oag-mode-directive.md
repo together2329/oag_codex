@@ -44,7 +44,8 @@ When the task enters a narrow lane, apply the matching skill:
   `oag_deep_interview_round.py` for lock-critical round templates, validation,
   or candidate ranking. When hooks are enabled,
   `codex_deep_interview_prompt_guard.py` injects the same compact discipline
-  on relevant `UserPromptSubmit` events.
+  only when the current `UserPromptSubmit` prompt explicitly requests OAG deep
+  interview mode.
 - `oag-decision-matrix` for lock-blocking product/design decisions and
   profile-seeded unresolved/proposed rows.
 - `oag-contract-projection` for requirement atoms, obligations, and
@@ -115,6 +116,14 @@ Use the OAG principle layer before choosing artifacts:
   recommendations over Mission/Action and orchestration state. Use
   `python3 .codex/scripts/oag_team_plan.py --ip-dir <ip> --json`; the output
   is a proposal, not dispatch authority.
+- `.codex/oag/decision-autonomy-policy.md` and
+  `.codex/oag/mission-charter-policy.md` for charter-bounded reversible
+  decision autonomy before scope lock.
+- `.codex/oag/architecture-option-policy.md`,
+  `.codex/oag/architecture-bench-policy.md`,
+  `.codex/oag/dse-worktree-policy.md`, and
+  `.codex/oag/exploration-cleanup-policy.md` for architecture DSE candidates,
+  Tier-2 probes, isolated worktrees, evidence promotion, and pre-lock cleanup.
 - `.codex/oag/contract-projection.md` for Requirement -> Obligation ->
   Contract -> Evidence projection.
 - `.codex/oag/rtl-implementation.md` for generated RTL implementation
@@ -350,8 +359,24 @@ the child message.
 
 Use native waiting/mailbox behavior for child results. A timeout means no new
 mailbox update arrived; it is not proof of failure. Use native child steering
-for targeted follow-up and close child threads after integrating a completed or
-inconclusive lane.
+for targeted follow-up. Integrate, reject, or route completed/inconclusive lane
+receipts before new dispatch; defer native child cleanup outside status checks,
+dispatch planning, receipt review, and RTL/TB critical-path work.
+
+For long RTL/TB authoring, apply the patience protocol: do not abandon an active
+child after one quiet wait cycle. Continue native waits or send one targeted
+follow-up while the child is still running. Treat a lane as inconclusive only
+when the child completed without the deliverable, emitted `BLOCKED:`, is no
+longer running, or stayed silent across multiple wait cycles with a recorded
+parent rationale. Prefer TB shards for common API/helper layer,
+scoreboard/schema, scenario groups, and integration review.
+Every long write-capable child prompt should require early evidence:
+`WORKING: <task> - <phase>` within the first wait cycle and at major phase
+changes, or an owned draft file, receipt, or `BLOCKED:` reason. Treat large TB
+scenario shards as runtime-budget constrained until throughput is proven: open
+one or two scenario children first, keep the rest visible as ready, and route a
+silent no-artifact claimed dispatch to `INCONCLUSIVE`/`BLOCKED` before any
+replacement.
 
 After user lock, main agent orchestrates; subagents implement and verify.
 The main agent must not directly create or substantially edit RTL, TB, sim,
