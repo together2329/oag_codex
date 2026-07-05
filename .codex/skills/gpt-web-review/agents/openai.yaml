@@ -1,0 +1,4 @@
+interface:
+  display_name: "GPT Web Review"
+  short_description: "Ask GPT web for bounded code review"
+  default_prompt: "Use $gpt-web-review to ask GPT-5.5 Pro for a bounded second-opinion review."
