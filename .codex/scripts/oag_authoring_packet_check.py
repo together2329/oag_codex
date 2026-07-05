@@ -98,10 +98,88 @@ def module_edge_touches(edge: dict[str, Any], mid: str) -> bool:
 
 def contract_interface_refs(contract: dict[str, Any]) -> list[str]:
     refs = str_items(contract.get("interface_contract_refs"))
-    boundary = contract.get("module_boundary") if isinstance(contract.get("module_boundary"), dict) else {}
+    raw_boundary = contract.get("module_boundary")
+    boundary: dict[str, Any] = raw_boundary if isinstance(raw_boundary, dict) else {}
     refs.extend(str_items(boundary.get("interface_contract_refs")))
     refs.extend(str_items(boundary.get("interface_contract")))
     return sorted(set(refs))
+
+
+def locked_decisions(ip_dir: Path) -> list[dict[str, Any]]:
+    doc = read_yaml(oag_paths.legacy_or_hidden(ip_dir, "ontology/decision_matrix.yaml"))
+    if not doc or doc.get("__load_error__"):
+        return []
+    return [
+        item
+        for item in as_list(doc.get("decisions"))
+        if isinstance(item, dict)
+        and str(item.get("status") or "").strip().lower() == "decided"
+        and item.get("lock_required") is True
+        and str(item.get("id") or "").strip()
+    ]
+
+
+def current_ip_module_ids(ip_dir: Path) -> set[str]:
+    doc = read_yaml(oag_paths.legacy_or_hidden(ip_dir, "ontology/decomposition.yaml"))
+    modules = as_list(doc.get("modules")) if isinstance(doc, dict) else []
+    ids: set[str] = set()
+    for module in modules:
+        if not isinstance(module, dict):
+            continue
+        ownership = str(module.get("ownership") or "current_ip").strip()
+        if ownership not in CURRENT_IP_OWNERSHIPS:
+            continue
+        ids.update(str_items(module.get("id") or module.get("name") or module.get("module")))
+    return ids
+
+
+def decision_scope_matches_packet(decision: dict[str, Any], packet: dict[str, Any], *, consumer: str, ip_dir: Path) -> bool:
+    affects = {item.lower() for item in str_items(decision.get("affects") or decision.get("affected_surfaces"))}
+    role_tokens = {
+        "rtl_authoring_packet": {"rtl", "implementation", "product_rtl", "rtl_authoring_packet"},
+        "tb_authoring_packet": {"tb", "testbench", "verification", "sim", "tb_authoring_packet"},
+    }[consumer]
+    if affects & role_tokens:
+        return True
+
+    packet_contracts = set(
+        str_items(
+            packet.get("contract_refs_to_implement")
+            or packet.get("contract_refs")
+            or packet.get("contracts")
+        )
+    )
+    decision_contracts = set(str_items(decision.get("contract_refs") or decision.get("contracts")))
+    if packet_contracts and decision_contracts and packet_contracts & decision_contracts:
+        return True
+
+    packet_modules = set(str_items(packet.get("target_modules") or packet.get("modules")))
+    packet_module = packet.get("module") if isinstance(packet.get("module"), dict) else {}
+    if isinstance(packet_module, dict):
+        packet_modules.update(str_items(packet_module.get("id") or packet_module.get("name")))
+    if not packet_modules and packet.get("packet_type") in {"rtl_authoring_packet", "tb_authoring_packet"}:
+        packet_modules.update(current_ip_module_ids(ip_dir))
+    decision_modules = set(str_items(decision.get("target_modules") or decision.get("modules") or decision.get("module")))
+    return bool(packet_modules and decision_modules and packet_modules & decision_modules)
+
+
+def check_decision_refs_to_honor(ip_dir: Path, path: Path, packet: dict[str, Any], *, consumer: str, hard_gate: bool) -> list[dict[str, str]]:
+    if not hard_gate:
+        return []
+    required = [
+        str(decision.get("id") or "").strip()
+        for decision in locked_decisions(ip_dir)
+        if decision_scope_matches_packet(decision, packet, consumer=consumer, ip_dir=ip_dir)
+    ]
+    present = set(str_items(packet.get("decision_refs_to_honor")))
+    missing = sorted(ref for ref in required if ref and ref not in present)
+    return [
+        issue(
+            "PACKET_DECISION_REF_TO_HONOR_MISSING",
+            f"{consumer} packet must include locked relevant decision_refs_to_honor: {missing}.",
+            str(path),
+        )
+    ] if missing else []
 
 
 def check_lifecycle_refs(
@@ -165,6 +243,7 @@ def check_rtl_packet(path: Path, data: dict[str, Any], *, ip_dir: Path, hard_gat
         issues.append(issue("RTL_PACKET_PPA_NOTES", "RTL packet should require PPA notes.", rel))
     if hard_gate and data.get("cdc_rdc_notes_required") is not True:
         issues.append(issue("RTL_PACKET_CDC_RDC_NOTES", "RTL packet should require CDC/RDC notes.", rel))
+    issues.extend(check_decision_refs_to_honor(ip_dir, path, data, consumer="rtl_authoring_packet", hard_gate=hard_gate))
     issues.extend(check_lifecycle_refs(ip_dir, path, data, consumer="rtl_authoring_packet", require_lifecycle=require_lifecycle))
     return issues
 
@@ -197,6 +276,7 @@ def check_tb_packet(path: Path, data: dict[str, Any], *, ip_dir: Path, hard_gate
         issues.append(issue("TB_PACKET_SCENARIOS", "TB packet needs scenario_refs.", rel))
     if hard_gate and not str_items(data.get("scoreboard_row_refs")):
         issues.append(issue("TB_PACKET_SCOREBOARD_ROWS", "TB packet needs scoreboard_row_refs.", rel))
+    issues.extend(check_decision_refs_to_honor(ip_dir, path, data, consumer="tb_authoring_packet", hard_gate=hard_gate))
     issues.extend(check_lifecycle_refs(ip_dir, path, data, consumer="tb_authoring_packet", require_lifecycle=require_lifecycle))
     return issues
 

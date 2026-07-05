@@ -42,7 +42,7 @@
       "properties": {
         "decision": {
           "type": "string",
-          "enum": ["self_explore", "ask_user", "proceed_action", "blocked", "idle"]
+          "enum": ["self_explore", "ask_user", "auto_decide", "proceed_action", "blocked", "idle"]
         },
         "reason": {
           "type": "string",
@@ -53,6 +53,18 @@
         },
         "lock_critical": {
           "type": "boolean"
+        },
+        "decision_class": {
+          "type": "string"
+        },
+        "decision_id": {
+          "type": "string"
+        },
+        "charter_grant_id": {
+          "type": "string"
+        },
+        "evidence_plan": {
+          "type": "object"
         }
       }
     },

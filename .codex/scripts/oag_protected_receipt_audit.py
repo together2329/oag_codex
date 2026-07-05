@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -23,8 +24,8 @@ PROJECT_ROOT = Path(os.environ.get("OAG_PROJECT_ROOT") or CODEX_ROOT.parent).exp
 SCHEMAS_DIR = CODEX_ROOT / "schemas"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
-import oag_paths  # noqa: E402
-from oag_validate_json import validate_document  # pylint: disable=wrong-import-position
+oag_paths = importlib.import_module("oag_paths")
+validate_document = importlib.import_module("oag_validate_json").validate_document
 
 
 PASSING_RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS"}
@@ -41,6 +42,7 @@ PROTECTED_REL_DIRS = (
     Path("ontology/evidence/stage_runs"),
 )
 SKIP_FILENAMES = {".gitkeep", ".DS_Store"}
+ARCH_EXPLORATION_REF = "knowledge/arch_exploration"
 
 
 def issue(code: str, message: str, path: str | None = None, *, severity: str = "error") -> dict[str, str]:
@@ -158,6 +160,22 @@ def iter_protected_files(ip_dir: Path) -> list[Path]:
                 continue
             files.append(path)
     return sorted(set(files))
+
+
+def audit_arch_exploration_references(protected_files: list[Path], issues: list[dict[str, str]]) -> None:
+    for path in protected_files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if ARCH_EXPLORATION_REF in text:
+            issues.append(
+                issue(
+                    "PRODUCT_ARCH_EXPLORATION_REFERENCE",
+                    "protected product artifact must not reference knowledge/arch_exploration paths",
+                    project_rel(path),
+                )
+            )
 
 
 def hash_claims_from_payload(payload: dict[str, Any], ip_dir: Path) -> dict[str, str]:
@@ -281,6 +299,7 @@ def audit(ip_dir_arg: str, *, strict_hashes: bool, require_all_dispatch_receipts
     # <ip>/.oag/...); key everything by the LOGICAL project_rel form but read the
     # actual resolved path for hashing so .oag-layout files are found.
     protected_resolved = iter_protected_files(ip_dir)
+    audit_arch_exploration_references(protected_resolved, issues)
     protected_files = [project_rel(path) for path in protected_resolved]
     protected_hashes = {project_rel(path): sha256(path) for path in protected_resolved}
     receipts = load_receipts(ip_dir, issues)
@@ -383,8 +402,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("FAIL oag protected receipt audit", file=sys.stderr)
         for item in result.get("issues", []):
-            suffix = f" ({item['path']})" if item.get("path") else ""
-            print(f"- {item['code']}: {item['message']}{suffix}", file=sys.stderr)
+            if isinstance(item, dict):
+                suffix = f" ({item['path']})" if item.get("path") else ""
+                print(f"- {item['code']}: {item['message']}{suffix}", file=sys.stderr)
     return 0 if result["status"] == "pass" else 1
 
 

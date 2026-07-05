@@ -1,0 +1,316 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OAG Mission Charter",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "ip",
+    "status",
+    "approved",
+    "created_at",
+    "updated_at",
+    "actor",
+    "autonomy",
+    "approval"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_mission_charter.v1"
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "proposed",
+        "approved",
+        "revoked"
+      ]
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "id"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human",
+            "ai"
+          ]
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "surface": {
+          "type": "string"
+        }
+      }
+    },
+    "autonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "question_batching",
+        "grants"
+      ],
+      "properties": {
+        "question_batching": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "checkpoint"
+          ]
+        },
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "granted",
+              "rationale"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "decision_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "parameterizable",
+                  "architecture_tradeoff"
+                ]
+              },
+              "autonomy_class": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "reversible_internal",
+                  "measured_tradeoff"
+                ]
+              },
+              "granted": {
+                "type": "boolean"
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scope": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "autonomy_grants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "granted",
+          "rationale"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_class": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "parameterizable",
+              "architecture_tradeoff"
+            ]
+          },
+          "autonomy_class": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "reversible_internal",
+              "measured_tradeoff"
+            ]
+          },
+          "granted": {
+            "type": "boolean"
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "type": "string"
+          },
+          "conditions": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "question_policy": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "batching": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "checkpoint"
+          ]
+        }
+      }
+    },
+    "question_batching": {
+      "type": "string",
+      "enum": [
+        "immediate",
+        "checkpoint"
+      ]
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_candidates_tier1": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_sweep_points_per_parameter": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_bench_wall_clock_sec": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "max_worktrees": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "objective_weights": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "throughput": {
+          "type": "number",
+          "minimum": 0
+        },
+        "latency": {
+          "type": "number",
+          "minimum": 0
+        },
+        "area_proxy": {
+          "type": "number",
+          "minimum": 0
+        },
+        "power_proxy": {
+          "type": "number",
+          "minimum": 0
+        },
+        "verification_cost": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "forbidden": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "approved",
+        "actor"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "approved",
+            "revoked"
+          ]
+        },
+        "approved": {
+          "type": "boolean"
+        },
+        "actor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "human"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "surface": {
+              "type": "string"
+            }
+          }
+        },
+        "approved_at": {
+          "type": "string"
+        },
+        "revoked_at": {
+          "type": "string"
+        },
+        "rationale": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

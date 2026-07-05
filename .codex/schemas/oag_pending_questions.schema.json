@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_pending_questions.schema.json",
+  "title": "OAG Pending Questions",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "ip",
+    "status",
+    "created_at",
+    "updated_at",
+    "questions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_pending_questions.v1"
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "checkpoint_ready", "answered", "abandoned"]
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checkpoint_reason": {
+      "type": "string"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "status",
+          "created_at",
+          "updated_at",
+          "candidate_selector",
+          "candidate",
+          "human_question",
+          "decision_autonomy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^PQ_[0-9]{4}$"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "answered", "superseded"]
+          },
+          "created_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updated_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate_selector": {
+            "type": "string",
+            "minLength": 1
+          },
+          "candidate": {
+            "type": "object"
+          },
+          "human_question": {
+            "type": "object"
+          },
+          "decision_autonomy": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object"
+    }
+  }
+}

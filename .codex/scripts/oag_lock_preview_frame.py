@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import hashlib
 import html
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -16,8 +17,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-import oag_lock_readiness_check  # noqa: E402
-import oag_paths  # noqa: E402
+oag_lock_readiness_check = importlib.import_module("oag_lock_readiness_check")
+oag_paths = importlib.import_module("oag_paths")
 
 
 CANONICAL_SOURCES: tuple[tuple[str, str, str], ...] = (
@@ -224,6 +225,241 @@ def render_summary_value(value: Any) -> str:
     return html.escape(str(value))
 
 
+def json_summary(value: Any) -> str:
+    if value in ("", None, [], {}):
+        return ""
+    return json.dumps(value, sort_keys=True)
+
+
+def dict_value(source: dict[str, Any], key: str) -> dict[str, Any]:
+    value = source.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def optional_artifact(ip_dir: Path, rel: str) -> dict[str, Any]:
+    path = oag_paths.legacy_or_hidden(ip_dir, rel)
+    if not path.is_file():
+        return {
+            "path": rel,
+            "exists": False,
+            "sha256": "",
+            "raw_text": "",
+            "parsed": {},
+        }
+    raw_bytes = path.read_bytes()
+    raw_text, encoding = read_text_lossless(path)
+    return {
+        "path": rel_to_ip(ip_dir, path),
+        "exists": True,
+        "sha256": sha256_bytes(raw_bytes),
+        "encoding": encoding,
+        "raw_text": raw_text,
+        "parsed": read_yaml_or_json(path),
+    }
+
+
+def latest_architecture_scoreboard(ip_dir: Path) -> dict[str, Any]:
+    root = oag_paths.legacy_or_hidden(ip_dir, "knowledge/arch_exploration")
+    candidates = sorted(
+        (path for path in root.glob("*/architecture_scoreboard.json") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return {
+            "path": "knowledge/arch_exploration/*/architecture_scoreboard.json",
+            "exists": False,
+            "sha256": "",
+            "raw_text": "",
+            "parsed": {},
+        }
+    path = candidates[0]
+    raw_bytes = path.read_bytes()
+    raw_text, encoding = read_text_lossless(path)
+    return {
+        "path": rel_to_ip(ip_dir, path),
+        "exists": True,
+        "sha256": sha256_bytes(raw_bytes),
+        "encoding": encoding,
+        "raw_text": raw_text,
+        "parsed": read_yaml_or_json(path),
+    }
+
+
+def collect_provisional_decisions(ip_dir: Path, readiness: dict[str, Any]) -> list[dict[str, Any]]:
+    matrix = optional_artifact(ip_dir, "ontology/decision_matrix.yaml")
+    parsed_raw = matrix.get("parsed")
+    parsed = parsed_raw if isinstance(parsed_raw, dict) else {}
+    rows = [item for item in as_list(parsed.get("decisions")) if isinstance(item, dict)]
+    rows_by_id = {text(item.get("id")): item for item in rows if text(item.get("id"))}
+    readiness_items = [
+        item
+        for item in as_list(readiness.get("provisional_review_items"))
+        if isinstance(item, dict)
+    ]
+    seen: set[str] = set()
+    decisions: list[dict[str, Any]] = []
+    for item in readiness_items:
+        did = text(item.get("id"))
+        row = rows_by_id.get(did, {})
+        seen.add(did)
+        decisions.append(
+            {
+                "id": did,
+                "decision_class": text(item.get("decision_class") or row.get("decision_class")),
+                "question": text(row.get("question")),
+                "decision": row.get("decision"),
+                "charter_ref": text(item.get("charter_ref") or row.get("charter_ref")),
+                "charter_grant_id": text(item.get("charter_grant_id")),
+                "evidence_refs": item.get("evidence_refs") or row.get("evidence_refs") or [],
+                "decision_receipt_ref": text(item.get("decision_receipt_ref") or row.get("decision_receipt_ref")),
+                "review_required": text(item.get("review_required") or "human_lock_review"),
+            }
+        )
+    for row in rows:
+        did = text(row.get("id"))
+        decided_by_raw = row.get("decided_by")
+        decided_by = decided_by_raw if isinstance(decided_by_raw, dict) else {}
+        if did in seen or row.get("provisional") is not True or not text(decided_by.get("kind")).lower().startswith("agent_"):
+            continue
+        decisions.append(
+            {
+                "id": did,
+                "decision_class": text(row.get("decision_class")),
+                "question": text(row.get("question")),
+                "decision": row.get("decision"),
+                "charter_ref": text(decided_by.get("charter_ref")),
+                "charter_grant_id": "",
+                "evidence_refs": row.get("evidence_refs") or [],
+                "decision_receipt_ref": text(row.get("decision_receipt_ref")),
+                "review_required": "human_lock_review",
+            }
+        )
+    return decisions
+
+
+def collect_checkpoint_review(ip_dir: Path, readiness: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "mission_charter": optional_artifact(ip_dir, "ontology/mission_charter.yaml"),
+        "architecture_scoreboard": latest_architecture_scoreboard(ip_dir),
+        "provisional_decisions": {
+            "path": "ontology/decision_matrix.yaml / readiness.provisional_review_items",
+            "exists": oag_paths.legacy_or_hidden(ip_dir, "ontology/decision_matrix.yaml").is_file(),
+            "rows": collect_provisional_decisions(ip_dir, readiness),
+        },
+        "pending_questions": optional_artifact(ip_dir, "knowledge/mission_loop/pending_questions.json"),
+    }
+
+
+def render_artifact_meta(artifact: dict[str, Any], available: bool) -> str:
+    status = "available" if available else "unavailable"
+    return f"""
+  <dl class="meta">
+    <div><dt>Path</dt><dd><code>{html.escape(str(artifact.get('path') or ''))}</code></dd></div>
+    <div><dt>Status</dt><dd class="{'present' if available else 'missing'}">{status}</dd></div>
+    <div><dt>SHA-256</dt><dd><code>{html.escape(str(artifact.get('sha256') or 'n/a'))}</code></dd></div>
+    <div><dt>Encoding</dt><dd>{html.escape(str(artifact.get('encoding') or 'n/a'))}</dd></div>
+  </dl>
+"""
+
+
+def render_checkpoint_review(checkpoint_review: dict[str, Any]) -> str:
+    charter = dict_value(checkpoint_review, "mission_charter")
+    charter_parsed = dict_value(charter, "parsed")
+    charter_approved = (
+        bool(charter.get("exists"))
+        and charter_parsed.get("approved") is True
+        and text(charter_parsed.get("status")).lower() == "approved"
+    )
+    charter_raw = str(charter.get("raw_text") or "(approved mission charter unavailable)")
+
+    scoreboard = dict_value(checkpoint_review, "architecture_scoreboard")
+    scoreboard_parsed = dict_value(scoreboard, "parsed")
+    scoreboard_rows = [item for item in as_list(scoreboard_parsed.get("rows")) if isinstance(item, dict)]
+    scoreboard_table_rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(item.get('rank') or ''))}</td>"
+        f"<td><code>{html.escape(text(item.get('candidate_id')))}</code></td>"
+        f"<td>{html.escape(str(item.get('weighted_total') or ''))}</td>"
+        f"<td>{'yes' if item.get('pareto_member') is True else 'no'}</td>"
+        f"<td>{html.escape(str(item.get('hard_constraint_pass') if 'hard_constraint_pass' in item else ''))}</td>"
+        f"<td><code>{html.escape(json_summary(item.get('metrics')))}</code></td>"
+        f"<td><code>{html.escape(json_summary(item.get('decision_assignments')))}</code></td>"
+        "</tr>"
+        for item in scoreboard_rows
+    )
+    if not scoreboard_table_rows:
+        scoreboard_table_rows = "<tr><td colspan=\"7\" class=\"muted-text\">Architecture scoreboard unavailable.</td></tr>"
+
+    provisional = dict_value(checkpoint_review, "provisional_decisions")
+    provisional_rows = [item for item in as_list(provisional.get("rows")) if isinstance(item, dict)]
+    provisional_table_rows = "".join(
+        "<tr>"
+        f"<td><code>{html.escape(text(item.get('id')))}</code></td>"
+        f"<td>{html.escape(text(item.get('decision_class')))}</td>"
+        f"<td>{html.escape(text(item.get('question')))}</td>"
+        f"<td><code>{html.escape(json_summary(item.get('decision')) or text(item.get('decision')))}</code></td>"
+        f"<td><code>{html.escape(text(item.get('charter_ref') or item.get('charter_grant_id')))}</code></td>"
+        f"<td><code>{html.escape(', '.join(str(ref) for ref in as_list(item.get('evidence_refs'))))}</code></td>"
+        f"<td><code>{html.escape(text(item.get('decision_receipt_ref')))}</code></td>"
+        "</tr>"
+        for item in provisional_rows
+    )
+    if not provisional_table_rows:
+        message = "Decision matrix unavailable." if not provisional.get("exists") else "No provisional agent decisions queued for review."
+        provisional_table_rows = f"<tr><td colspan=\"7\" class=\"muted-text\">{html.escape(message)}</td></tr>"
+
+    pending = dict_value(checkpoint_review, "pending_questions")
+    pending_parsed = dict_value(pending, "parsed")
+    pending_questions = [item for item in as_list(pending_parsed.get("questions")) if isinstance(item, dict)]
+    pending_table_rows = "".join(
+        "<tr>"
+        f"<td><code>{html.escape(text(item.get('id')))}</code></td>"
+        f"<td><code>{html.escape(text(item.get('decision_id')))}</code></td>"
+        f"<td>{html.escape(text(item.get('decision_class')))}</td>"
+        f"<td>{html.escape(text(item.get('question')))}</td>"
+        f"<td><code>{html.escape(', '.join(str(option) for option in as_list(item.get('options'))))}</code></td>"
+        "</tr>"
+        for item in pending_questions
+    )
+    if not pending_table_rows:
+        pending_table_rows = "<tr><td colspan=\"5\" class=\"muted-text\">Pending questions queue unavailable.</td></tr>"
+
+    return f"""
+  <section class="panel" id="mission-charter">
+    <h2>Approved Mission Charter</h2>
+    <p class="purpose">Human-approved mission autonomy for checkpoint batching. Review the verbatim charter before accepting agent-selected tradeoffs.</p>
+    {render_artifact_meta(charter, charter_approved)}
+    <pre class="raw"><code>{html.escape(charter_raw)}</code></pre>
+  </section>
+
+  <section class="panel" id="architecture-scoreboard">
+    <h2>Architecture Scoreboard / Pareto Rows</h2>
+    <p class="purpose">Latest architecture scoreboard with Pareto membership and decision assignments for checkpoint review.</p>
+    {render_artifact_meta(scoreboard, bool(scoreboard.get('exists')))}
+    <table><thead><tr><th>Rank</th><th>Candidate</th><th>Weighted Total</th><th>Pareto</th><th>Hard Constraint</th><th>Metrics</th><th>Decision Assignments</th></tr></thead><tbody>{scoreboard_table_rows}</tbody></table>
+  </section>
+
+  <section class="panel" id="provisional-agent-decisions">
+    <h2>Provisional Agent Decisions</h2>
+    <p class="purpose">Rows remain provisional until a human checkpoint accepts them, overrides them, or sends them back to exploration.</p>
+    <dl class="meta">
+      <div><dt>Path</dt><dd><code>{html.escape(str(provisional.get('path') or ''))}</code></dd></div>
+      <div><dt>Status</dt><dd class="{'present' if provisional.get('exists') else 'missing'}">{'available' if provisional.get('exists') else 'unavailable'}</dd></div>
+    </dl>
+    <table><thead><tr><th>ID</th><th>Class</th><th>Question</th><th>Decision</th><th>Charter</th><th>Evidence</th><th>Receipt</th></tr></thead><tbody>{provisional_table_rows}</tbody></table>
+  </section>
+
+  <section class="panel" id="pending-questions">
+    <h2>Pending Questions Queue</h2>
+    <p class="purpose">Batched human checkpoint questions in file order, preserving option payloads for review.</p>
+    {render_artifact_meta(pending, bool(pending.get('exists')))}
+    <table class="summary"><tbody><tr><th>Queue Status</th><td>{render_summary_value(pending_parsed.get('status'))}</td></tr></tbody></table>
+    <table><thead><tr><th>ID</th><th>Decision</th><th>Class</th><th>Question</th><th>Options</th></tr></thead><tbody>{pending_table_rows}</tbody></table>
+  </section>
+"""
+
+
 def collect_operation_context(ip_dir: Path) -> dict[str, Any]:
     context: dict[str, Any] = {
         "status": "pass",
@@ -235,13 +471,14 @@ def collect_operation_context(ip_dir: Path) -> dict[str, Any]:
         "role_hazards": [],
     }
     try:
-        import oag_action_plan  # pylint: disable=import-outside-toplevel
-        import oag_action_wavefront_draft  # pylint: disable=import-outside-toplevel
-        import oag_mission_runtime  # pylint: disable=import-outside-toplevel
-        import oag_role_health  # pylint: disable=import-outside-toplevel
+        oag_action_plan = importlib.import_module("oag_action_plan")
+        oag_action_wavefront_draft = importlib.import_module("oag_action_wavefront_draft")
+        oag_mission_runtime = importlib.import_module("oag_mission_runtime")
+        oag_role_health = importlib.import_module("oag_role_health")
 
-        plan_result = oag_action_plan.build_plan(ip_dir, write=False, run_semantic_checks=False)
-        plan = plan_result.get("plan") if isinstance(plan_result.get("plan"), dict) else {}
+        plan_result_raw = oag_action_plan.build_plan(ip_dir, write=False, run_semantic_checks=False)
+        plan_result = plan_result_raw if isinstance(plan_result_raw, dict) else {}
+        plan = dict_value(plan_result, "plan")
         candidates = [item for item in plan.get("candidates", []) if isinstance(item, dict)]
         recommended = next((item for item in candidates if item.get("recommended") is True), candidates[0] if candidates else {})
         mission = oag_mission_runtime.latest_active_mission(ip_dir) or {}
@@ -267,9 +504,9 @@ def collect_operation_context(ip_dir: Path) -> dict[str, Any]:
 
 
 def render_operation_context(operation_context: dict[str, Any]) -> str:
-    recommended = operation_context.get("recommended_action") if isinstance(operation_context.get("recommended_action"), dict) else {}
+    recommended = dict_value(operation_context, "recommended_action")
     options = [item for item in operation_context.get("next_actions", []) if isinstance(item, dict)]
-    mission = operation_context.get("mission") if isinstance(operation_context.get("mission"), dict) else {}
+    mission = dict_value(operation_context, "mission")
     hazards = [item for item in operation_context.get("role_hazards", []) if isinstance(item, dict)]
     option_rows = "".join(
         "<tr>"
@@ -310,12 +547,21 @@ def render_operation_context(operation_context: dict[str, Any]) -> str:
 """
 
 
-def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, Any]], readiness: dict[str, Any], operation_context: dict[str, Any] | None = None) -> str:
+def render_html(
+    ip_dir: Path,
+    metadata: dict[str, Any],
+    sources: list[dict[str, Any]],
+    readiness: dict[str, Any],
+    checkpoint_review: dict[str, Any],
+    operation_context: dict[str, Any] | None = None,
+) -> str:
     mode = str(metadata.get("frame_mode") or "pre-lock")
     mode_cfg = FRAME_MODES.get(mode, FRAME_MODES["pre-lock"])
     status = str(readiness.get("status") or "unknown")
-    issues = readiness.get("issues") if isinstance(readiness.get("issues"), list) else []
-    next_actions = readiness.get("next_actions") if isinstance(readiness.get("next_actions"), list) else []
+    issues_raw = readiness.get("issues")
+    issues: list[Any] = issues_raw if isinstance(issues_raw, list) else []
+    next_actions_raw = readiness.get("next_actions")
+    next_actions: list[Any] = next_actions_raw if isinstance(next_actions_raw, list) else []
     source_rows = []
     for source in sources:
         exists = bool(source["exists"])
@@ -332,7 +578,7 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 
     sections = []
     for source in sources:
-        summary = source.get("summary") if isinstance(source.get("summary"), dict) else {}
+        summary = dict_value(source, "summary")
         summary_rows = "".join(
             f"<tr><th>{html.escape(str(key))}</th><td>{render_summary_value(value)}</td></tr>"
             for key, value in summary.items()
@@ -376,6 +622,7 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
         issue_rows = "<tr><td colspan=\"3\" class=\"pass-text\">No lock-readiness issues reported by the checker.</td></tr>"
     action_rows = "".join(f"<li>{html.escape(str(item))}</li>" for item in next_actions) or "<li>No next action from readiness checker.</li>"
     operation_panel = render_operation_context(operation_context) if operation_context else ""
+    checkpoint_panel = render_checkpoint_review(checkpoint_review)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -524,6 +771,8 @@ def render_html(ip_dir: Path, metadata: dict[str, Any], sources: list[dict[str, 
 
   {operation_panel}
 
+  {checkpoint_panel}
+
   <section class="panel">
     <h2>Source Index</h2>
     <table>
@@ -558,6 +807,7 @@ def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, f
     require_locked = readiness_mode == "lock-ready"
     readiness = oag_lock_readiness_check.check(ip_dir, require_locked=require_locked)
     sources = collect_sources(ip_dir)
+    checkpoint_review = collect_checkpoint_review(ip_dir, readiness)
     operation_context = collect_operation_context(ip_dir) if include_operation_context else {}
     metadata = {
         "schema_version": "oag_lock_preview_frame.v1",
@@ -572,9 +822,10 @@ def build_frame(ip_dir: Path, output_dir: Path | None, *, readiness_mode: str, f
         **metadata,
         "readiness": readiness,
         "sources": [{key: value for key, value in source.items() if key != "raw_text"} for source in sources],
+        "checkpoint_review": checkpoint_review,
         "operation_context": operation_context,
     }
-    html_text = render_html(ip_dir, metadata, sources, readiness, operation_context if include_operation_context else None)
+    html_text = render_html(ip_dir, metadata, sources, readiness, checkpoint_review, operation_context if include_operation_context else None)
     html_path = output_dir / "index.html"
     json_path = output_dir / "lock_preview_frame.json"
     html_path.write_text(html_text, encoding="utf-8")

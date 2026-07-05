@@ -9,6 +9,8 @@ rules:
     checker_refs:
       - scripts/oag_lock_readiness_check.py
       - scripts/oag_closure_check.py
+    tested_by:
+      - smoke_test.py::test_decision_rtl_consistency_check
     severity:
       draft: warn
       post_lock: block
@@ -17,9 +19,70 @@ rules:
     text: lock_required decisions must be decided or waived before implementation.
     policy_refs:
       - oag/decision-matrix-policy.md
+      - oag/decision-autonomy-policy.md
     checker_refs:
       - scripts/oag_lock_readiness_check.py
       - scripts/oag_decision_matrix_generate.py
+    tested_by:
+      - smoke_test.py::test_oag_decision_autonomy_policy
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-AUTO-001
+    text: Product-defining decisions are human-only; missing or unknown decision_class fails closed as product_defining.
+    policy_refs:
+      - oag/decision-autonomy-policy.md
+      - rules/oag-decision-autonomy.rules.md
+    checker_refs:
+      - scripts/oag_decision_autoresolve.py
+      - scripts/oag_mission_loop.py
+      - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_oag_decision_autonomy_policy
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-AUTO-002
+    text: Fact autonomy requires a cited local source; parameterizable choices may only auto-decide by preserving configurability.
+    policy_refs:
+      - oag/decision-autonomy-policy.md
+      - rules/oag-decision-autonomy.rules.md
+    checker_refs:
+      - scripts/oag_decision_autoresolve.py
+      - scripts/oag_exploration_plan.py
+    tested_by:
+      - smoke_test.py::test_oag_decision_autonomy_policy
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-AUTO-003
+    text: Architecture tradeoff autonomy requires an approved charter grant and routes to bounded DSE rather than deciding product scope.
+    policy_refs:
+      - oag/decision-autonomy-policy.md
+      - rules/oag-decision-autonomy.rules.md
+    checker_refs:
+      - scripts/oag_decision_autoresolve.py
+      - scripts/oag_mission_loop.py
+      - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_oag_arch_exploration_remaining_review_gates
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-AUTO-004
+    text: Agent-made decisions require existing evidence refs and a decision receipt before readiness can pass.
+    policy_refs:
+      - oag/decision-autonomy-policy.md
+      - rules/oag-decision-autonomy.rules.md
+    checker_refs:
+      - scripts/oag_decision_autoresolve.py
+      - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_oag_arch_exploration_remaining_review_gates
     severity:
       draft: warn
       post_lock: block
@@ -32,6 +95,8 @@ rules:
     checker_refs:
       - scripts/oag_contract_strength_check.py
       - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_oag_contract_strength_check
     severity:
       draft: warn
       post_lock: block
@@ -42,6 +107,9 @@ rules:
       - oag/authoring-packet-policy.md
     checker_refs:
       - scripts/oag_authoring_packet_check.py
+    tested_by:
+      - smoke_test.py::test_authoring_packets_honor_locked_decision_refs
+      - smoke_test.py::test_authoring_packet_lifecycle_firewall
     severity:
       draft: warn
       post_lock: block
@@ -55,6 +123,8 @@ rules:
     checker_refs:
       - scripts/oag_ppa_check.py
       - scripts/oag_cli.py
+    tested_by:
+      - smoke_test.py::test_oag_ppa_check
     severity:
       draft: warn
       post_lock: block
@@ -66,6 +136,8 @@ rules:
     checker_refs:
       - scripts/oag_trace_graph_check.py
       - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_oag_trace_graph_check
     severity:
       draft: warn
       post_lock: block
@@ -78,6 +150,8 @@ rules:
     checker_refs:
       - scripts/oag_closure_check.py
       - scripts/oag_trace_graph_check.py
+    tested_by:
+      - smoke_test.py::test_oag_trace_graph_check
     severity:
       draft: warn
       post_lock: block
@@ -90,6 +164,8 @@ rules:
     checker_refs:
       - scripts/oag_cli.py
       - scripts/oag_closure_check.py
+    tested_by:
+      - smoke_test.py::test_oag_stale_and_lifecycle_checks
     severity:
       draft: warn
       post_lock: warn
@@ -101,6 +177,8 @@ rules:
       - oag/wavefront-task-graph.md
     checker_refs:
       - scripts/oag_wavefront.py
+    tested_by:
+      - smoke_test.py::test_task5_dispatch_wavefront_matrix
     severity:
       draft: warn
       post_lock: block
@@ -111,6 +189,8 @@ rules:
       - oag/ip-versioning-policy.md
     checker_refs:
       - scripts/oag_ip_version_check.py
+    tested_by:
+      - smoke_test.py::test_oag_ip_version_check
     severity:
       draft: warn
       post_lock: warn
@@ -121,6 +201,49 @@ rules:
       - oag/ip-versioning-policy.md
     checker_refs:
       - scripts/oag_ip_version_check.py
+    tested_by:
+      - smoke_test.py::test_oag_ip_version_check
+    severity:
+      draft: warn
+      post_lock: warn
+      closure: block
+  - id: RULE-ARCH-DSE-001
+    text: Parameter sweep metric points must carry resolvable artifact provenance and content hashes.
+    policy_refs:
+      - oag/architecture-bench-policy.md
+      - oag/architecture-option-policy.md
+    checker_refs:
+      - scripts/oag_arch_bench.py
+      - scripts/oag_parameter_sweep.py
+    tested_by:
+      - smoke_test.py::test_oag_arch_exploration_remaining_review_gates
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-RTL-CONSISTENCY-001
+    text: Locked parameter and retained generate-option decisions must match authored RTL and verification configurations.
+    policy_refs:
+      - oag/decision-autonomy-policy.md
+      - oag/rtl-implementation.md
+    checker_refs:
+      - scripts/oag_decision_rtl_consistency_check.py
+      - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - smoke_test.py::test_decision_rtl_consistency_check
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
+  - id: RULE-LOOP-EXEC-001
+    text: Bounded execute mode may only execute batches explicitly marked safe and must leave a receipt.
+    policy_refs:
+      - oag/bounded-loop-hook-integration-plan.md
+      - oag/wavefront-policy.md
+    checker_refs:
+      - scripts/oag_loop_runner.py
+    tested_by:
+      - smoke_test.py::test_oag_run_control_layer
     severity:
       draft: warn
       post_lock: block

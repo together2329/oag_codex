@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OAG Architecture Bench Result",
+  "type": "object",
+  "required": ["schema_version", "status", "ip", "run_id", "candidate_id", "candidate_ref", "result_ref", "evidence_tier", "valid_for", "not_valid_for", "measurement_kind", "adapter_status", "probes", "metrics", "generated_artifacts", "issues"],
+  "properties": {
+    "schema_version": {
+      "const": "oag_arch_bench_result.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "pass_with_warnings", "bench_unavailable", "fail"]
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_:-]+$"
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_:-]+$"
+    },
+    "candidate_ref": {
+      "type": "string",
+      "pattern": "^knowledge/arch_exploration/[A-Za-z0-9_:-]+/[A-Za-z0-9_:-]+$"
+    },
+    "result_ref": {
+      "type": "string",
+      "pattern": "^knowledge/arch_exploration/[A-Za-z0-9_:-]+/[A-Za-z0-9_:-]+/bench_result\\.json$"
+    },
+    "evidence_tier": {
+      "const": "tier2_probe"
+    },
+    "valid_for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "contains": {
+        "const": "exploration_comparison"
+      }
+    },
+    "not_valid_for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "contains": {
+        "const": "scope_lock"
+      }
+    },
+    "measurement_kind": {
+      "type": "string",
+      "enum": ["adapter_probe", "adapter_unavailable", "missing"]
+    },
+    "adapter_status": {
+      "type": "object"
+    },
+    "probes": {
+      "type": "object"
+    },
+    "metrics": {
+      "type": "object"
+    },
+    "generated_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(\\.oag/)?knowledge/arch_exploration/"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}

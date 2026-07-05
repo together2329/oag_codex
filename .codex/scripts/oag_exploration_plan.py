@@ -14,6 +14,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import oag_action_plan  # noqa: E402
+import oag_decision_autoresolve  # noqa: E402
 import oag_paths  # noqa: E402
 import oag_run_control_common as run_common  # noqa: E402
 from oag_validate_json import contextual_schema_issues  # noqa: E402
@@ -153,7 +154,7 @@ def _source_target(ip_dir: Path, rel_path: str) -> JsonObject:
     return row
 
 
-def infer_decision(candidate: JsonObject, source_targets: list[JsonObject]) -> JsonObject:
+def infer_decision(ip_dir: Path, candidate: JsonObject, source_targets: list[JsonObject]) -> JsonObject:
     action_type = str(candidate.get("action_type") or "")
     owner_role = str(candidate.get("owner_role") or "")
     local_sources_available = any(item.get("exists") is True for item in source_targets)
@@ -176,6 +177,20 @@ def infer_decision(candidate: JsonObject, source_targets: list[JsonObject]) -> J
             "local_sources_available": local_sources_available,
         }
     if action_type in HUMAN_ACTION_TYPES or owner_role == "human_via_main":
+        policy = oag_decision_autoresolve.resolve_candidate_policy(ip_dir, candidate)
+        policy_decision = str(policy.get("decision") or "")
+        if policy_decision in {"auto_decide", "route_dse"}:
+            return {
+                "decision": "auto_decide",
+                "reason": str(policy.get("reason") or "charter_autonomy_policy"),
+                "question_required_now": False,
+                "lock_critical": lock_critical,
+                "local_sources_available": local_sources_available,
+                "decision_class": policy.get("decision_class") or "",
+                "decision_id": policy.get("decision_id") or "",
+                "charter_grant_id": policy.get("charter_grant_id") or "",
+                "evidence_plan": policy.get("evidence_plan") if isinstance(policy.get("evidence_plan"), dict) else {},
+            }
         if local_sources_available:
             return {
                 "decision": "self_explore",
@@ -243,7 +258,7 @@ def build_plan(ip_dir: Path, *, write: bool = True) -> JsonObject:
             reason=str(candidate.get("recommendation_reason") or ""),
         )
     source_targets = [_source_target(ip_dir, rel_path) for rel_path in oag_action_plan.SELF_EXPLORE_SOURCE_RELS]
-    ask_vs_explore = infer_decision(candidate, source_targets)
+    ask_vs_explore = infer_decision(ip_dir, candidate, source_targets)
     payload: JsonObject = {
         "schema_version": SCHEMA_VERSION,
         "status": "pass",

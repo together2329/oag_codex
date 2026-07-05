@@ -53,6 +53,12 @@
         "type": "string"
       }
     },
+    "decision_refs_to_honor": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "lifecycle_input_refs": {
       "type": "array",
       "items": {

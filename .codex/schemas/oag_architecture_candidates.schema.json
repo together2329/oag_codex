@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OAG Architecture Candidates",
+  "type": "object",
+  "required": ["schema_version", "ip", "run_id", "source_fingerprint", "candidates"],
+  "properties": {
+    "schema_version": {
+      "const": "oag_architecture_candidates.v1"
+    },
+    "ip": {
+      "type": "string",
+      "minLength": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_:-]+$"
+    },
+    "source_fingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "charter_ref": {
+      "type": "string"
+    },
+    "decision_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "budget": {
+      "type": "object"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "decision_assignments", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_:-]+$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decision_assignments": {
+            "type": "object"
+          },
+          "parameter_draft": {
+            "type": "object"
+          },
+          "structure_sketch": {
+            "type": "object"
+          },
+          "axes_notes": {
+            "type": "object"
+          },
+          "tier1_scores": {
+            "type": "object"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["alive", "pruned", "benched", "selected"]
+          },
+          "pruned_reason": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,127 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "OAG Parameter Sweep",
+  "type": "object",
+  "required": ["schema_version", "status", "parameter", "selection_rule", "evidence_tier", "valid_for", "not_valid_for", "measurement_kind", "candidates", "evidence_refs", "issues"],
+  "properties": {
+    "schema_version": {
+      "const": "oag_parameter_sweep.v1"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "parameter": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selection_rule": {
+      "const": "smallest_satisfying_with_margin"
+    },
+    "evidence_tier": {
+      "const": "tier2_probe"
+    },
+    "valid_for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "contains": {
+        "const": "exploration_comparison"
+      }
+    },
+    "not_valid_for": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "contains": {
+        "const": "scope_lock"
+      }
+    },
+    "measurement_kind": {
+      "const": "parameter_sweep"
+    },
+    "constraint": {
+      "type": "object"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["value"],
+        "properties": {
+          "value": {
+            "type": "number"
+          },
+          "metrics": {
+            "type": "object"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "selected": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        },
+        "metric": {
+          "type": "string"
+        },
+        "metric_value": {
+          "type": "number"
+        },
+        "required_metric_value": {
+          "type": "number"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "margin_rationale": {
+      "type": "string"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "generate_options": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "provisional_marker_checks": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -39,6 +39,71 @@
             "type": "string",
             "minLength": 1
           },
+          "decision_class": {
+            "type": "string",
+            "enum": ["fact", "parameterizable", "architecture_tradeoff", "product_defining"]
+          },
+          "autonomy_class": {
+            "type": "string",
+            "enum": ["fact", "reversible_internal", "measured_tradeoff", "external_contract"]
+          },
+          "resolution_strategy": {
+            "type": "string",
+            "enum": ["cite", "parameterize", "generate_option", "measure_and_select", "parameterized_default", "defer", "ask"]
+          },
+          "representation": {
+            "type": "string",
+            "enum": ["truth", "parameter", "generate_option"]
+          },
+          "external_contract_impact": {
+            "type": "string",
+            "enum": ["none", "indirect", "direct"]
+          },
+          "rollback_cost": {
+            "type": ["string", "number", "object", "null"]
+          },
+          "candidate_values": {
+            "type": "array"
+          },
+          "selection_rule": {
+            "type": ["string", "object", "null"]
+          },
+          "evidence_required": {
+            "type": "array",
+            "items": {
+              "type": ["string", "object"]
+            }
+          },
+          "decided_by": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["human", "spec", "agent_with_evidence", "agent_with_charter"]
+              },
+              "id": {
+                "type": "string"
+              },
+              "charter_ref": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          },
+          "provisional": {
+            "type": "boolean"
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "decision_receipt_ref": {
+            "type": "string",
+            "minLength": 1
+          },
           "decision": {
             "type": ["string", "number", "boolean", "object", "array", "null"]
           },

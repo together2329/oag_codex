@@ -1236,6 +1236,42 @@ def _write_generated_design_views(
             refs.extend(_str_items(iface.get("key_layout")))
         return sorted(set(refs))
 
+    decision_matrix = _read_yaml_file(oag_paths.legacy_or_hidden(ip, "ontology/decision_matrix.yaml"))
+    locked_decisions = [
+        item
+        for item in _as_list(decision_matrix.get("decisions") if isinstance(decision_matrix, dict) else None)
+        if isinstance(item, dict)
+        and str(item.get("status") or "").strip().lower() == "decided"
+        and item.get("lock_required") is True
+        and str(item.get("id") or "").strip()
+    ]
+
+    current_module_ids = {
+        _module_id(module)
+        for module in modules
+        if _module_id(module)
+        and str(module.get("ownership") or "current_ip").strip() in CURRENT_IP_OWNERSHIPS
+    }
+
+    def decision_refs_to_honor(*, role_tokens: set[str], contract_ids: list[str], module_ids: set[str] | None = None) -> list[str]:
+        refs: list[str] = []
+        packet_contracts = set(contract_ids)
+        packet_modules = module_ids or set()
+        for decision in locked_decisions:
+            affects = {
+                item.lower()
+                for item in _str_items(decision.get("affects") or decision.get("affected_surfaces"))
+            }
+            decision_contracts = set(_str_items(decision.get("contract_refs") or decision.get("contracts")))
+            decision_modules = set(_str_items(decision.get("target_modules") or decision.get("modules") or decision.get("module")))
+            if (
+                affects & role_tokens
+                or (packet_contracts and decision_contracts and packet_contracts & decision_contracts)
+                or (packet_modules and decision_modules and packet_modules & decision_modules)
+            ):
+                refs.append(str(decision.get("id") or "").strip())
+        return sorted(set(refs))
+
     def render_rtl_interface_api(module_packets: list[dict[str, Any]]) -> str:
         lines = [
             "# Generated RTL Interface API",
@@ -1467,6 +1503,11 @@ def _write_generated_design_views(
         "structure_profile": profile,
         "top_interface_refs": _str_items(structure.get("interfaces")),
         "contract_refs_to_implement": all_contract_ids,
+        "decision_refs_to_honor": decision_refs_to_honor(
+            role_tokens={"rtl", "implementation", "product_rtl", "rtl_authoring_packet"},
+            contract_ids=all_contract_ids,
+            module_ids=current_module_ids,
+        ),
         "behavior_refs_implemented_target": all_behavior_refs,
         "cycle_rule_refs_implemented_target": all_cycle_refs,
         "domain_intent_source": str(DOMAIN_INTENT_REL),
@@ -1499,6 +1540,11 @@ def _write_generated_design_views(
         "assertion_candidates": all_assertion_candidates,
         "formal_candidates": all_formal_goals,
         "contract_refs": all_contract_ids,
+        "decision_refs_to_honor": decision_refs_to_honor(
+            role_tokens={"tb", "testbench", "verification", "sim", "tb_authoring_packet"},
+            contract_ids=all_contract_ids,
+            module_ids=current_module_ids,
+        ),
         "notes": "TB predicts from contracts and modeling truth; DUT output and RTL expressions are forbidden expected sources.",
     }
     evidence_packet = {
@@ -7901,20 +7947,38 @@ def _run_graph_action_from_state(ip: Path, state: dict[str, Any]) -> dict[str, A
     active_contracts = _str_items(selected.get("contracts"))
     owner = selected.get("owner") if isinstance(selected.get("owner"), dict) else {}
     dispatch_candidates = [_dispatch_candidate(ip, run_id, task) for task in ready]
+    ready_required_evidence = sorted(
+        {
+            ref
+            for task in ready
+            for ref in _str_items(task.get("required_evidence"))
+        }
+    )
     commands: list[str] = []
     for candidate in dispatch_candidates:
         sequence = candidate.get("command_sequence") if isinstance(candidate.get("command_sequence"), list) else []
         commands.extend(str(command) for command in sequence if str(command).strip())
+    if len(ready) > 1:
+        next_kind = "dispatch_ready_wave"
+        next_summary = f"Dispatch {len(ready)} dependency-ready OAG wavefront tasks as one native subagent batch."
+        required_evidence = ready_required_evidence
+    else:
+        next_kind = str(selected.get("next_action_kind") or ("dispatch_ready_task" if ready else "wait_for_graph_dependencies"))
+        next_summary = str(selected.get("summary") or ("Dispatch a graph-ready OAG task." if ready else "No graph tasks are ready; clear blockers or complete active work."))
+        required_evidence = _str_items(selected.get("required_evidence"))
+    why = [
+        f"ready_tasks={len(ready)}",
+        f"blocked_tasks={len(blocked)}",
+        f"active_locks={len(_as_list(locks.get('locks')))}",
+    ]
+    if len(ready) > 1:
+        why.append("spawn_batch=all_ready_non_conflicting_tasks")
     next_action = {
-        "kind": str(selected.get("next_action_kind") or ("dispatch_ready_task" if ready else "wait_for_graph_dependencies")),
-        "summary": str(selected.get("summary") or ("Dispatch a graph-ready OAG task." if ready else "No graph tasks are ready; clear blockers or complete active work.")),
-        "why": [
-            f"ready_tasks={len(ready)}",
-            f"blocked_tasks={len(blocked)}",
-            f"active_locks={len(_as_list(locks.get('locks')))}",
-        ],
+        "kind": next_kind,
+        "summary": next_summary,
+        "why": why,
         "commands": commands,
-        "required_evidence": _str_items(selected.get("required_evidence")),
+        "required_evidence": required_evidence,
     }
     matrix = _closure_matrix(ip)
     return {
@@ -8557,6 +8621,8 @@ def _append_closure_edge_section(lines: list[str], action: dict[str, Any], *, li
 def _format_run_prompt_block(action: dict[str, Any]) -> str:
     next_action = action.get("next_action") if isinstance(action.get("next_action"), dict) else {}
     blockers = action.get("blockers") if isinstance(action.get("blockers"), list) else []
+    dispatch_candidates = action.get("dispatch_command_candidates")
+    dispatch_count = len(dispatch_candidates) if isinstance(dispatch_candidates, list) else 0
     lines = [
         "=== OAG NEXT ACTION ===",
         f"ip={action.get('ip')} run_id={action.get('run_id')} status={action.get('status')}",
@@ -8569,6 +8635,8 @@ def _format_run_prompt_block(action: dict[str, Any]) -> str:
     if owner:
         lines.append(f"owner_module={owner.get('module') or 'unknown'} file={owner.get('file') or 'unknown'}")
     lines.append(f"next={next_action.get('summary') or ''}")
+    if dispatch_count > 1:
+        lines.append("parallel_spawn_batch=required: spawn every non-conflicting ready task in this wave before serial follow-up.")
     required = _str_items(next_action.get("required_evidence"))
     if required:
         lines.append(f"required_evidence={', '.join(required)}")
@@ -8579,7 +8647,7 @@ def _format_run_prompt_block(action: dict[str, Any]) -> str:
     _append_task_section(lines, "ready_tasks", action.get("ready_tasks"), limit=5)
     _append_task_section(lines, "blocked_tasks", action.get("blocked_tasks"), limit=5)
     _append_task_section(lines, "active_locks", action.get("active_locks"), limit=5)
-    _append_dispatch_candidates(lines, action.get("dispatch_command_candidates"), limit=3)
+    _append_dispatch_candidates(lines, dispatch_candidates, limit=8)
     commands = _str_items(next_action.get("commands"))
     if commands:
         lines.append("commands:")
