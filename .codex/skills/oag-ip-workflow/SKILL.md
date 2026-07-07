@@ -686,6 +686,11 @@ Use native waiting/mailbox behavior for child results; timeout means no new
 update, not failure. Use native child steering for targeted follow-up. Integrate
 or route completed/inconclusive lane receipts before new dispatch; defer native
 child cleanup outside the critical path.
+For long RTL/TB work, keep an active child through at least three native wait
+cycles before routing it as no-progress. After the first silent wait, send at
+most one targeted status/heartbeat request, then continue waiting; do not mark
+`INCONCLUSIVE`/`BLOCKED` while there is fresh `WORKING:`, heartbeat,
+owned-path, receipt, or blocker evidence.
 For long write-capable RTL/TB children, include an explicit heartbeat contract
 in the spawn prompt: `WORKING: <task> - <phase>` within the first wait cycle and
 at major phase changes, or an owned draft file, receipt, or `BLOCKED:` reason.

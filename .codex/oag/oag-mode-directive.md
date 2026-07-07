@@ -370,12 +370,14 @@ and open a fresh trusted session. MCP startup is runtime hygiene, not an OAG
 progress gate or native-spawn failure proof.
 
 For long RTL/TB authoring, apply the patience protocol: do not abandon an active
-child after one quiet wait cycle. Continue native waits or send one targeted
-follow-up while the child is still running. Treat a lane as inconclusive only
-when the child completed without the deliverable, emitted `BLOCKED:`, is no
-longer running, or stayed silent across multiple wait cycles with a recorded
-parent rationale. Prefer TB shards for common API/helper layer,
-scoreboard/schema, scenario groups, and integration review.
+child after one quiet wait cycle. Keep it through at least three native wait
+cycles while it is still running. After the first silent cycle, send at most one
+targeted status/heartbeat request, then continue waiting. Treat a lane as
+inconclusive only when the child completed without the deliverable, emitted
+`BLOCKED:`, is no longer running, or still has no `WORKING:`, wavefront
+heartbeat, owned-path evidence, receipt, or blocker after the full patience
+budget with a recorded parent rationale. Prefer TB shards for common
+API/helper layer, scoreboard/schema, scenario groups, and integration review.
 Every long write-capable child prompt should require early evidence:
 `WORKING: <task> - <phase>` within the first wait cycle and at major phase
 changes, or an owned draft file, receipt, or `BLOCKED:` reason. Treat large TB

@@ -428,13 +428,15 @@ or gate-review evidence, and must end with `OAG_EVIDENCE_RECORDED:
 <relative-path>`. Subagents may never claim final completion from a receipt;
 final closure requires OAG check/decide and the gate reviewer role.
 For long RTL/TB work, a single quiet wait cycle is not a failure. Keep native
-children alive through repeated waits or a targeted follow-up while they are
-still running. Treat a lane as inconclusive only when the child has completed
-without the deliverable, emitted `BLOCKED:`, is no longer running, or remained
-silent across multiple wait cycles with the parent rationale recorded. Split TB
-work into driver/BFM, monitor, predictor, scoreboard/schema, coverage,
-assertion hooks, scenario shards, and runner integration instead of one large
-child that can be closed prematurely.
+children alive for a default minimum of three native wait cycles while they are
+still running. After the first silent wait, send at most one targeted
+status/heartbeat request, then continue waiting. Treat a lane as inconclusive
+only when the child has completed without the deliverable, emitted `BLOCKED:`,
+is no longer running, or still has no `WORKING:`, wavefront heartbeat,
+owned-path evidence, receipt, or blocker after the full patience budget with
+the parent rationale recorded. Split TB work into driver/BFM, monitor,
+predictor, scoreboard/schema, coverage, assertion hooks, scenario shards, and
+runner integration instead of one large child that can be closed prematurely.
 When wavefront reports multiple dependency-ready tasks with non-conflicting
 ownership, dispatch the whole ready wave as one native subagent batch. Do not
 serialize ready tasks unless a dependency, ownership lock, runtime budget, or

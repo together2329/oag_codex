@@ -57,9 +57,10 @@ Long write-capable TB scenario waves are runtime-budget constrained until
 proven otherwise. Open one or two scenario children first and require a
 `WORKING:` heartbeat, owned draft file, receipt, or `BLOCKED:` reason before
 opening the next scenario shard. If a claimed child has no heartbeat, owned
-file, or receipt after a bounded status request, route the existing dispatch to
-`INCONCLUSIVE`/`BLOCKED` before replacement; do not clear the path by closing
-native children.
+file, or receipt after the parent has given it at least three native wait
+cycles plus one targeted status/heartbeat request, route the existing dispatch
+to `INCONCLUSIVE`/`BLOCKED` before replacement; do not clear the path by
+closing native children.
 
 For wavefront-backed children, `WORKING:` should be paired with machine-readable
 progress evidence:

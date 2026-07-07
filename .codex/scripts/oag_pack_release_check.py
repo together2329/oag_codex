@@ -514,6 +514,8 @@ REQUIRED_DOC_SNIPPETS = {
         "observed",
         "native-spawn blocker",
         "spawn the whole ready wave as one native subagent batch",
+        "three native wait cycles",
+        "targeted status/heartbeat request",
         "lean-subagent-runtime",
         "computer-use@openai-bundled",
         "role-structured RTL/TB wavefront",

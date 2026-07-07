@@ -67,6 +67,8 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
                 "  python3 .codex/scripts/oag_wavefront.py heartbeat "
                 f"--ip-dir {dispatch['ip_dir']} --run-id {dispatch['wavefront_run_id']} "
                 f"--task-id {dispatch.get('task_id') or '<task-id>'} --message \"<phase>\" --json",
+                "- emit `WORKING: <task> - <phase>` within the first parent wait cycle and at major phase changes",
+                "- if the parent asks for status after a silent wait, answer with `WORKING:`, `BLOCKED:`, or the receipt path instead of staying silent",
                 "Wavefront abort guard:",
                 "- before writing outputs or a receipt, re-read the task in "
                 f"{dispatch['ip_dir']}/ontology/runs/{dispatch['wavefront_run_id']}/wavefront_task_graph.json",

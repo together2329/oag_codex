@@ -24,6 +24,7 @@ FALLBACK_SCHEMA_VERSION = "oag_gate_fallback_plan.v1"
 TERMINAL_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
 GATE_MARKERS = ("gate", "GATE", "gate-reviewer", "GATE_REVIEW")
 DEFAULT_PROGRESS_SECONDS = 600
+DEFAULT_PARENT_WAIT_CYCLES = 3
 
 
 def _load_json(path: Path) -> JsonObject:
@@ -314,7 +315,7 @@ def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800, progress
             {
                 "id": "record-heartbeat-or-route-task",
                 "recommended": True,
-                "description": "Ask for one bounded heartbeat/receipt/status response; if none appears, record the task as INCONCLUSIVE/BLOCKED before replacement.",
+                "description": f"Apply the parent patience protocol: keep an active child through at least {DEFAULT_PARENT_WAIT_CYCLES} native wait cycles, ask once for a bounded heartbeat/receipt/status response after the first silent cycle, and only then record INCONCLUSIVE/BLOCKED before replacement if no progress evidence appears.",
             },
         )
 
@@ -348,6 +349,7 @@ def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800, progress
         "run_id": run_id,
         "stale_seconds": stale_seconds,
         "progress_seconds": progress_seconds,
+        "parent_min_wait_cycles": DEFAULT_PARENT_WAIT_CYCLES,
         "active_locks": state.get("wavefront", {}).get("active_locks", []),
         "stale_locks": stale_locks,
         "stale_gate_locks": gate_locks,

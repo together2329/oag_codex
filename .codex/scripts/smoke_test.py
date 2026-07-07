@@ -519,6 +519,8 @@ def test_dispatch_prompt_contract_subagent_boundary() -> None:
     assert "coverage_observed=false" in prompt, prompt
     assert "Do not report coverage_percent=0" in prompt, prompt
     assert "do not fall back to the smoke subset" in prompt, prompt
+    assert "within the first parent wait cycle" in prompt, prompt
+    assert "answer with `WORKING:`, `BLOCKED:`, or the receipt path" in prompt, prompt
     assert "observed_source.kind=monitor" in prompt, prompt
     assert "repo schema or writer convention" in prompt, prompt
     assert "scoreboard_rows.v1-allowed fields" in prompt, prompt
@@ -5901,6 +5903,8 @@ def main() -> int:
         assert "Do not decide native-spawn availability from the visible callable tool namespace alone" in guard_context, guard_on.stdout
         assert "explicitly request the native `spawn_agent` collaboration event" in guard_context, guard_on.stdout
         assert "A wait timeout only means no new child update arrived" in guard_context, guard_on.stdout
+        assert "at least three native wait cycles" in guard_context, guard_on.stdout
+        assert "targeted status/heartbeat request" in guard_context, guard_on.stdout
         assert "spawn the whole ready wave as a native subagent batch" in guard_context, guard_on.stdout
         assert "TB generation should be sharded" in guard_context, guard_on.stdout
         assert "Do not run `omo run --agent`" in guard_context, guard_on.stdout

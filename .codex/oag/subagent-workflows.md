@@ -122,15 +122,17 @@ BLOCKED: <reason>
 ```
 
 For RTL/TB authoring, use a patience protocol instead of a single wait. The
-parent must not abandon an active child after one quiet wait cycle. Continue
-waiting or send one targeted follow-up while the child is still running. Mark a
-lane inconclusive only when the child completed without the deliverable, emitted
-`BLOCKED:`, is no longer running, or remained silent across multiple wait cycles
-and the parent records the reason. TB generation should be split into bounded
-children: driver/BFM, monitor, predictor, scoreboard/schema, coverage,
-assertion hooks, scenario groups, and runner integration. This keeps each child
-short enough to finish while still letting large TB work proceed without the
-parent prematurely closing the lane.
+parent must not abandon an active child after one quiet wait cycle. Default
+long-work budget is at least three native wait cycles: after the first silent
+cycle, send at most one targeted status/heartbeat request, then continue
+waiting. Mark a lane inconclusive only when the child completed without the
+deliverable, emitted `BLOCKED:`, is no longer running, or still has no
+`WORKING:`, heartbeat, owned-path evidence, receipt, or blocker after the full
+patience budget and the parent records the reason. TB generation should be
+split into bounded children: driver/BFM, monitor, predictor, scoreboard/schema,
+coverage, assertion hooks, scenario groups, and runner integration. This keeps
+each child short enough to finish while still letting large TB work proceed
+without the parent prematurely closing the lane.
 
 Every long write-capable RTL/TB child prompt must include an early evidence
 contract: emit `WORKING: <task> - <phase>` within the first wait cycle and at
