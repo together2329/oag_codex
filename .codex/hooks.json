@@ -6,6 +6,7 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_oag_session_start.py",
+            "commandWindows": "python .codex/hooks/codex_oag_session_start.py",
             "timeout": 10,
             "statusMessage": "OAG: enforcing Codex subagent config"
           }
@@ -18,30 +19,35 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_oag_mode_trigger.py",
+            "commandWindows": "python .codex/hooks/codex_oag_mode_trigger.py",
             "timeout": 10,
             "statusMessage": "OAG: checking explicit mode trigger"
           },
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_native_subagent_guard.py",
+            "commandWindows": "python .codex/hooks/codex_native_subagent_guard.py",
             "timeout": 10,
             "statusMessage": "OAG: enforcing native subagent guard"
           },
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_deep_interview_prompt_guard.py",
+            "commandWindows": "python .codex/hooks/codex_deep_interview_prompt_guard.py",
             "timeout": 10,
             "statusMessage": "OAG: checking deep interview prompt discipline"
           },
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_context_inject.py",
+            "commandWindows": "python .codex/hooks/codex_context_inject.py",
             "timeout": 10,
             "statusMessage": "OAG: injecting IP context"
           },
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_draft_pressure.py",
+            "commandWindows": "python .codex/hooks/codex_draft_pressure.py",
             "timeout": 10,
             "statusMessage": "OAG: checking interview draft pressure"
           }
@@ -54,6 +60,7 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_stop_gate.py",
+            "commandWindows": "python .codex/hooks/codex_stop_gate.py",
             "timeout": 10,
             "statusMessage": "OAG: checking active run completion"
           }
@@ -67,6 +74,7 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_subagent_oag_start.py",
+            "commandWindows": "python .codex/hooks/codex_subagent_oag_start.py",
             "timeout": 10,
             "statusMessage": "OAG: injecting subagent start contract"
           }
@@ -80,6 +88,7 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_subagent_oag_gate.py",
+            "commandWindows": "python .codex/hooks/codex_subagent_oag_gate.py",
             "timeout": 10,
             "statusMessage": "OAG: verifying subagent evidence receipt"
           }
@@ -92,6 +101,7 @@
           {
             "type": "command",
             "command": "python3 .codex/hooks/codex_context_inject.py",
+            "commandWindows": "python .codex/hooks/codex_context_inject.py",
             "timeout": 10,
             "statusMessage": "OAG: restoring IP context after compact"
           }

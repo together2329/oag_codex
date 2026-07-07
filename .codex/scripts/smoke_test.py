@@ -35,6 +35,7 @@ MAIN_WRITE_GATE = ROOT / "scripts" / "oag_main_write_gate.py"
 VALIDATE_JSON = ROOT / "scripts" / "oag_validate_json.py"
 AGENT_CATALOG_CHECK = ROOT / "scripts" / "oag_agent_catalog_check.py"
 CODEX_CONFIG_DOCTOR = ROOT / "scripts" / "oag_codex_config_doctor.py"
+DEBUG_EVAL_METRICS = ROOT / "scripts" / "oag_debug_eval_metrics.py"
 CLOSURE_CHECK = ROOT / "scripts" / "oag_closure_check.py"
 PACK_RELEASE_CHECK = ROOT / "scripts" / "oag_pack_release_check.py"
 DOMAIN_CROSSING_CHECK = ROOT / "scripts" / "oag_domain_crossing_check.py"
@@ -5092,26 +5093,36 @@ def main() -> int:
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         session_start_hooks = hooks["hooks"]["SessionStart"][0]["hooks"]
         assert session_start_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_session_start.py", hooks
+        assert session_start_hooks[0]["commandWindows"] == "python .codex/hooks/codex_oag_session_start.py", hooks
         user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
         assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_mode_trigger.py", hooks
+        assert user_hooks[0]["commandWindows"] == "python .codex/hooks/codex_oag_mode_trigger.py", hooks
         assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_native_subagent_guard.py", hooks
+        assert user_hooks[1]["commandWindows"] == "python .codex/hooks/codex_native_subagent_guard.py", hooks
         assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_deep_interview_prompt_guard.py", hooks
+        assert user_hooks[2]["commandWindows"] == "python .codex/hooks/codex_deep_interview_prompt_guard.py", hooks
         assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[3]["commandWindows"] == "python .codex/hooks/codex_context_inject.py", hooks
         assert user_hooks[4]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
+        assert user_hooks[4]["commandWindows"] == "python .codex/hooks/codex_draft_pressure.py", hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         stop_command = stop_hooks[0]["command"]
         assert stop_command == "python3 .codex/hooks/codex_stop_gate.py", hooks
+        assert stop_hooks[0]["commandWindows"] == "python .codex/hooks/codex_stop_gate.py", hooks
         assert "/bin/sh" not in stop_command and "sh.exe" not in stop_command, hooks
         subagent_start_hooks = hooks["hooks"]["SubagentStart"][0]
         assert subagent_start_hooks["matcher"] == "^oag-", hooks
         assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks
+        assert subagent_start_hooks["hooks"][0]["commandWindows"] == "python .codex/hooks/codex_subagent_oag_start.py", hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
         assert "oag-" in subagent_hooks["matcher"], hooks
         assert "evidence-validator" in subagent_hooks["matcher"], hooks
         assert "gate-reviewer" in subagent_hooks["matcher"], hooks
         assert subagent_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_gate.py", hooks
+        assert subagent_hooks["hooks"][0]["commandWindows"] == "python .codex/hooks/codex_subagent_oag_gate.py", hooks
         post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
+        assert post_compact_hooks[0]["commandWindows"] == "python .codex/hooks/codex_context_inject.py", hooks
         assert STOP_GATE.is_file(), STOP_GATE
         assert SUBAGENT_START.is_file(), SUBAGENT_START
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
@@ -5169,6 +5180,7 @@ def main() -> int:
         assert VALIDATE_JSON.is_file(), VALIDATE_JSON
         assert AGENT_CATALOG_CHECK.is_file(), AGENT_CATALOG_CHECK
         assert CODEX_CONFIG_DOCTOR.is_file(), CODEX_CONFIG_DOCTOR
+        assert DEBUG_EVAL_METRICS.is_file(), DEBUG_EVAL_METRICS
         assert CLOSURE_CHECK.is_file(), CLOSURE_CHECK
         assert PACK_RELEASE_CHECK.is_file(), PACK_RELEASE_CHECK
         assert DOMAIN_CROSSING_CHECK.is_file(), DOMAIN_CROSSING_CHECK
@@ -5764,6 +5776,9 @@ def main() -> int:
                     "[mcp_servers.node_repl]",
                     'command = "/Applications/Codex.app/Contents/Resources/cua_node/bin/node_repl"',
                     "",
+                    '[plugins."computer-use@openai-bundled"]',
+                    "enabled = true",
+                    "",
                 ]
             ),
             encoding="utf-8",
@@ -5785,22 +5800,98 @@ def main() -> int:
         assert legacy_oag_mcp_server not in migrated_config, migrated_config
         assert "oag_mcp_server.py" not in migrated_config, migrated_config
         assert "[mcp_servers.node_repl]" in migrated_config, migrated_config
+        assert '[plugins."computer-use@openai-bundled"]\nenabled = true' in migrated_config, migrated_config
         assert "OAG CODEX CONFIG MIGRATION" in hook_context(session_migration), session_migration.stdout
 
         session_idempotent = session_start_hook({"hook_event_name": "SessionStart"}, {"CODEX_HOME": str(codex_home)})
         assert session_idempotent.returncode == 0, session_idempotent.stderr or session_idempotent.stdout
         assert session_idempotent.stdout == "", session_idempotent.stdout
+        lean_doctor = subprocess.run(
+            [
+                sys.executable,
+                str(CODEX_CONFIG_DOCTOR),
+                "--config",
+                str(user_config),
+                "--include-omo-plugin-features",
+                "--lean-subagent-runtime",
+                "--apply",
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert lean_doctor.returncode == 0, lean_doctor.stderr or lean_doctor.stdout
+        lean_result = json.loads(lean_doctor.stdout)
+        assert lean_result["status"] == "pass", lean_result
+        lean_config = user_config.read_text(encoding="utf-8")
+        assert '[plugins."computer-use@openai-bundled"]\nenabled = false' in lean_config, lean_config
+        assert '[plugins."computer-use@openai-bundled".mcp_servers.computer-use]\nenabled = false' in lean_config, lean_config
+
+        hook_metric_dir = Path(tmp) / "hook_metric_outputs"
+        hook_metric_dir.mkdir(parents=True, exist_ok=True)
+        (hook_metric_dir / "mcp.txt").write_text(
+            "Starting MCP servers (2/3): computer-use\n/mcp\ncomputer-use\n",
+            encoding="utf-8",
+        )
+        debug_metrics = subprocess.run(
+            [
+                sys.executable,
+                str(DEBUG_EVAL_METRICS),
+                "--hook-output",
+                str(hook_metric_dir),
+                "--json",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert debug_metrics.returncode == 0, debug_metrics.stderr or debug_metrics.stdout
+        debug_payload = json.loads(debug_metrics.stdout)
+        debug_codes = {item["code"] for item in debug_payload["findings"]}
+        assert "COMPUTER_USE_MCP_SEEN" in debug_codes, debug_payload
+        assert "MCP_STARTUP_SEEN" in debug_codes, debug_payload
 
         trigger_silent = oag_mode_trigger({"prompt": "rtl work"})
         assert trigger_silent.returncode == 0, trigger_silent.stderr or trigger_silent.stdout
         assert trigger_silent.stdout == "", trigger_silent.stdout
-        for prompt in ("ipdev use subagent for timer", "auto research timer", "subagent for timer", "signoff timer", "rocev timer"):
+        for prompt in (
+            "ipdev use subagent for timer",
+            "auto research timer",
+            "subagent for timer",
+            "signoff timer",
+            "rocev timer",
+            "OAG 명시 안해도 oag ip workflow가 enable 되던데?",
+            "why does OAG mode activate here?",
+            "please use oag later",
+        ):
             non_oag_trigger = oag_mode_trigger({"prompt": prompt})
             assert non_oag_trigger.returncode == 0, non_oag_trigger.stderr or non_oag_trigger.stdout
             assert non_oag_trigger.stdout == "", non_oag_trigger.stdout
         guard_silent = native_subagent_guard({"prompt": "auto research timer"})
         assert guard_silent.returncode == 0, guard_silent.stderr or guard_silent.stdout
         assert guard_silent.stdout == "", guard_silent.stdout
+        for prompt in (
+            "이러 왜 이렇게 subagent iteration 이 많아? 잘되게 fix 좀",
+            "why are there so many subagent iterations?",
+            "fix the subagent guard trigger loop",
+            "subagent iteration count is too high; reduce it",
+            "# Files mentioned by the user:\n\n## › tb를 cocotb가 아니라 uvm 기반으로 재작성하자. use all parrele sub agent • UserPromptSubmit …: /tmp/pasted-text.txt\n\n## My request for Codex:\n 이제 잘 되는가?",
+        ):
+            meta_guard = native_subagent_guard({"prompt": prompt})
+            assert meta_guard.returncode == 0, meta_guard.stderr or meta_guard.stdout
+            assert meta_guard.stdout == "", meta_guard.stdout
+        guard_from_request_section = native_subagent_guard(
+            {
+                "prompt": "# Files mentioned by the user:\n\n"
+                "## old discussion without commands: /tmp/pasted-text.txt\n\n"
+                "## My request for Codex:\n use all parallel sub agents for tb rewrite"
+            }
+        )
+        assert guard_from_request_section.returncode == 0, guard_from_request_section.stderr or guard_from_request_section.stdout
+        assert "NATIVE CODEX SUBAGENT GUARD" in hook_context(guard_from_request_section), guard_from_request_section.stdout
         guard_on = native_subagent_guard({"prompt": "Use sub agent to make req in detail"})
         assert guard_on.returncode == 0, guard_on.stderr or guard_on.stdout
         guard_context = hook_context(guard_on)
@@ -5826,6 +5917,9 @@ def main() -> int:
         assert "oag.lock_status" in trigger_context, trigger_on.stdout
         assert "No lock, no RTL" in trigger_context, trigger_on.stdout
         assert "record_decision=true" in trigger_context, trigger_on.stdout
+        trigger_colon = oag_mode_trigger({"prompt": "oag: inspect timer"})
+        assert trigger_colon.returncode == 0, trigger_colon.stderr or trigger_colon.stdout
+        assert "OAG MODE ENABLED!" in hook_context(trigger_colon), trigger_colon.stdout
 
         deep_guard_silent = deep_interview_prompt_guard({"prompt": "please run a normal lint check"})
         assert deep_guard_silent.returncode == 0, deep_guard_silent.stderr or deep_guard_silent.stdout
@@ -6958,6 +7052,7 @@ def main() -> int:
         (route_root / "not_an_ip" / "rtl" / "unit.sv").write_text("module outside; endmodule\n", encoding="utf-8")
         assert hook_target_names(route_root, {"prompt": "승인", "context_pressure": "critical"}, require_signal=False) == []
         assert hook_target_names(route_root, {"prompt": "oag context"}, require_signal=True) == []
+        assert hook_target_names(route_root, {"prompt": "OAG context"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "route OAG"}, require_signal=True) == []
         assert hook_target_names(route_root, {"prompt": "continue route_alpha OAG"}, require_signal=True) == ["route_alpha"]
         assert hook_target_names(route_root, {"prompt": "compare route_alpha and route_beta OAG"}, require_signal=True) == []
@@ -6979,6 +7074,8 @@ def main() -> int:
         )
         assert hook_target_names(single_route_root, {"prompt": "rtl work"}, require_signal=True) == []
         assert hook_target_names(single_route_root, {"prompt": "ipdev rtl work"}, require_signal=True) == []
+        assert hook_target_names(single_route_root, {"prompt": "OAG rtl work"}, require_signal=True) == []
+        assert hook_target_names(single_route_root, {"prompt": "please use oag for rtl work"}, require_signal=True) == []
         assert hook_target_names(single_route_root, {"prompt": "oag rtl work"}, require_signal=True) == ["solo_route"]
         undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
         assert undecided["result"]["allowed"] is False, undecided

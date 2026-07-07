@@ -102,6 +102,11 @@ the parent must integrate, reject, or route the receipt before opening another
 fan-out batch. Native child cleanup is runtime hygiene, not an OAG evidence
 gate; defer it outside status checks, dispatch planning, receipt review, and
 RTL/TB critical-path work.
+If runtime startup stalls on optional MCP servers such as `computer-use`, do not
+serialize or block the wavefront on that plugin startup. Apply the lean OAG
+session profile with `oag_codex_config_doctor.py --lean-subagent-runtime`,
+restart into a fresh trusted session, and continue from durable dispatch,
+ownership lock, receipt, and barrier state.
 
 ## Role-Structured RTL/TB Pattern
 

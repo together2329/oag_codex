@@ -26,10 +26,18 @@ DISABLE_ENVS = {
     "LAZYCODEX_CONFIG_MIGRATION_DISABLED",
     "OMO_CODEX_CONFIG_MIGRATION_DISABLED",
 }
+LEAN_RUNTIME_ENVS = {
+    "OAG_LEAN_SUBAGENT_RUNTIME",
+    "OAG_DISABLE_COMPUTER_USE_MCP",
+}
 
 
 def _disabled() -> bool:
     return any(str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"} for name in DISABLE_ENVS)
+
+
+def _lean_subagent_runtime() -> bool:
+    return any(str(os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"} for name in LEAN_RUNTIME_ENVS)
 
 
 def main() -> int:
@@ -40,6 +48,7 @@ def main() -> int:
             oag_codex_config_doctor.default_config_path(),
             apply=True,
             include_omo_plugin_features=True,
+            lean_subagent_runtime=_lean_subagent_runtime(),
         )
     except Exception:
         return 0
@@ -52,6 +61,7 @@ def main() -> int:
             "=== OAG CODEX CONFIG MIGRATION ===",
             "IP Dev Agent patched user Codex config for native subagent safety.",
             "multi_agent and child_agents_md are enabled; multi_agent_v2 is force-disabled.",
+            "If OAG_LEAN_SUBAGENT_RUNTIME=1 is set, optional computer-use MCP startup is disabled for OAG subagent-heavy sessions.",
             "Open a fresh trusted project session if the active runtime was created before this patch.",
             "=== END OAG CODEX CONFIG MIGRATION ===",
         ]

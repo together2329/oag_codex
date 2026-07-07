@@ -24,9 +24,7 @@ STAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "signoff": ("signoff", "closure", "complete", "claim_complete"),
 }
 
-OAG_TRIGGER_KEYWORDS = (
-    "oag",
-)
+OAG_COMMAND_RE = re.compile(r"^\s*oag(?:\s|:|/|$)")
 PATH_REF_RE = re.compile(
     r"(?<![A-Za-z0-9_./-])@?"
     r"(?P<path>(?:~|/|\.{1,2}/)?[A-Za-z0-9_.+~-]+(?:/[A-Za-z0-9_.+~-]+)+)"
@@ -178,8 +176,7 @@ def infer_stage(text: str, fallback: str = "") -> str:
 
 
 def has_oag_work_signal(text: str) -> bool:
-    lower = text.lower()
-    return any(re.search(rf"(?<![A-Za-z0-9_-]){re.escape(needle)}(?![A-Za-z0-9_-])", lower) for needle in OAG_TRIGGER_KEYWORDS)
+    return bool(OAG_COMMAND_RE.search(text or ""))
 
 
 def _is_approval_only(text: str) -> bool:
@@ -187,12 +184,11 @@ def _is_approval_only(text: str) -> bool:
 
 
 def parse_run_limit_command(text: str) -> str:
-    prompt = text or ""
-    if RUN_LIMIT_NONE_RE.match(prompt):
+    if RUN_LIMIT_NONE_RE.match(text or ""):
         return "none"
-    if RUN_LIMIT_ALL_RE.match(prompt):
+    if RUN_LIMIT_ALL_RE.match(text or ""):
         return "all"
-    match = RUN_LIMIT_COMMAND_RE.match(prompt)
+    match = RUN_LIMIT_COMMAND_RE.match(text or "")
     if not match:
         return ""
     return RUN_LIMIT_ALIASES.get(match.group("stage").lower(), "")

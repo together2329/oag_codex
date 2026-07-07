@@ -14,8 +14,9 @@ Native subagent assignments should include the posture from
 sufficient proof, do not infer expected behavior from RTL, and leave weak
 closure claims open with precise blockers.
 
-For team use, ask for OAG mode explicitly with the exact `oag` keyword. Terms
-like `auto research`, `subagent`, and `signoff` describe work, but do not
+For team use, ask for OAG mode explicitly with the lowercase `oag` command
+prefix. Terms like `auto research`, `subagent`, and `signoff`, uppercase OAG
+acronym mentions, or meta discussion about OAG describe work but do not
 activate OAG mode by themselves. Project config requests native subagent
 support through `[features].multi_agent = true` and
 `[features].child_agents_md = true`, and forces
@@ -39,6 +40,26 @@ native-spawn blocker and ask the user to restart/open a fresh trusted `ip_dev`
 session. Do not continue by pretending a child agent ran, and do not manually
 apply a child role as a substitute unless the user explicitly waives the native
 subagent requirement.
+
+## Lean OAG Runtime
+
+Codex may start global MCP/plugin servers before a parent or child thread is
+usable. OAG subagents do not need UI automation MCPs such as
+`computer-use@openai-bundled` for RTL/TB/lint/sim/gate work. If a subagent or
+fresh thread stalls at `Starting MCP servers` and `/mcp` shows `computer-use`,
+switch that OAG-heavy workspace to the lean profile:
+
+```bash
+python3 .codex/scripts/oag_codex_config_doctor.py \
+  --include-omo-plugin-features \
+  --lean-subagent-runtime \
+  --apply
+```
+
+Then open a fresh trusted session. This disables optional `computer-use`
+startup for the session profile; it does not prove native subagents are
+unavailable. Do not wait on MCP startup or native child closedness before
+routing OAG dispatch, receipt, lock, and wavefront state.
 
 ## Native Trigger
 

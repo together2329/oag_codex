@@ -115,6 +115,7 @@ REQUIRED_FILES = (
     CODEX_ROOT / "skills" / "oag-ip-workflow" / "SKILL.md",
     SCRIPTS_DIR / "oag_agent_catalog_check.py",
     SCRIPTS_DIR / "oag_codex_config_doctor.py",
+    SCRIPTS_DIR / "oag_debug_eval_metrics.py",
     SCRIPTS_DIR / "oag_closure_check.py",
     SCRIPTS_DIR / "oag_cli.py",
     SCRIPTS_DIR / "oag_dispatch.py",
@@ -392,6 +393,8 @@ REQUIRED_DOC_SNIPPETS = {
         "SubagentStart",
         "SubagentStop",
         "codex_deep_interview_prompt_guard.py",
+        "lean-subagent-runtime",
+        "computer-use@openai-bundled",
         "custom answer if A-D do not fit",
         "documents/specs/RTL",
         "RTL/TB authoring-packet",
@@ -466,6 +469,8 @@ REQUIRED_DOC_SNIPPETS = {
         "generated tool output",
         "STATIC_HANDOFF_PASS",
         "codex_deep_interview_prompt_guard.py",
+        "lean-subagent-runtime",
+        "computer-use",
         "documents, specs, or RTL",
         "custom-answer",
         "RTL/TB authoring-packet inputs",
@@ -509,6 +514,8 @@ REQUIRED_DOC_SNIPPETS = {
         "observed",
         "native-spawn blocker",
         "spawn the whole ready wave as one native subagent batch",
+        "lean-subagent-runtime",
+        "computer-use@openai-bundled",
         "role-structured RTL/TB wavefront",
         "RTL_INTERFACE_SHELL",
         "RTL_CONTROL_FSM",
@@ -686,23 +693,34 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     session_start = (((hooks.get("hooks") or {}).get("SessionStart") or [{}])[0])
     session_start_hooks = session_start.get("hooks") if isinstance(session_start, dict) else []
     session_start_commands = [str(item.get("command") or "") for item in session_start_hooks if isinstance(item, dict)]
+    session_start_windows = [str(item.get("commandWindows") or "") for item in session_start_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_oag_session_start.py" not in session_start_commands:
         issues.append(issue("SESSION_START_CONFIG_GUARD_MISSING", "SessionStart must run the OAG Codex config guard.", CODEX_ROOT / "hooks.json"))
+    if "python .codex/hooks/codex_oag_session_start.py" not in session_start_windows:
+        issues.append(issue("SESSION_START_WINDOWS_CONFIG_GUARD_MISSING", "SessionStart must use python on Windows.", CODEX_ROOT / "hooks.json"))
     user_prompt = (((hooks.get("hooks") or {}).get("UserPromptSubmit") or [{}])[0])
     user_prompt_hooks = user_prompt.get("hooks") if isinstance(user_prompt, dict) else []
     user_prompt_commands = [str(item.get("command") or "") for item in user_prompt_hooks if isinstance(item, dict)]
+    user_prompt_windows = [str(item.get("commandWindows") or "") for item in user_prompt_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_commands:
         issues.append(issue("NATIVE_SUBAGENT_GUARD_MISSING", "UserPromptSubmit must enforce native-only subagent requests.", CODEX_ROOT / "hooks.json"))
+    if "python .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_windows:
+        issues.append(issue("NATIVE_SUBAGENT_WINDOWS_GUARD_MISSING", "UserPromptSubmit native-subagent guard must use python on Windows.", CODEX_ROOT / "hooks.json"))
     if "python3 .codex/hooks/codex_deep_interview_prompt_guard.py" not in user_prompt_commands:
         issues.append(issue("DEEP_INTERVIEW_PROMPT_GUARD_MISSING", "UserPromptSubmit must keep OAG deep interviews to one question with recommended options.", CODEX_ROOT / "hooks.json"))
+    if "python .codex/hooks/codex_deep_interview_prompt_guard.py" not in user_prompt_windows:
+        issues.append(issue("DEEP_INTERVIEW_WINDOWS_PROMPT_GUARD_MISSING", "Deep interview prompt guard must use python on Windows.", CODEX_ROOT / "hooks.json"))
     subagent_start = (((hooks.get("hooks") or {}).get("SubagentStart") or [{}])[0])
     start_matcher = str(subagent_start.get("matcher") or "")
     start_hooks = subagent_start.get("hooks") if isinstance(subagent_start, dict) else []
     start_commands = [str(item.get("command") or "") for item in start_hooks if isinstance(item, dict)]
+    start_windows = [str(item.get("commandWindows") or "") for item in start_hooks if isinstance(item, dict)]
     if start_matcher != "^oag-":
         issues.append(issue("SUBAGENT_START_MATCHER", "SubagentStart must match OAG child agents.", CODEX_ROOT / "hooks.json"))
     if "python3 .codex/hooks/codex_subagent_oag_start.py" not in start_commands:
         issues.append(issue("SUBAGENT_START_HOOK_MISSING", "SubagentStart must inject the OAG child-work contract.", CODEX_ROOT / "hooks.json"))
+    if "python .codex/hooks/codex_subagent_oag_start.py" not in start_windows:
+        issues.append(issue("SUBAGENT_START_WINDOWS_HOOK_MISSING", "SubagentStart must use python on Windows.", CODEX_ROOT / "hooks.json"))
     subagent = (((hooks.get("hooks") or {}).get("SubagentStop") or [{}])[0])
     matcher = str(subagent.get("matcher") or "")
     if "custom-researcher" in matcher or "custom-reviewer" in matcher:
@@ -716,6 +734,10 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
         text = read_text(mode_trigger)
         if "oag-mode-directive.md" not in text:
             issues.append(issue("OAG_DIRECTIVE_FILE_POLICY", "OAG mode trigger must load the file-backed directive.", mode_trigger))
+        if r"^\s*oag(?:\s|:|/|$)" not in text:
+            issues.append(issue("OAG_TRIGGER_PREFIX_POLICY", "OAG mode trigger must require lowercase `oag` as a command prefix.", mode_trigger))
+        if "re.IGNORECASE" in text:
+            issues.append(issue("OAG_TRIGGER_CASE_POLICY", "OAG mode trigger must not treat uppercase OAG acronym mentions as command activation.", mode_trigger))
         for stale_trigger in ("ipdev", "auto research", "autores", "multi-agent", "rocev"):
             if stale_trigger in text:
                 issues.append(issue("OAG_TRIGGER_TOO_BROAD", f"OAG mode trigger must not match {stale_trigger!r}.", mode_trigger))

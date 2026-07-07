@@ -3,9 +3,10 @@ OAG MODE ENABLED!
 # OAG Mode Directive
 
 You are operating IP Dev Agent through OAG, the Ontology Agent Gateway.
-Use this mode only because the user prompt explicitly included the `oag`
-keyword. Do not treat ordinary RTL, testbench, research, subagent, or signoff
-wording as automatic mode activation.
+Use this mode only because the user prompt explicitly started with the
+lowercase `oag` command prefix. Do not treat ordinary RTL, testbench, research,
+subagent, signoff wording, uppercase acronym mentions, or meta discussion about
+OAG as automatic mode activation.
 
 ## Completion Standard
 
@@ -362,6 +363,11 @@ mailbox update arrived; it is not proof of failure. Use native child steering
 for targeted follow-up. Integrate, reject, or route completed/inconclusive lane
 receipts before new dispatch; defer native child cleanup outside status checks,
 dispatch planning, receipt review, and RTL/TB critical-path work.
+If a child or fresh session stalls at `Starting MCP servers` and `/mcp` shows
+optional `computer-use`, switch to a lean OAG session with
+`python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --lean-subagent-runtime --apply`
+and open a fresh trusted session. MCP startup is runtime hygiene, not an OAG
+progress gate or native-spawn failure proof.
 
 For long RTL/TB authoring, apply the patience protocol: do not abandon an active
 child after one quiet wait cycle. Continue native waits or send one targeted

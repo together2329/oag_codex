@@ -7,6 +7,8 @@ from collections import Counter; from datetime import datetime, timezone; from p
 
 SCHEMA_VERSION = "oag_debug_eval_metrics.v1"; EVIDENCE_RE = re.compile(r"OAG_EVIDENCE_RECORDED:\s*`?([^`\s,]+)`?")
 AGENT_RE = re.compile(r"\b(close_agent|wait_agent|spawn_agent|multi_agent|send_message_to_thread|handoff_thread)\b"); INTERVIEW_RE = re.compile(r"\b(deep[-_ ]interview|interview hook|oag-deep-interview)\b", re.I)
+MCP_START_RE = re.compile(r"Starting MCP servers|MCP Tools|/mcp", re.I)
+COMPUTER_USE_RE = re.compile(r"computer-use|Codex Computer Use", re.I)
 
 
 def as_dict(value: object) -> dict[str, object]:
@@ -182,6 +184,7 @@ def summarize_session(path: Path, long_tool_s: float) -> dict[str, object]:
     started: dict[str, dict[str, object]] = {}
     done: list[dict[str, object]] = []
     evidence: set[str] = set()
+    runtime_markers: Counter[str] = Counter()
 
     for event in events:
         at = parse_ts(event.get("timestamp"))
@@ -216,6 +219,10 @@ def summarize_session(path: Path, long_tool_s: float) -> dict[str, object]:
 
         text = message_text(payload)
         if text:
+            if MCP_START_RE.search(text):
+                runtime_markers["mcp_start_seen"] += 1
+            if COMPUTER_USE_RE.search(text):
+                runtime_markers["computer_use_seen"] += 1
             for match in EVIDENCE_RE.finditer(text):
                 marker = clean_evidence(match.group(1))
                 if marker:
@@ -255,6 +262,7 @@ def summarize_session(path: Path, long_tool_s: float) -> dict[str, object]:
             "long_calls": top_numeric(long_calls, "duration_s"),
         },
         "evidence_recorded": sorted(evidence),
+        "runtime_markers": dict(runtime_markers),
     }
 
 
@@ -334,7 +342,13 @@ def summarize_hooks(paths: list[str]) -> dict[str, object]:
             rows.append({"path": str(path), "read_error": str(exc), "status": "unreadable"})
             continue
         row_markers: list[str] = []
-        for name, seen in (("oag_mode_enabled", "OAG MODE ENABLED" in text), ("native_subagent_guard", "NATIVE CODEX SUBAGENT GUARD" in text), ("interview", bool(INTERVIEW_RE.search(text)))):
+        for name, seen in (
+            ("oag_mode_enabled", "OAG MODE ENABLED" in text),
+            ("native_subagent_guard", "NATIVE CODEX SUBAGENT GUARD" in text),
+            ("interview", bool(INTERVIEW_RE.search(text))),
+            ("mcp_start", bool(MCP_START_RE.search(text))),
+            ("computer_use", bool(COMPUTER_USE_RE.search(text))),
+        ):
             if seen:
                 row_markers.append(name)
                 markers[name] += 1
@@ -360,6 +374,11 @@ def derive(report: dict[str, object], long_tool_s: float) -> tuple[list[dict[str
             positives.append(f"{Path(label).name}: evidence marker recorded")
         if data.get("event_count") and calls.get("open") == 0:
             positives.append(f"{Path(label).name}: no open tool calls in supplied log")
+        markers = as_dict(data.get("runtime_markers"))
+        if markers.get("computer_use_seen"):
+            findings.append({"code": "COMPUTER_USE_MCP_SEEN", "path": label, "count": markers.get("computer_use_seen")})
+        if markers.get("mcp_start_seen"):
+            findings.append({"code": "MCP_STARTUP_SEEN", "path": label, "count": markers.get("mcp_start_seen")})
 
     for receipt in as_list(report.get("receipts")):
         data = as_dict(receipt)
@@ -380,6 +399,10 @@ def derive(report: dict[str, object], long_tool_s: float) -> tuple[list[dict[str
     hook_markers = as_dict(hooks.get("markers"))
     if hook_markers.get("interview"):
         findings.append({"code": "INTERVIEW_HOOK_SEEN", "count": hook_markers.get("interview")})
+    if hook_markers.get("computer_use"):
+        findings.append({"code": "COMPUTER_USE_MCP_SEEN", "count": hook_markers.get("computer_use")})
+    if hook_markers.get("mcp_start"):
+        findings.append({"code": "MCP_STARTUP_SEEN", "count": hook_markers.get("mcp_start")})
 
     codes = {str(item.get("code")) for item in findings}
     recommendations: list[str] = []
@@ -389,6 +412,8 @@ def derive(report: dict[str, object], long_tool_s: float) -> tuple[list[dict[str
         recommendations.append("Split long operations into bounded single-purpose calls and record the artifact path before dispatching more work.")
     if "INTERVIEW_HOOK_SEEN" in codes:
         recommendations.append("Gate interview hooks behind an explicit user request or a lock-blocking ambiguity condition.")
+    if "COMPUTER_USE_MCP_SEEN" in codes or "MCP_STARTUP_SEEN" in codes:
+        recommendations.append("For OAG subagent-heavy sessions, disable optional UI/MCP startup with oag_codex_config_doctor.py --lean-subagent-runtime and restart into a fresh trusted session.")
     if not recommendations:
         recommendations.append("No runtime tracking issue was detected in the supplied artifacts.")
     return findings, positives, recommendations

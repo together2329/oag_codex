@@ -10,9 +10,10 @@ from typing import Any
 
 GUARD_MARKER = "NATIVE CODEX SUBAGENT GUARD"
 PROMPT_KEYS = ("prompt", "user_prompt", "userPrompt", "message", "content", "input")
+MY_REQUEST_HEADER_RE = re.compile(r"(?im)^##\s*My request for Codex:\s*$")
 SUBAGENT_REQUEST_RE = re.compile(
     r"(?<![A-Za-z0-9_-])("
-    r"sub\s*agent|subagent|sub-agent|"
+    r"sub\s*agents?|subagents?|sub-agents?|"
     r"spawn[_\s-]*agent|"
     r"close[_\s-]*agent|"
     r"wait[_\s-]*agent|"
@@ -22,6 +23,31 @@ SUBAGENT_REQUEST_RE = re.compile(
     r"agent\s+per|"
     r"서브\s*에이전트"
     r")(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
+SUBAGENT_COMMAND_RE = re.compile(
+    r"("
+    r"\b(use|run|spawn|start|launch|open|dispatch|assign|send|close|wait\s+for|"
+    r"clean\s*up|cleanup|fan\s*out|parallelize|parallel)\b.{0,80}"
+    r"(sub\s*agents?|subagents?|sub-agents?|spawn[_\s-]*agent|close[_\s-]*agent|"
+    r"wait[_\s-]*agent|multi[_\s-]*agent(?:_v1)?|parallel\s+agents?)"
+    r"|"
+    r"(sub\s*agents?|subagents?|sub-agents?|multi[_\s-]*agent(?:_v1)?|parallel\s+agents?)"
+    r".{0,80}\b(run|spawn|start|launch|dispatch|implement|review|test|verify)\b"
+    r"|"
+    r"(sub\s*agents?|subagents?|sub-agents?|서브\s*에이전트).{0,30}"
+    r"(로|으로|에게|써|사용|실행|돌려|붙여|맡겨|열어|닫아)"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+SUBAGENT_META_DISCUSSION_RE = re.compile(
+    r"("
+    r"\b(why|what|how|explain|diagnose|debug|fix|reduce|too\s+many|excessive|"
+    r"iteration|iterations|loop|loops|repeat|repeated|trigger|activate|enable|"
+    r"guard|hook|policy|instruction|config|workflow|orchestration)\b"
+    r"|왜|뭐|무엇|어떻게|설명|진단|디버그|고쳐|수정|줄여|너무|많|반복|자꾸|"
+    r"트리거|활성|가드|훅|설정|정책|지침|워크플로|오케스트레이션"
+    r")",
     re.IGNORECASE,
 )
 
@@ -87,6 +113,22 @@ def transcript_already_has_guard(payload: dict[str, Any]) -> bool:
     return False
 
 
+def effective_prompt_text(prompt: str) -> str:
+    matches = list(MY_REQUEST_HEADER_RE.finditer(prompt or ""))
+    if not matches:
+        return prompt
+    return prompt[matches[-1].end() :].strip()
+
+
+def should_inject_guard(prompt: str) -> bool:
+    prompt = effective_prompt_text(prompt)
+    if not SUBAGENT_REQUEST_RE.search(prompt):
+        return False
+    if SUBAGENT_META_DISCUSSION_RE.search(prompt) and not SUBAGENT_COMMAND_RE.search(prompt):
+        return False
+    return True
+
+
 def guard_text() -> str:
     return "\n".join(
         [
@@ -105,6 +147,7 @@ def guard_text() -> str:
             "Do not make child-thread closedness a progress gate. Use OAG dispatch, ownership lock, wavefront task status, receipts, and reviewer decisions as the gates.",
             "After a child receipt is integrated, rejected, or routed to `INCONCLUSIVE`/`BLOCKED`/`FAIL`, defer cleanup. If cleanup is needed, run one standalone bounded cleanup call after the OAG state transition is recorded.",
             "If stale completed children have no deliverable receipt, record the wavefront task outcome from available evidence and start a fresh dispatch from the current baseline; do not mass-close stale children to unblock new work.",
+            "If a child/thread stalls at `Starting MCP servers` and shows optional `computer-use`, treat that as runtime startup noise. Use `python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --lean-subagent-runtime --apply` and open a fresh trusted session; do not make MCP startup or close cleanup an OAG progress gate.",
             "When an OAG wavefront reports two or more dependency-ready non-conflicting tasks, spawn the whole ready wave as a native subagent batch; do not serialize it unless dependency, ownership, or runtime budget blocks it.",
             "Treat large write-capable TB scenario shards as a runtime-budget blocker by default: open one or two children first, require early heartbeat or owned-path evidence, then open the next scenario shard.",
             "If a claimed task has no heartbeat, owned file, or receipt after a bounded status request, route the existing dispatch to `INCONCLUSIVE`/`BLOCKED` before any replacement; never start a replacement under the active lock.",
@@ -121,7 +164,7 @@ def guard_text() -> str:
 def main() -> int:
     payload = read_payload()
     prompt = first_text(payload)
-    if not SUBAGENT_REQUEST_RE.search(prompt):
+    if not should_inject_guard(prompt):
         return 0
     if transcript_already_has_guard(payload):
         return 0

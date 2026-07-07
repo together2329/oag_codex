@@ -2111,6 +2111,12 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
         for hook in group.get("hooks", [])
         if isinstance(hook, dict)
     ]
+    user_windows_commands = [
+        hook.get("commandWindows")
+        for group in events.get("UserPromptSubmit", [])
+        for hook in group.get("hooks", [])
+        if isinstance(hook, dict)
+    ]
     stop_commands = [
         hook.get("command")
         for group in events.get("Stop", [])
@@ -2123,10 +2129,19 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
         for hook in group.get("hooks", [])
         if isinstance(hook, dict)
     ]
+    post_compact_windows_commands = [
+        hook.get("commandWindows")
+        for group in events.get("PostCompact", [])
+        for hook in group.get("hooks", [])
+        if isinstance(hook, dict)
+    ]
     assert "python3 .codex/hooks/codex_context_inject.py" in user_commands, hooks
     assert "python3 .codex/hooks/codex_draft_pressure.py" in user_commands, hooks
+    assert "python .codex/hooks/codex_context_inject.py" in user_windows_commands, hooks
+    assert "python .codex/hooks/codex_draft_pressure.py" in user_windows_commands, hooks
     assert any("codex_stop_gate.py" in command for command in stop_commands), hooks
     assert "python3 .codex/hooks/codex_context_inject.py" in post_compact_commands, hooks
+    assert "python .codex/hooks/codex_context_inject.py" in post_compact_windows_commands, hooks
     return {
         "hooks_json": str(smoke_test.ROOT / "hooks.json"),
         "user_prompt_submit_hooks": len(user_commands),

@@ -54,7 +54,7 @@ def scan_runtime_sources() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     except Exception as exc:
         issues.append(issue("HOOKS_JSON_LOAD", str(exc), str(hooks)))
         return issues, warnings
-    commands: list[str] = []
+    commands: list[tuple[str, str]] = []
     for entries in payload.get("hooks", {}).values():
         if not isinstance(entries, list):
             continue
@@ -63,21 +63,27 @@ def scan_runtime_sources() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
                 continue
             for hook in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
                 if isinstance(hook, dict) and hook.get("command"):
-                    commands.append(str(hook["command"]))
-    for command in commands:
+                    commands.append(("command", str(hook["command"])))
+                    if hook.get("commandWindows"):
+                        commands.append(("commandWindows", str(hook["commandWindows"])))
+                    else:
+                        warnings.append(issue("HOOK_WINDOWS_COMMAND_MISSING", "hook has no Windows-specific command override", str(hook["command"])))
+    for field, command in commands:
         if any(token in command for token in FORBIDDEN_RUNTIME_TOKENS):
-            issues.append(issue("HOOK_COMMAND_SHELL_ASSUMPTION", "hook command depends on a shell-specific executable", "hooks.json"))
-        if not command.startswith("python3 "):
-            warnings.append(issue("HOOK_COMMAND_NOT_PYTHON3", "hook command is not a direct python3 invocation", command))
+            issues.append(issue("HOOK_COMMAND_SHELL_ASSUMPTION", f"{field} depends on a shell-specific executable", "hooks.json"))
+        if field == "command" and not command.startswith("python3 "):
+            warnings.append(issue("HOOK_COMMAND_NOT_PYTHON3", "default hook command is not a direct python3 invocation", command))
+        if field == "commandWindows" and not command.startswith("python "):
+            warnings.append(issue("HOOK_WINDOWS_COMMAND_NOT_PYTHON", "Windows hook command is not a direct python invocation", command))
     return issues, warnings
 
 
 def check_command_splitting() -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
-    argv, error = oag_spec_to_rtl_loop._split_command('python3 -c "print(1)"')  # pylint: disable=protected-access
-    if error or argv[:2] != ["python3", "-c"]:
+    argv, error = oag_spec_to_rtl_loop._split_command('python -c "print(1)"')  # pylint: disable=protected-access
+    if error or argv[:2] != ["python", "-c"]:
         issues.append(issue("ARGV_SPLIT_DIRECT_COMMAND", f"direct command split failed: argv={argv!r} error={error!r}"))
-    argv, error = oag_spec_to_rtl_loop._split_command("python3 good.py && python3 bad.py")  # pylint: disable=protected-access
+    argv, error = oag_spec_to_rtl_loop._split_command("python good.py && python bad.py")  # pylint: disable=protected-access
     if not error:
         issues.append(issue("ARGV_SPLIT_SHELL_META_ALLOWED", f"shell metacharacter command should be rejected: {argv!r}"))
     return issues

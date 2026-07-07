@@ -2,8 +2,8 @@
 
 This file governs maintenance of the OAG pack under `.codex/`. The repository
 root intentionally does not carry `AGENTS.md`; runtime OAG behavior is activated
-by the exact `oag` keyword through `.codex/oag/oag-mode-directive.md` and the
-UserPromptSubmit hook.
+by a lowercase `oag` command prefix through `.codex/oag/oag-mode-directive.md`
+and the UserPromptSubmit hook.
 
 Primary assets:
 
@@ -229,9 +229,14 @@ manifest/tag readiness, and patch/minor/major stewardship, and
 readiness.
 `oag_codex_config_doctor.py --apply` removes known OAG MCP server registrations
 from user config while preserving unrelated Codex MCP tools such as browser or
-editor helpers.
+editor helpers. For OAG subagent-heavy sessions, use
+`python3 .codex/scripts/oag_codex_config_doctor.py --include-omo-plugin-features --lean-subagent-runtime --apply`
+before opening a fresh trusted session to disable optional UI/MCP plugins such
+as `computer-use@openai-bundled`. This is a lean OAG session profile, not a
+native-spawn availability test.
 Native subagents must not depend on MCP startup for APB/RTL/TB/lint/sim/gate
-execution.
+execution, and optional MCP startup or cleanup closedness must not be an OAG
+progress gate.
 Use `.codex/scripts/oag_protected_receipt_audit.py` to audit protected
 post-lock IP artifacts in ignored/untracked product directories against
 dispatch-backed native subagent receipts.
@@ -405,8 +410,8 @@ native-spawn blocker and ask the user to restart/open a fresh trusted `ip_dev`
 session. Do not replace the child agent with Python, shell scripts, or manual
 role-play unless the user explicitly waives the native-subagent requirement.
 
-Use the exact `oag` keyword for OAG mode in team workflows. Hooks should not
-inject OAG mode merely because a prompt mentions generic RTL, testing,
+Use the lowercase `oag` command prefix for OAG mode in team workflows. Hooks
+should not inject OAG mode merely because a prompt mentions generic RTL, testing,
 subagent, auto-research, or signoff terms unless an IP directory is explicit.
 
 Codex subagents are native Codex collaboration workers, not Python-triggered

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex UserPromptSubmit hook: inject OAG mode directive on exact `oag` trigger."""
+"""Codex UserPromptSubmit hook: inject OAG mode directive on `oag` command."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from oag_hook_utils import hook_additional_context, prompt_text, read_payload
 
 ROOT = Path(__file__).resolve().parents[1]
 DIRECTIVE_PATH = ROOT / "oag" / "oag-mode-directive.md"
-TRIGGER_RE = re.compile(r"(?<![A-Za-z0-9_-])oag(?![A-Za-z0-9_-])", re.IGNORECASE)
+TRIGGER_RE = re.compile(r"^\s*oag(?:\s|:|/|$)")
 DIRECTIVE_MARKER = "OAG MODE ENABLED!"
 
 

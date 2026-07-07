@@ -1,12 +1,29 @@
 ---
 name: oag-ip-workflow
-description: Use when working on hardware IP requirements, RTL, testbench, simulation, coverage, signoff, common design-rule review, or evidence review through the Ontology Agent Gateway. Calls OAG before acting, records ROCEV-backed findings with explicit validation status, checks closure matrix and completion decisions, keeps scoreboard evidence TB/simulator agnostic through scoreboard_rows.v1, protects locked truth fields, preserves append-only evidence ledger events, enforces monotonic closure and evidence freshness hashes, writes decision receipts, and applies common design rules such as same-cycle priority, event/state commit consistency, contract-to-proof coverage, fault-model coverage, verification methodology, verification role decomposition, CDC/RDC domain safety, PPA-aware RTL, and RTL language subset.
+description: Use for concrete hardware IP requirements, RTL, testbench, simulation, coverage, signoff, common design-rule review, or evidence work when the user starts with the lowercase `oag` command or references a specific IP workspace/file/evidence artifact. Do not use for meta/manual discussion about OAG, Codex behavior, subagent policy, or workflow design unless the user explicitly asks to run OAG on an IP. Calls OAG before acting, records ROCEV-backed findings with explicit validation status, protects locked truth fields, writes decision receipts, and applies common design rules such as same-cycle priority, event/state commit consistency, verification methodology, CDC/RDC domain safety, PPA-aware RTL, and RTL language subset.
 ---
 
 # OAG IP Workflow
 
 Use this skill for hardware IP work where feature, requirement, obligation,
 contract, evidence, and validation must stay explicit.
+
+## Activation Boundaries
+
+Full OAG mode requires the prompt to start with the lowercase `oag` command
+prefix, for example `oag inspect <ip>` or `oag: run lock readiness`.
+
+Without that command prefix, use only a lightweight OAG guard when the prompt
+names a concrete IP workspace, file, or artifact whose edit/review could affect
+locked truth, RTL, TB, simulation, coverage, evidence, gate review, or closure.
+The guard may resolve the owning IP, check lock/write boundaries, and refuse
+unsafe writes, but it must not expand into deep interview, lock, wavefront,
+dispatch, or closure flow unless the user asks for that operation.
+
+Do not activate this workflow for meta/manual discussion about OAG itself,
+Codex rules, hooks, subagent orchestration, trigger behavior, or how the
+system should be configured. Answer those as system-design or repository
+maintenance questions unless the user explicitly asks to run OAG on an IP.
 
 ## Skill Router
 
@@ -595,9 +612,10 @@ Before using these roles, validate the catalog:
 python3 .codex/scripts/oag_agent_catalog_check.py
 ```
 
-Team prompts should use the exact `oag` keyword when they want OAG context and
-subagent workflow guidance. Terms such as `auto research`, `subagent`, and
-`signoff` describe work, but do not activate OAG mode by themselves. The
+Team prompts should use the lowercase `oag` command prefix when they want OAG
+context and subagent workflow guidance. Terms such as `auto research`,
+`subagent`, and `signoff`, uppercase OAG acronym mentions, or meta discussion
+about OAG describe work but do not activate OAG mode by themselves. The
 project config requests native subagents with
 `[features].multi_agent = true` and `[features].child_agents_md = true`, while
 forcing `[features.multi_agent_v2].enabled = false`. This matches the OMO Codex
@@ -621,6 +639,21 @@ spawning is unavailable, report the observed native-spawn blocker and ask the
 user to restart/open a fresh trusted `ip_dev` session. Do not continue by
 manually applying the child role unless the user explicitly waives the native
 subagent requirement.
+
+OAG subagents do not need UI automation MCPs for RTL/TB/lint/sim/gate work. If
+a thread stalls at `Starting MCP servers` and `/mcp` shows optional
+`computer-use`, use the lean OAG profile before opening a fresh trusted session:
+
+```bash
+python3 .codex/scripts/oag_codex_config_doctor.py \
+  --include-omo-plugin-features \
+  --lean-subagent-runtime \
+  --apply
+```
+
+This disables `computer-use@openai-bundled` for the OAG-heavy session profile.
+It is not a native-subagent availability test, and MCP startup must not become a
+dispatch, receipt, lock, or wavefront progress gate.
 
 Subagents are native Codex collaboration workers, not Python runners. Use
 self-contained spawn assignments like this when the v1 tool is directly

@@ -21,6 +21,8 @@ except ModuleNotFoundError:  # Python 3.10 and older
 FEATURES = ("multi_agent", "child_agents_md", "hooks")
 OPTIONAL_OMO_FEATURES = ("plugins", "plugin_hooks")
 OAG_MCP_SERVER_NAMES = ("ip-dev-agent-oag", "ontology" + "-ip-agent-oag")
+LEAN_RUNTIME_PLUGINS = ("computer-use@openai-bundled",)
+LEAN_RUNTIME_PLUGIN_MCP_SERVERS = (("computer-use@openai-bundled", "computer-use"),)
 MULTI_AGENT_V2_MAX_THREADS = 1000
 MULTI_AGENT_V2_GUARD_COMMENT = (
     "# Managed by IP Dev Agent: multi_agent_v2 is re-disabled on every Codex session start\n"
@@ -157,6 +159,14 @@ def remove_oag_mcp_servers(text: str) -> str:
     return remove_sections(text, sections)
 
 
+def disable_plugin(text: str, plugin_name: str) -> str:
+    return ensure_setting(text, f'plugins."{plugin_name}"', "enabled", "false")
+
+
+def disable_plugin_mcp_server(text: str, plugin_name: str, server_name: str) -> str:
+    return ensure_setting(text, f'plugins."{plugin_name}".mcp_servers.{server_name}', "enabled", "false")
+
+
 def section_lines(text: str, section: str) -> list[str]:
     lines = text.splitlines()
     bounds = find_section(lines, section)
@@ -176,7 +186,7 @@ def needs_multi_agent_v2_guard_patch(text: str) -> bool:
     return not any(re.match(r"^\s*enabled\s*=\s*false(?:\s*#.*)?\s*$", line) for line in v2_lines)
 
 
-def desired_config(text: str, *, include_omo_plugin_features: bool) -> str:
+def desired_config(text: str, *, include_omo_plugin_features: bool, lean_subagent_runtime: bool) -> str:
     should_annotate_v2_guard = needs_multi_agent_v2_guard_patch(text)
     next_text = text if text.endswith("\n") or not text else text + "\n"
     next_text = remove_oag_mcp_servers(next_text)
@@ -189,12 +199,17 @@ def desired_config(text: str, *, include_omo_plugin_features: bool) -> str:
     next_text = ensure_setting(next_text, "features.multi_agent_v2", "enabled", "false")
     next_text = ensure_setting(next_text, "features.multi_agent_v2", "max_concurrent_threads_per_session", str(MULTI_AGENT_V2_MAX_THREADS))
     next_text = ensure_min_int_setting(next_text, "agents", "max_depth", 1)
+    if lean_subagent_runtime:
+        for plugin_name in LEAN_RUNTIME_PLUGINS:
+            next_text = disable_plugin(next_text, plugin_name)
+        for plugin_name, server_name in LEAN_RUNTIME_PLUGIN_MCP_SERVERS:
+            next_text = disable_plugin_mcp_server(next_text, plugin_name, server_name)
     if should_annotate_v2_guard and "[features.multi_agent_v2]" in next_text and "openai/codex#26753" not in next_text:
         next_text = next_text.replace("[features.multi_agent_v2]", f"{MULTI_AGENT_V2_GUARD_COMMENT}[features.multi_agent_v2]", 1)
     return next_text
 
 
-def config_status(config: dict[str, Any], *, include_omo_plugin_features: bool) -> list[dict[str, str]]:
+def config_status(config: dict[str, Any], *, include_omo_plugin_features: bool, lean_subagent_runtime: bool) -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     features = config.get("features") if isinstance(config.get("features"), dict) else {}
     agents = config.get("agents") if isinstance(config.get("agents"), dict) else {}
@@ -217,17 +232,29 @@ def config_status(config: dict[str, Any], *, include_omo_plugin_features: bool) 
     for server_name in OAG_MCP_SERVER_NAMES:
         if server_name in mcp_servers:
             issues.append(issue("OAG_MCP_ENABLED", f"[mcp_servers.{server_name}] must be removed; OAG uses scripts/skills/hooks, not an MCP server."))
+    if lean_subagent_runtime:
+        plugins = config.get("plugins") if isinstance(config.get("plugins"), dict) else {}
+        for plugin_name in LEAN_RUNTIME_PLUGINS:
+            plugin = plugins.get(plugin_name) if isinstance(plugins.get(plugin_name), dict) else {}
+            if plugin.get("enabled") is True:
+                issues.append(issue("LEAN_RUNTIME_PLUGIN_ENABLED", f"[plugins.\"{plugin_name}\"].enabled should be false for OAG subagent-heavy sessions."))
+        for plugin_name, server_name in LEAN_RUNTIME_PLUGIN_MCP_SERVERS:
+            plugin = plugins.get(plugin_name) if isinstance(plugins.get(plugin_name), dict) else {}
+            mcp_servers = plugin.get("mcp_servers") if isinstance(plugin.get("mcp_servers"), dict) else {}
+            mcp_server = mcp_servers.get(server_name) if isinstance(mcp_servers.get(server_name), dict) else {}
+            if mcp_server.get("enabled") is True:
+                issues.append(issue("LEAN_RUNTIME_MCP_SERVER_ENABLED", f"[plugins.\"{plugin_name}\".mcp_servers.{server_name}].enabled should be false for OAG subagent-heavy sessions."))
     return issues
 
 
-def run(config_path: Path, *, apply: bool, include_omo_plugin_features: bool) -> dict[str, Any]:
+def run(config_path: Path, *, apply: bool, include_omo_plugin_features: bool, lean_subagent_runtime: bool = False) -> dict[str, Any]:
     before = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     before_payload, parse_issues = try_parse_toml(before)
     before_issues = [
         *parse_issues,
-        *config_status(before_payload, include_omo_plugin_features=include_omo_plugin_features),
+        *config_status(before_payload, include_omo_plugin_features=include_omo_plugin_features, lean_subagent_runtime=lean_subagent_runtime),
     ]
-    after = desired_config(before, include_omo_plugin_features=include_omo_plugin_features)
+    after = desired_config(before, include_omo_plugin_features=include_omo_plugin_features, lean_subagent_runtime=lean_subagent_runtime)
     changed = after != (before if before.endswith("\n") or not before else before + "\n")
     backup_path = None
 
@@ -244,7 +271,7 @@ def run(config_path: Path, *, apply: bool, include_omo_plugin_features: bool) ->
     final_payload, final_parse_issues = try_parse_toml(final_text)
     final_issues = [
         *final_parse_issues,
-        *config_status(final_payload, include_omo_plugin_features=include_omo_plugin_features),
+        *config_status(final_payload, include_omo_plugin_features=include_omo_plugin_features, lean_subagent_runtime=lean_subagent_runtime),
     ]
     return {
         "schema_version": "oag_codex_config_doctor.v1",
@@ -256,6 +283,7 @@ def run(config_path: Path, *, apply: bool, include_omo_plugin_features: bool) ->
         "before_issues": before_issues,
         "issues": final_issues,
         "note": "Restart Codex or open a new trusted project session after applying config changes.",
+        "lean_subagent_runtime": lean_subagent_runtime,
     }
 
 
@@ -264,10 +292,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default=str(default_config_path()), help="Path to Codex config.toml.")
     parser.add_argument("--apply", action="store_true", help="Patch the config file. Default is dry-run.")
     parser.add_argument("--include-omo-plugin-features", action="store_true", help="Also force plugins=true and plugin_hooks=true like OMO Codex.")
+    parser.add_argument("--lean-subagent-runtime", action="store_true", help="Disable optional UI/MCP plugins that are not needed for OAG subagent-heavy sessions.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args(argv)
 
-    result = run(Path(args.config).expanduser(), apply=args.apply, include_omo_plugin_features=args.include_omo_plugin_features)
+    result = run(
+        Path(args.config).expanduser(),
+        apply=args.apply,
+        include_omo_plugin_features=args.include_omo_plugin_features,
+        lean_subagent_runtime=args.lean_subagent_runtime,
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     elif result["status"] == "pass":
