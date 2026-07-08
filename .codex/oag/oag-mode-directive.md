@@ -416,8 +416,12 @@ proceed because required dispatch, scope lock, authoring packet, runtime, or
 tool context is missing, it may instead write
 `schema_version=oag_subagent_diagnostic_receipt.v1` with `BLOCKED`,
 `INCONCLUSIVE`, or `FAIL`, a `blocker_class`, non-empty `blockers`, empty
-`changed_paths`, empty `generated_side_effects`, and
-`may_claim_complete=false`.
+`changed_paths`, empty `generated_side_effects`, empty `evidence_outputs`,
+`diagnostic_only=true`, `covers_writes=false`, `dispatch_verified=false`,
+`implementation_evidence=false`, and `may_claim_complete=false`. Diagnostic
+receipts must not include `dispatch_id`, `dispatch_path`, or `receipt_path`, and
+are never implementation evidence, write coverage, handoff completion, or
+dispatch verification.
 
 Active child agents that own evidence block parent closure until their output is
 integrated, validated, or explicitly rejected.

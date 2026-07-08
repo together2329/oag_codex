@@ -64,7 +64,10 @@ tool side effects, and receipt path. If required scope, dispatch, or evidence
 instructions are missing, do not guess; write a diagnostic receipt with
 schema_version=oag_subagent_diagnostic_receipt.v1, status BLOCKED or
 INCONCLUSIVE, a blocker_class, non-empty blockers, empty changed_paths, empty
-generated_side_effects, and may_claim_complete=false.
+generated_side_effects, empty evidence_outputs, diagnostic_only=true,
+covers_writes=false, dispatch_verified=false, implementation_evidence=false,
+and may_claim_complete=false. Do not include dispatch_id, dispatch_path, or
+receipt_path in diagnostic receipts.
 
 Stay inside your assigned shard. Do not manually edit protected truth,
 generated ontology files, .codex files, scripts, or unrelated paths. If your
@@ -94,7 +97,8 @@ Before stopping, write a non-empty OAG subagent receipt under
 receipts must include dispatch_id, dispatch_path, changed_paths,
 generated_side_effects, and may_claim_complete=false. Pre-dispatch or
 precondition blockers must use oag_subagent_diagnostic_receipt.v1 and must not
-claim changed paths. End with:
+claim changed paths, generated side effects, evidence outputs, or dispatch
+verification. End with:
 OAG_EVIDENCE_RECORDED: <relative-path>
 """
     return {

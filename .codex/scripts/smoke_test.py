@@ -6005,7 +6005,11 @@ def main() -> int:
             "blockers": ["assignment did not include dispatch_id or dispatch_path"],
             "changed_paths": [],
             "generated_side_effects": [],
-            "evidence_outputs": ["knowledge/subagents/pre_dispatch_blocked.json"],
+            "evidence_outputs": [],
+            "diagnostic_only": True,
+            "covers_writes": False,
+            "dispatch_verified": False,
+            "implementation_evidence": False,
             "may_claim_complete": False,
             "created_at": "2026-01-01T00:00:00Z",
         }
@@ -6053,6 +6057,47 @@ def main() -> int:
         diagnostic_changed_payload = json.loads(diagnostic_changed_gate.stdout)
         assert diagnostic_changed_payload["decision"] == "block", diagnostic_changed_payload
         assert "changed_paths must be empty" in diagnostic_changed_payload["reason"], diagnostic_changed_payload
+        diagnostic_receipt.write_text(
+            json.dumps(
+                {**diagnostic_payload_body, "evidence_outputs": ["knowledge/subagents/pre_dispatch_blocked.json"]},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_evidence_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic_evidence.json")},
+        )
+        assert diagnostic_evidence_gate.returncode == 0, diagnostic_evidence_gate.stderr or diagnostic_evidence_gate.stdout
+        diagnostic_evidence_payload = json.loads(diagnostic_evidence_gate.stdout)
+        assert diagnostic_evidence_payload["decision"] == "block", diagnostic_evidence_payload
+        assert "evidence_outputs must be empty" in diagnostic_evidence_payload["reason"], diagnostic_evidence_payload
+        diagnostic_receipt.write_text(
+            json.dumps({**diagnostic_payload_body, "dispatch_path": "smoke_ip/knowledge/dispatches/fake.json"}, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_dispatch_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic_dispatch.json")},
+        )
+        assert diagnostic_dispatch_gate.returncode == 0, diagnostic_dispatch_gate.stderr or diagnostic_dispatch_gate.stdout
+        diagnostic_dispatch_payload = json.loads(diagnostic_dispatch_gate.stdout)
+        assert diagnostic_dispatch_payload["decision"] == "block", diagnostic_dispatch_payload
+        assert "dispatch_path is not allowed" in diagnostic_dispatch_payload["reason"], diagnostic_dispatch_payload
+        diagnostic_receipt.write_text(
+            json.dumps({**diagnostic_payload_body, "blockers": "assignment did not include dispatch_id"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_blockers_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic_blockers.json")},
+        )
+        assert diagnostic_blockers_gate.returncode == 0, diagnostic_blockers_gate.stderr or diagnostic_blockers_gate.stdout
+        diagnostic_blockers_payload = json.loads(diagnostic_blockers_gate.stdout)
+        assert diagnostic_blockers_payload["decision"] == "block", diagnostic_blockers_payload
+        assert "blockers must be a non-empty list" in diagnostic_blockers_payload["reason"], diagnostic_blockers_payload
         subprocess.run(["git", "init"], cwd=hook_cwd, text=True, capture_output=True, check=True)
         unlocked_hook_ip = hook_cwd / "unlocked_smoke_ip"
         (unlocked_hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
@@ -6098,6 +6143,19 @@ def main() -> int:
         main_gate_payload = json.loads(main_gate_blocked.stdout)
         assert main_gate_payload["status"] == "fail", main_gate_payload
         assert main_gate_payload["issues"][0]["code"] == "MAIN_AGENT_WRITE_WITHOUT_SUBAGENT", main_gate_payload
+        main_gate_diagnostic = main_gate_ip / "knowledge" / "subagents" / "diagnostic_only.json"
+        main_gate_diagnostic.parent.mkdir(parents=True, exist_ok=True)
+        main_gate_diagnostic.write_text(
+            json.dumps({**diagnostic_payload_body, "shard_scope": "main-write-gate"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        main_gate_still_blocked = run_main_write_gate(main_gate_ip, project_root=hook_cwd)
+        assert main_gate_still_blocked.returncode != 0, main_gate_still_blocked.stdout
+        main_gate_still_blocked_payload = json.loads(main_gate_still_blocked.stdout)
+        still_blocked_codes = {item["code"] for item in main_gate_still_blocked_payload["issues"]}
+        assert "MAIN_AGENT_WRITE_WITHOUT_SUBAGENT" in still_blocked_codes, main_gate_still_blocked_payload
+        assert "DIAGNOSTIC_RECEIPT_NOT_WRITE_COVERAGE" in still_blocked_codes, main_gate_still_blocked_payload
+        assert main_gate_still_blocked_payload["diagnostic_receipts"], main_gate_still_blocked_payload
         stop_gate_blocked = stop_gate({"ip_dir": str(main_gate_ip)}, {"OAG_PROJECT_ROOT": str(hook_cwd)})
         assert stop_gate_blocked.returncode == 0, stop_gate_blocked.stderr or stop_gate_blocked.stdout
         stop_gate_payload = json.loads(stop_gate_blocked.stdout)

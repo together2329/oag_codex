@@ -58,6 +58,10 @@ REQUIRED_HANDOFF_RECEIPT_FIELDS = {
     "changed_paths",
     "generated_side_effects",
     "evidence_outputs",
+    "diagnostic_only",
+    "covers_writes",
+    "dispatch_verified",
+    "implementation_evidence",
     "may_claim_complete",
     "created_at",
 }
@@ -92,6 +96,7 @@ DIAGNOSTIC_BLOCKER_CLASSES = {
     "tool_unavailable",
     "other",
 }
+FORBIDDEN_DIAGNOSTIC_FIELDS = {"dispatch_id", "dispatch_path", "receipt_path"}
 EXTERNAL_DELTA_ISSUES = {"ACTUAL_PATH_OUT_OF_SCOPE"}
 EXTERNAL_WAVEFRONT_LIFECYCLE_ISSUES = {
     "ACTUAL_PATH_OUT_OF_SCOPE",
@@ -212,21 +217,6 @@ def require_list(payload: dict, field: str) -> tuple[bool, str]:
     return True, ""
 
 
-def relative_path_field_inside_workspace(cwd: Path, payload: dict, field: str) -> tuple[bool, str]:
-    raw_path = payload.get(field)
-    if raw_path in (None, ""):
-        return True, ""
-    if not isinstance(raw_path, str):
-        return False, f"receipt.{field} must be a string when present"
-    if Path(raw_path).is_absolute():
-        return False, f"receipt.{field} must be relative when present"
-    try:
-        (cwd / raw_path).resolve().relative_to(cwd.resolve())
-    except ValueError:
-        return False, f"receipt.{field} escapes the workspace"
-    return True, ""
-
-
 def issue_summary(result: dict) -> str:
     issues = result.get("issues")
     if not isinstance(issues, list) or not issues:
@@ -343,6 +333,17 @@ def valid_diagnostic_receipt_payload(cwd: Path, payload: dict) -> tuple[bool, st
         return False, "diagnostic receipt.internal_gateway must be Ontology Agent Gateway"
     if payload.get("may_claim_complete") is not False:
         return False, "diagnostic receipt.may_claim_complete must be false"
+    for field in sorted(FORBIDDEN_DIAGNOSTIC_FIELDS):
+        if field in payload:
+            return False, f"diagnostic receipt.{field} is not allowed"
+    if payload.get("diagnostic_only") is not True:
+        return False, "diagnostic receipt.diagnostic_only must be true"
+    if payload.get("covers_writes") is not False:
+        return False, "diagnostic receipt.covers_writes must be false"
+    if payload.get("dispatch_verified") is not False:
+        return False, "diagnostic receipt.dispatch_verified must be false"
+    if payload.get("implementation_evidence") is not False:
+        return False, "diagnostic receipt.implementation_evidence must be false"
     role_name = payload.get("role_name")
     if not isinstance(role_name, str) or not role_name.startswith("oag-"):
         return False, "diagnostic receipt.role_name must name an OAG role"
@@ -354,8 +355,9 @@ def valid_diagnostic_receipt_payload(cwd: Path, payload: dict) -> tuple[bool, st
         return False, "diagnostic receipt.status must be BLOCKED, INCONCLUSIVE, or FAIL"
     if payload.get("blocker_class") not in DIAGNOSTIC_BLOCKER_CLASSES:
         return False, "diagnostic receipt.blocker_class is not an accepted blocker class"
-    if not has_blockers(payload):
-        return False, "diagnostic receipt.blockers must be non-empty"
+    blockers = payload.get("blockers")
+    if not isinstance(blockers, list) or not any(str(item).strip() for item in blockers):
+        return False, "diagnostic receipt.blockers must be a non-empty list"
     for field in ("changed_paths", "generated_side_effects", "evidence_outputs"):
         valid, reason = require_list(payload, field)
         if not valid:
@@ -364,10 +366,8 @@ def valid_diagnostic_receipt_payload(cwd: Path, payload: dict) -> tuple[bool, st
         return False, "diagnostic receipt.changed_paths must be empty"
     if payload.get("generated_side_effects"):
         return False, "diagnostic receipt.generated_side_effects must be empty"
-    for field in ("dispatch_path", "receipt_path"):
-        valid, reason = relative_path_field_inside_workspace(cwd, payload, field)
-        if not valid:
-            return False, reason
+    if payload.get("evidence_outputs"):
+        return False, "diagnostic receipt.evidence_outputs must be empty"
     return True, ""
 
 
@@ -431,9 +431,12 @@ def directive(payload: dict, reason: str) -> str:
         "bookkeeping issues and blockers are recorded. If the blocker happened before a "
         "valid dispatch, scope lock, authoring packet, runtime, or tool contract existed, "
         "write schema_version=oag_subagent_diagnostic_receipt.v1 with status BLOCKED, "
-        "INCONCLUSIVE, or FAIL, a blocker_class, non-empty blockers, empty changed_paths, "
-        "empty generated_side_effects, and may_claim_complete=false. Do not claim final "
-        "completion."
+        "INCONCLUSIVE, or FAIL, a blocker_class, non-empty blockers list, empty "
+        "changed_paths, empty generated_side_effects, empty evidence_outputs, "
+        "diagnostic_only=true, covers_writes=false, dispatch_verified=false, "
+        "implementation_evidence=false, and may_claim_complete=false. Diagnostic "
+        "receipts must not include dispatch_id, dispatch_path, or receipt_path. Do not "
+        "claim final completion."
     )
 
 

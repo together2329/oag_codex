@@ -356,9 +356,13 @@ Successful handoff statuses still require a verifier pass.
 If the blocker occurs before a valid dispatch exists, the child should write
 `schema_version=oag_subagent_diagnostic_receipt.v1` instead. Diagnostic receipts
 are only for `BLOCKED`, `INCONCLUSIVE`, or `FAIL`; they require `blocker_class`,
-non-empty `blockers`, empty `changed_paths`, empty `generated_side_effects`, and
-`may_claim_complete=false`. They preserve the reason the worker could not start
-without giving write coverage or replacing a dispatch-verified handoff receipt.
+non-empty `blockers`, empty `changed_paths`, empty `generated_side_effects`,
+empty `evidence_outputs`, `diagnostic_only=true`, `covers_writes=false`,
+`dispatch_verified=false`, `implementation_evidence=false`, and
+`may_claim_complete=false`. They must not include `dispatch_id`,
+`dispatch_path`, or `receipt_path`. They preserve the reason the worker could
+not start without giving write coverage or replacing a dispatch-verified handoff
+receipt.
 The same bounded stop rule applies to parent-created wavefront lifecycle
 mismatches such as `WAVEFRONT_TASK_UNCLAIMED` or
 `WAVEFRONT_CLAIM_DISPATCH_MISMATCH`: child agents may record
@@ -505,7 +509,8 @@ under `<ip>/knowledge/subagents/` and end with final line:
 blocked before a valid dispatch, lock, authoring packet, runtime, or tool
 contract exists may instead write
 `.codex/schemas/oag_subagent_diagnostic_receipt.schema.json`; that receipt must
-not list changed paths or generated side effects.
+not list changed paths, generated side effects, evidence outputs, dispatch ids,
+or dispatch paths.
 
 Use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or `RTL_HANDOFF_PASS` for a bounded
 worker receipt that passed its assigned handoff. Do not use status language that
@@ -542,6 +547,8 @@ evidence-producing child that lacks a valid
 `OAG_EVIDENCE_RECORDED: <relative-path>` receipt, dispatch link, schema-valid
 JSON payload, and path-scope verification for handoff receipts. It also accepts
 schema-valid diagnostic receipts for pre-dispatch or precondition
-`BLOCKED`/`INCONCLUSIVE`/`FAIL` reports with no changed paths. This mirrors the
-oh-my-openagent executor-verifier pattern while keeping final closure in OAG
-`check`/`decide`.
+`BLOCKED`/`INCONCLUSIVE`/`FAIL` reports with no changed paths, no evidence
+outputs, and explicit `covers_writes=false`. Diagnostic receipts are never
+implementation evidence, write coverage, handoff completion, or dispatch
+verification. This mirrors the oh-my-openagent executor-verifier pattern while
+keeping final closure in OAG `check`/`decide`.

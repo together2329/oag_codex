@@ -88,6 +88,9 @@ def validate_value(schema: dict[str, Any], value: Any, path: str = "$") -> list[
         min_items = schema.get("minItems")
         if isinstance(min_items, int) and len(value) < min_items:
             issues.append(_issue("MIN_ITEMS", path, f"expected at least {min_items} items"))
+        max_items = schema.get("maxItems")
+        if isinstance(max_items, int) and len(value) > max_items:
+            issues.append(_issue("MAX_ITEMS", path, f"expected at most {max_items} items"))
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(value):

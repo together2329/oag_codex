@@ -758,10 +758,12 @@ before write work that required dispatch, scope lock, authoring packet, runtime,
 or tool context is missing, it may write
 `schema_version=oag_subagent_diagnostic_receipt.v1` with `BLOCKED`,
 `INCONCLUSIVE`, or `FAIL`, a `blocker_class`, non-empty `blockers`, empty
-`changed_paths`, empty `generated_side_effects`, and
-`may_claim_complete=false`; diagnostic receipts preserve the blocker but do not
-cover implementation writes. After child completion, verify dispatch-backed
-handoffs before integration:
+`changed_paths`, empty `generated_side_effects`, empty `evidence_outputs`,
+`diagnostic_only=true`, `covers_writes=false`, `dispatch_verified=false`,
+`implementation_evidence=false`, and `may_claim_complete=false`; diagnostic
+receipts must not include `dispatch_id`, `dispatch_path`, or `receipt_path`.
+They preserve the blocker but do not cover implementation writes. After child
+completion, verify dispatch-backed handoffs before integration:
 
 ```bash
 python3 .codex/scripts/oag_dispatch.py verify \

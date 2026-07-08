@@ -231,6 +231,29 @@ def receipt_covered_paths(ip_dir: Path) -> tuple[set[str], list[dict[str, Any]]]
     return covered, receipts
 
 
+def diagnostic_receipts(ip_dir: Path) -> list[dict[str, Any]]:
+    receipts: list[dict[str, Any]] = []
+    for path in sorted(oag_paths.legacy_or_hidden(ip_dir, "knowledge/subagents").glob("*.json")):
+        try:
+            receipt = load_json(path)
+        except Exception:
+            continue
+        if not isinstance(receipt, dict):
+            continue
+        if receipt.get("schema_version") != "oag_subagent_diagnostic_receipt.v1":
+            continue
+        receipts.append(
+            {
+                "path": project_rel(path),
+                "role_name": str(receipt.get("role_name") or ""),
+                "status": str(receipt.get("status") or ""),
+                "blocker_class": str(receipt.get("blocker_class") or ""),
+                "covers_writes": str(receipt.get("covers_writes") or ""),
+            }
+        )
+    return receipts
+
+
 def safe_receipt_dispatch_ids(ip_dir: Path) -> set[str]:
     dispatch_ids: set[str] = set()
     for path in sorted(oag_paths.legacy_or_hidden(ip_dir, "knowledge/subagents").glob("*.json")):
@@ -319,6 +342,7 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
         return build_result(ip_dir, locked=locked, changes=changes, receipts=[], waiver=waiver, issues=issues)
 
     covered, receipts = receipt_covered_paths(ip_dir)
+    diagnostics = diagnostic_receipts(ip_dir)
     completed_dispatch_ids = safe_receipt_dispatch_ids(ip_dir)
     for conflict in active_dispatch_conflicts(ip_dir, changes, completed_dispatch_ids):
         issues.append(
@@ -352,7 +376,24 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
                 path,
             )
         )
-    return build_result(ip_dir, locked=locked, changes=changes, receipts=receipts, waiver=waiver, issues=issues)
+    if uncovered and diagnostics:
+        for receipt in diagnostics:
+            issues.append(
+                issue(
+                    "DIAGNOSTIC_RECEIPT_NOT_WRITE_COVERAGE",
+                    "Diagnostic subagent receipts are non-evidence reports and cannot cover locked implementation or verification writes.",
+                    receipt["path"],
+                )
+            )
+    return build_result(
+        ip_dir,
+        locked=locked,
+        changes=changes,
+        receipts=receipts,
+        diagnostic_receipts=diagnostics,
+        waiver=waiver,
+        issues=issues,
+    )
 
 
 def build_result(
@@ -363,6 +404,7 @@ def build_result(
     receipts: list[dict[str, Any]],
     waiver: dict[str, Any] | None,
     issues: list[dict[str, str]],
+    diagnostic_receipts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": "oag_main_write_gate.v1",
@@ -374,6 +416,7 @@ def build_result(
         "scope_locked": locked,
         "implementation_changes": changes,
         "subagent_receipts": receipts,
+        "diagnostic_receipts": diagnostic_receipts or [],
         "waiver": waiver,
         "issues": issues,
     }

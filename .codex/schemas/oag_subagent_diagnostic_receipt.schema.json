@@ -17,6 +17,10 @@
     "changed_paths",
     "generated_side_effects",
     "evidence_outputs",
+    "diagnostic_only",
+    "covers_writes",
+    "dispatch_verified",
+    "implementation_evidence",
     "may_claim_complete",
     "created_at"
   ],
@@ -38,15 +42,6 @@
       "pattern": "^oag-[a-z0-9_-]+$"
     },
     "registered_id": {
-      "type": "string"
-    },
-    "dispatch_id": {
-      "type": "string"
-    },
-    "dispatch_path": {
-      "type": "string"
-    },
-    "receipt_path": {
       "type": "string"
     },
     "wavefront_run_id": {
@@ -85,20 +80,12 @@
       ]
     },
     "blockers": {
-      "oneOf": [
-        {
-          "type": "string",
-          "minLength": 1
-        },
-        {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        }
-      ]
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "owned_obligations": {
       "type": "array",
@@ -134,6 +121,7 @@
     },
     "evidence_outputs": {
       "type": "array",
+      "maxItems": 0,
       "items": {
         "type": "string"
       }
@@ -143,6 +131,18 @@
       "items": {
         "type": "string"
       }
+    },
+    "diagnostic_only": {
+      "const": true
+    },
+    "covers_writes": {
+      "const": false
+    },
+    "dispatch_verified": {
+      "const": false
+    },
+    "implementation_evidence": {
+      "const": false
     },
     "may_claim_complete": {
       "const": false
