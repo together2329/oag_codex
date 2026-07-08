@@ -99,9 +99,12 @@ Do not count an auto-research run as native subagent-backed unless the manifest
 observes a `spawn_agent` collaboration event. The wrapper is orchestration
 evidence; it does not replace OAG records, dispatch receipts, validator reports,
 or gate review. Read-only wrapper runs should use a built-in explorer-style
-subagent. Use OAG custom/write-capable roles only after creating an OAG dispatch
-record and passing the dispatch id, path, allowed writes, side effects, and
-receipt path into the child assignment.
+subagent. Use OAG custom/write-capable roles for successful handoffs only after
+creating an OAG dispatch record and passing the dispatch id, path, allowed
+writes, side effects, and receipt path into the child assignment. If a native
+OAG child starts but discovers that required dispatch, lock, packet, runtime, or
+tool context is missing before it can perform write work, it may write a
+diagnostic receipt instead of inventing dispatch fields.
 
 Use `agent_type` as a routing hint, not as proof that a TOML role, model,
 reasoning effort, or service tier was selected. Always paste the role
@@ -349,6 +352,13 @@ write `BLOCKED`, `INCONCLUSIVE`, or `FAIL` with blockers naming the external
 delta and end with `OAG_EVIDENCE_RECORDED`. The `SubagentStop` hook may accept
 that bounded blocked receipt so the parent can route or reconcile integration.
 Successful handoff statuses still require a verifier pass.
+
+If the blocker occurs before a valid dispatch exists, the child should write
+`schema_version=oag_subagent_diagnostic_receipt.v1` instead. Diagnostic receipts
+are only for `BLOCKED`, `INCONCLUSIVE`, or `FAIL`; they require `blocker_class`,
+non-empty `blockers`, empty `changed_paths`, empty `generated_side_effects`, and
+`may_claim_complete=false`. They preserve the reason the worker could not start
+without giving write coverage or replacing a dispatch-verified handoff receipt.
 The same bounded stop rule applies to parent-created wavefront lifecycle
 mismatches such as `WAVEFRONT_TASK_UNCLAIMED` or
 `WAVEFRONT_CLAIM_DISPATCH_MISMATCH`: child agents may record
@@ -491,7 +501,11 @@ links. Write-capable evidence-producing subagents must write a non-empty receipt
 under `<ip>/knowledge/subagents/` and end with final line:
 `OAG_EVIDENCE_RECORDED: <relative-path>`. JSON receipts must follow
 `.codex/schemas/oag_subagent_receipt.schema.json` and include `dispatch_id`,
-`dispatch_path`, `changed_paths`, and `generated_side_effects`.
+`dispatch_path`, `changed_paths`, and `generated_side_effects`. A child that is
+blocked before a valid dispatch, lock, authoring packet, runtime, or tool
+contract exists may instead write
+`.codex/schemas/oag_subagent_diagnostic_receipt.schema.json`; that receipt must
+not list changed paths or generated side effects.
 
 Use `HANDOFF_PASS`, `STATIC_HANDOFF_PASS`, or `RTL_HANDOFF_PASS` for a bounded
 worker receipt that passed its assigned handoff. Do not use status language that
@@ -526,5 +540,8 @@ subagents; Codex native orchestration does that. The start hook injects the
 child-work contract and records a start event. The stop hook blocks a stopped
 evidence-producing child that lacks a valid
 `OAG_EVIDENCE_RECORDED: <relative-path>` receipt, dispatch link, schema-valid
-JSON payload, and path-scope verification. This mirrors the oh-my-openagent
-executor-verifier pattern while keeping final closure in OAG `check`/`decide`.
+JSON payload, and path-scope verification for handoff receipts. It also accepts
+schema-valid diagnostic receipts for pre-dispatch or precondition
+`BLOCKED`/`INCONCLUSIVE`/`FAIL` reports with no changed paths. This mirrors the
+oh-my-openagent executor-verifier pattern while keeping final closure in OAG
+`check`/`decide`.

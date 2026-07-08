@@ -113,6 +113,7 @@ HOOKS_JSON = ROOT / "hooks.json"
 SCHEMA_FILES = [
     ROOT / "schemas" / "oag_dispatch.schema.json",
     ROOT / "schemas" / "oag_subagent_receipt.schema.json",
+    ROOT / "schemas" / "oag_subagent_diagnostic_receipt.schema.json",
     ROOT / "schemas" / "oag_validation_report.schema.json",
     ROOT / "schemas" / "oag_gate_decision.schema.json",
     ROOT / "schemas" / "oag_closure_report.schema.json",
@@ -5093,38 +5094,42 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        def win_hook(script: str) -> str:
+            return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script
+
         session_start_hooks = hooks["hooks"]["SessionStart"][0]["hooks"]
         assert session_start_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_session_start.py", hooks
-        assert session_start_hooks[0]["commandWindows"] == "python .codex/hooks/codex_oag_session_start.py", hooks
+        assert session_start_hooks[0]["commandWindows"] == win_hook("codex_oag_session_start.py"), hooks
         user_hooks = hooks["hooks"]["UserPromptSubmit"][0]["hooks"]
         assert user_hooks[0]["command"] == "python3 .codex/hooks/codex_oag_mode_trigger.py", hooks
-        assert user_hooks[0]["commandWindows"] == "python .codex/hooks/codex_oag_mode_trigger.py", hooks
+        assert user_hooks[0]["commandWindows"] == win_hook("codex_oag_mode_trigger.py"), hooks
         assert user_hooks[1]["command"] == "python3 .codex/hooks/codex_native_subagent_guard.py", hooks
-        assert user_hooks[1]["commandWindows"] == "python .codex/hooks/codex_native_subagent_guard.py", hooks
+        assert user_hooks[1]["commandWindows"] == win_hook("codex_native_subagent_guard.py"), hooks
         assert user_hooks[2]["command"] == "python3 .codex/hooks/codex_deep_interview_prompt_guard.py", hooks
-        assert user_hooks[2]["commandWindows"] == "python .codex/hooks/codex_deep_interview_prompt_guard.py", hooks
+        assert user_hooks[2]["commandWindows"] == win_hook("codex_deep_interview_prompt_guard.py"), hooks
         assert user_hooks[3]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
-        assert user_hooks[3]["commandWindows"] == "python .codex/hooks/codex_context_inject.py", hooks
+        assert user_hooks[3]["commandWindows"] == win_hook("codex_context_inject.py"), hooks
         assert user_hooks[4]["command"] == "python3 .codex/hooks/codex_draft_pressure.py", hooks
-        assert user_hooks[4]["commandWindows"] == "python .codex/hooks/codex_draft_pressure.py", hooks
+        assert user_hooks[4]["commandWindows"] == win_hook("codex_draft_pressure.py"), hooks
         stop_hooks = hooks["hooks"]["Stop"][0]["hooks"]
         stop_command = stop_hooks[0]["command"]
         assert stop_command == "python3 .codex/hooks/codex_stop_gate.py", hooks
-        assert stop_hooks[0]["commandWindows"] == "python .codex/hooks/codex_stop_gate.py", hooks
+        assert stop_hooks[0]["commandWindows"] == win_hook("codex_stop_gate.py"), hooks
         assert "/bin/sh" not in stop_command and "sh.exe" not in stop_command, hooks
         subagent_start_hooks = hooks["hooks"]["SubagentStart"][0]
         assert subagent_start_hooks["matcher"] == "^oag-", hooks
         assert subagent_start_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_start.py", hooks
-        assert subagent_start_hooks["hooks"][0]["commandWindows"] == "python .codex/hooks/codex_subagent_oag_start.py", hooks
+        assert subagent_start_hooks["hooks"][0]["commandWindows"] == win_hook("codex_subagent_oag_start.py"), hooks
         subagent_hooks = hooks["hooks"]["SubagentStop"][0]
         assert "oag-" in subagent_hooks["matcher"], hooks
         assert "evidence-validator" in subagent_hooks["matcher"], hooks
         assert "gate-reviewer" in subagent_hooks["matcher"], hooks
         assert subagent_hooks["hooks"][0]["command"] == "python3 .codex/hooks/codex_subagent_oag_gate.py", hooks
-        assert subagent_hooks["hooks"][0]["commandWindows"] == "python .codex/hooks/codex_subagent_oag_gate.py", hooks
+        assert subagent_hooks["hooks"][0]["commandWindows"] == win_hook("codex_subagent_oag_gate.py"), hooks
         post_compact_hooks = hooks["hooks"]["PostCompact"][0]["hooks"]
         assert post_compact_hooks[0]["command"] == "python3 .codex/hooks/codex_context_inject.py", hooks
-        assert post_compact_hooks[0]["commandWindows"] == "python .codex/hooks/codex_context_inject.py", hooks
+        assert post_compact_hooks[0]["commandWindows"] == win_hook("codex_context_inject.py"), hooks
+        assert (ROOT / "bin" / "oag-python.cmd").is_file(), hooks
         assert STOP_GATE.is_file(), STOP_GATE
         assert SUBAGENT_START.is_file(), SUBAGENT_START
         assert SUBAGENT_GATE.is_file(), SUBAGENT_GATE
@@ -5986,6 +5991,68 @@ def main() -> int:
         invalid_gate_payload = json.loads(invalid_gate.stdout)
         assert invalid_gate_payload["decision"] == "block", invalid_gate_payload
         assert "OAG_EVIDENCE_RECORDED" in invalid_gate_payload["reason"], invalid_gate_payload
+        diagnostic_receipt = hook_cwd / "knowledge" / "subagents" / "pre_dispatch_blocked.json"
+        diagnostic_receipt.parent.mkdir(parents=True, exist_ok=True)
+        diagnostic_payload_body = {
+            "schema_version": "oag_subagent_diagnostic_receipt.v1",
+            "product_name": "IP Dev Agent",
+            "internal_gateway": "Ontology Agent Gateway",
+            "role_name": "oag-custom-worker",
+            "shard_scope": "unassigned",
+            "stage": "pre_dispatch",
+            "status": "BLOCKED",
+            "blocker_class": "missing_dispatch",
+            "blockers": ["assignment did not include dispatch_id or dispatch_path"],
+            "changed_paths": [],
+            "generated_side_effects": [],
+            "evidence_outputs": ["knowledge/subagents/pre_dispatch_blocked.json"],
+            "may_claim_complete": False,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+        diagnostic_receipt.write_text(json.dumps(diagnostic_payload_body, sort_keys=True) + "\n", encoding="utf-8")
+        diagnostic_schema_validation = run_validate_json(
+            ROOT / "schemas" / "oag_subagent_diagnostic_receipt.schema.json",
+            diagnostic_receipt,
+        )
+        assert diagnostic_schema_validation.returncode == 0, diagnostic_schema_validation.stderr or diagnostic_schema_validation.stdout
+        diagnostic_payload = {
+            **invalid_payload,
+            "last_assistant_message": "OAG_EVIDENCE_RECORDED: knowledge/subagents/pre_dispatch_blocked.json",
+        }
+        diagnostic_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic.json")},
+        )
+        assert diagnostic_gate.returncode == 0, diagnostic_gate.stderr or diagnostic_gate.stdout
+        assert diagnostic_gate.stdout == "", diagnostic_gate.stdout
+        diagnostic_receipt.write_text(
+            json.dumps({**diagnostic_payload_body, "status": "HANDOFF_PASS"}, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_handoff_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic_handoff.json")},
+        )
+        assert diagnostic_handoff_gate.returncode == 0, diagnostic_handoff_gate.stderr or diagnostic_handoff_gate.stdout
+        diagnostic_handoff_payload = json.loads(diagnostic_handoff_gate.stdout)
+        assert diagnostic_handoff_payload["decision"] == "block", diagnostic_handoff_payload
+        assert "diagnostic receipt.status" in diagnostic_handoff_payload["reason"], diagnostic_handoff_payload
+        diagnostic_receipt.write_text(
+            json.dumps(
+                {**diagnostic_payload_body, "changed_paths": ["smoke_ip/rtl/smoke.sv"]},
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_changed_gate = subagent_gate(
+            diagnostic_payload,
+            {"OAG_SUBAGENT_GATE_CACHE": str(Path(tmp) / "subagent_gate_cache_diagnostic_changed.json")},
+        )
+        assert diagnostic_changed_gate.returncode == 0, diagnostic_changed_gate.stderr or diagnostic_changed_gate.stdout
+        diagnostic_changed_payload = json.loads(diagnostic_changed_gate.stdout)
+        assert diagnostic_changed_payload["decision"] == "block", diagnostic_changed_payload
+        assert "changed_paths must be empty" in diagnostic_changed_payload["reason"], diagnostic_changed_payload
         subprocess.run(["git", "init"], cwd=hook_cwd, text=True, capture_output=True, check=True)
         unlocked_hook_ip = hook_cwd / "unlocked_smoke_ip"
         (unlocked_hook_ip / "rtl").mkdir(parents=True, exist_ok=True)

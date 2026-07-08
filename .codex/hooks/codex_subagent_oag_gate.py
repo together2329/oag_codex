@@ -11,11 +11,16 @@ The path must point to a non-empty file inside either:
   - <ip>/knowledge/subagents/
   - knowledge/subagents/
 
-JSON receipts must match the stable oag_subagent_receipt.v1 fields. Passing
-handoffs must pass the dispatch/receipt/path-scope verifier. Blocked or
-inconclusive receipts may stop when the only verifier issue is unrelated
-actual workspace delta outside the shard and that blocker is recorded in the
-receipt.
+JSON handoff receipts must match the stable oag_subagent_receipt.v1 fields.
+Passing handoffs must pass the dispatch/receipt/path-scope verifier. Blocked or
+inconclusive dispatch-backed receipts may stop when the only verifier issue is
+unrelated actual workspace delta outside the shard and that blocker is recorded
+in the receipt.
+
+Pre-dispatch/precondition diagnostics may use
+oag_subagent_diagnostic_receipt.v1. Diagnostic receipts are accepted only for
+BLOCKED, INCONCLUSIVE, or FAIL, cannot cover changed paths, and never replace a
+dispatch-verified handoff receipt.
 """
 
 from __future__ import annotations
@@ -35,7 +40,9 @@ DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
 CACHE_PATH = Path(os.environ.get("OAG_SUBAGENT_GATE_CACHE") or ROOT / ".cache" / "subagent_oag_gate.json")
 MAX_ATTEMPTS = 3
 RECEIPT_RE = re.compile(r"OAG_EVIDENCE_RECORDED:\s*(\S+)")
-REQUIRED_RECEIPT_FIELDS = {
+HANDOFF_SCHEMA_VERSION = "oag_subagent_receipt.v1"
+DIAGNOSTIC_SCHEMA_VERSION = "oag_subagent_diagnostic_receipt.v1"
+REQUIRED_HANDOFF_RECEIPT_FIELDS = {
     "schema_version",
     "product_name",
     "internal_gateway",
@@ -54,7 +61,37 @@ REQUIRED_RECEIPT_FIELDS = {
     "may_claim_complete",
     "created_at",
 }
+REQUIRED_DIAGNOSTIC_RECEIPT_FIELDS = {
+    "schema_version",
+    "product_name",
+    "internal_gateway",
+    "role_name",
+    "shard_scope",
+    "stage",
+    "status",
+    "blocker_class",
+    "blockers",
+    "changed_paths",
+    "generated_side_effects",
+    "evidence_outputs",
+    "may_claim_complete",
+    "created_at",
+}
 RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
+DIAGNOSTIC_RECEIPT_STATUSES = {"FAIL", "BLOCKED", "INCONCLUSIVE"}
+DIAGNOSTIC_BLOCKER_CLASSES = {
+    "missing_dispatch",
+    "missing_scope_lock",
+    "missing_authoring_packet",
+    "missing_verification_plan",
+    "runtime_unavailable",
+    "context_pressure",
+    "external_delta",
+    "policy_conflict",
+    "insufficient_source",
+    "tool_unavailable",
+    "other",
+}
 EXTERNAL_DELTA_ISSUES = {"ACTUAL_PATH_OUT_OF_SCOPE"}
 EXTERNAL_WAVEFRONT_LIFECYCLE_ISSUES = {
     "ACTUAL_PATH_OUT_OF_SCOPE",
@@ -169,6 +206,27 @@ def has_blockers(payload: dict) -> bool:
     return False
 
 
+def require_list(payload: dict, field: str) -> tuple[bool, str]:
+    if not isinstance(payload.get(field), list):
+        return False, f"receipt.{field} must be a list"
+    return True, ""
+
+
+def relative_path_field_inside_workspace(cwd: Path, payload: dict, field: str) -> tuple[bool, str]:
+    raw_path = payload.get(field)
+    if raw_path in (None, ""):
+        return True, ""
+    if not isinstance(raw_path, str):
+        return False, f"receipt.{field} must be a string when present"
+    if Path(raw_path).is_absolute():
+        return False, f"receipt.{field} must be relative when present"
+    try:
+        (cwd / raw_path).resolve().relative_to(cwd.resolve())
+    except ValueError:
+        return False, f"receipt.{field} escapes the workspace"
+    return True, ""
+
+
 def issue_summary(result: dict) -> str:
     issues = result.get("issues")
     if not isinstance(issues, list) or not issues:
@@ -245,20 +303,12 @@ def dispatch_verify(cwd: Path, receipt: Path, payload: dict) -> tuple[bool, str]
     return False, issue_summary(result)
 
 
-def valid_receipt_payload(cwd: Path, receipt: Path) -> tuple[bool, str]:
-    if receipt.suffix.lower() != ".json":
-        return False, "receipt path must end in .json"
-    try:
-        payload = json.loads(receipt.read_text(encoding="utf-8"))
-    except Exception:
-        return False, "receipt is not valid JSON"
-    if not isinstance(payload, dict):
-        return False, "receipt JSON must be an object"
-    if REQUIRED_RECEIPT_FIELDS - set(payload):
-        missing = ", ".join(sorted(REQUIRED_RECEIPT_FIELDS - set(payload)))
+def valid_handoff_receipt_payload(cwd: Path, receipt: Path, payload: dict) -> tuple[bool, str]:
+    if REQUIRED_HANDOFF_RECEIPT_FIELDS - set(payload):
+        missing = ", ".join(sorted(REQUIRED_HANDOFF_RECEIPT_FIELDS - set(payload)))
         return False, f"receipt is missing required fields: {missing}"
-    if payload.get("schema_version") != "oag_subagent_receipt.v1":
-        return False, "receipt.schema_version must be oag_subagent_receipt.v1"
+    if payload.get("schema_version") != HANDOFF_SCHEMA_VERSION:
+        return False, f"receipt.schema_version must be {HANDOFF_SCHEMA_VERSION}"
     if payload.get("product_name") != "IP Dev Agent":
         return False, "receipt.product_name must be IP Dev Agent"
     if payload.get("internal_gateway") != "Ontology Agent Gateway":
@@ -277,9 +327,68 @@ def valid_receipt_payload(cwd: Path, receipt: Path) -> tuple[bool, str]:
         "generated_side_effects",
         "evidence_outputs",
     ):
-        if not isinstance(payload.get(field), list):
-            return False, f"receipt.{field} must be a list"
+        valid, reason = require_list(payload, field)
+        if not valid:
+            return False, reason
     return dispatch_verify(cwd, receipt, payload)
+
+
+def valid_diagnostic_receipt_payload(cwd: Path, payload: dict) -> tuple[bool, str]:
+    if REQUIRED_DIAGNOSTIC_RECEIPT_FIELDS - set(payload):
+        missing = ", ".join(sorted(REQUIRED_DIAGNOSTIC_RECEIPT_FIELDS - set(payload)))
+        return False, f"diagnostic receipt is missing required fields: {missing}"
+    if payload.get("product_name") != "IP Dev Agent":
+        return False, "diagnostic receipt.product_name must be IP Dev Agent"
+    if payload.get("internal_gateway") != "Ontology Agent Gateway":
+        return False, "diagnostic receipt.internal_gateway must be Ontology Agent Gateway"
+    if payload.get("may_claim_complete") is not False:
+        return False, "diagnostic receipt.may_claim_complete must be false"
+    role_name = payload.get("role_name")
+    if not isinstance(role_name, str) or not role_name.startswith("oag-"):
+        return False, "diagnostic receipt.role_name must name an OAG role"
+    if not isinstance(payload.get("shard_scope"), str) or not str(payload.get("shard_scope") or "").strip():
+        return False, "diagnostic receipt.shard_scope must be non-empty"
+    if not isinstance(payload.get("stage"), str) or not str(payload.get("stage") or "").strip():
+        return False, "diagnostic receipt.stage must be non-empty"
+    if payload.get("status") not in DIAGNOSTIC_RECEIPT_STATUSES:
+        return False, "diagnostic receipt.status must be BLOCKED, INCONCLUSIVE, or FAIL"
+    if payload.get("blocker_class") not in DIAGNOSTIC_BLOCKER_CLASSES:
+        return False, "diagnostic receipt.blocker_class is not an accepted blocker class"
+    if not has_blockers(payload):
+        return False, "diagnostic receipt.blockers must be non-empty"
+    for field in ("changed_paths", "generated_side_effects", "evidence_outputs"):
+        valid, reason = require_list(payload, field)
+        if not valid:
+            return False, reason
+    if payload.get("changed_paths"):
+        return False, "diagnostic receipt.changed_paths must be empty"
+    if payload.get("generated_side_effects"):
+        return False, "diagnostic receipt.generated_side_effects must be empty"
+    for field in ("dispatch_path", "receipt_path"):
+        valid, reason = relative_path_field_inside_workspace(cwd, payload, field)
+        if not valid:
+            return False, reason
+    return True, ""
+
+
+def valid_receipt_payload(cwd: Path, receipt: Path) -> tuple[bool, str]:
+    if receipt.suffix.lower() != ".json":
+        return False, "receipt path must end in .json"
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+    except Exception:
+        return False, "receipt is not valid JSON"
+    if not isinstance(payload, dict):
+        return False, "receipt JSON must be an object"
+    schema_version = payload.get("schema_version")
+    if schema_version == HANDOFF_SCHEMA_VERSION:
+        return valid_handoff_receipt_payload(cwd, receipt, payload)
+    if schema_version == DIAGNOSTIC_SCHEMA_VERSION:
+        return valid_diagnostic_receipt_payload(cwd, payload)
+    return (
+        False,
+        f"receipt.schema_version must be {HANDOFF_SCHEMA_VERSION} or {DIAGNOSTIC_SCHEMA_VERSION}",
+    )
 
 
 def valid_receipt(payload: dict) -> tuple[bool, str]:
@@ -311,15 +420,20 @@ def directive(payload: dict, reason: str) -> str:
         "- <ip>/knowledge/subagents/\n\n"
         "Then make the final line exactly:\n"
         "OAG_EVIDENCE_RECORDED: <relative-path>\n\n"
-        "The receipt must name dispatch_id, dispatch_path, shard scope, changed_paths, "
-        "generated_side_effects, commands or artifacts, ROCEV links, blockers, and whether "
-        "the bounded handoff result is HANDOFF_PASS, STATIC_HANDOFF_PASS, RTL_HANDOFF_PASS, "
-        "FAIL, BLOCKED, or INCONCLUSIVE. JSON receipts must use "
+        "Dispatch-backed handoff receipts must name dispatch_id, dispatch_path, shard "
+        "scope, changed_paths, generated_side_effects, commands or artifacts, ROCEV "
+        "links, blockers, and whether the bounded result is HANDOFF_PASS, "
+        "STATIC_HANDOFF_PASS, RTL_HANDOFF_PASS, FAIL, BLOCKED, or INCONCLUSIVE. Use "
         "schema_version=oag_subagent_receipt.v1 and may_claim_complete=false. Handoff "
         "receipts must pass .codex/scripts/oag_dispatch.py verify; BLOCKED/INCONCLUSIVE/"
-        "FAIL receipts may stop when verifier failures are limited to unrelated "
-        "ACTUAL_PATH_OUT_OF_SCOPE deltas or external wavefront lifecycle/bookkeeping "
-        "issues and blockers are recorded. Do not claim final completion."
+        "FAIL dispatch-backed receipts may stop when verifier failures are limited to "
+        "unrelated ACTUAL_PATH_OUT_OF_SCOPE deltas or external wavefront lifecycle/"
+        "bookkeeping issues and blockers are recorded. If the blocker happened before a "
+        "valid dispatch, scope lock, authoring packet, runtime, or tool contract existed, "
+        "write schema_version=oag_subagent_diagnostic_receipt.v1 with status BLOCKED, "
+        "INCONCLUSIVE, or FAIL, a blocker_class, non-empty blockers, empty changed_paths, "
+        "empty generated_side_effects, and may_claim_complete=false. Do not claim final "
+        "completion."
     )
 
 

@@ -39,6 +39,7 @@ REQUIRED_FILES = (
     CODEX_ROOT / "AGENTS.md",
     CODEX_ROOT / "config.toml",
     CODEX_ROOT / "hooks.json",
+    CODEX_ROOT / "bin" / "oag-python.cmd",
     CODEX_ROOT / "oag" / "agent-catalog.toml",
     CODEX_ROOT / "oag" / "agent-common-preamble.md",
     CODEX_ROOT / "oag" / "contract-projection.md",
@@ -187,6 +188,7 @@ REQUIRED_FILES = (
     HOOKS_DIR / "codex_subagent_oag_gate.py",
     SCHEMAS_DIR / "oag_dispatch.schema.json",
     SCHEMAS_DIR / "oag_subagent_receipt.schema.json",
+    SCHEMAS_DIR / "oag_subagent_diagnostic_receipt.schema.json",
     SCHEMAS_DIR / "oag_validation_report.schema.json",
     SCHEMAS_DIR / "oag_gate_decision.schema.json",
     SCHEMAS_DIR / "oag_implementation_review_report.schema.json",
@@ -235,6 +237,7 @@ JSON_FILES = (
     CODEX_ROOT / "evals" / "oag_control_cases.json",
     SCHEMAS_DIR / "oag_dispatch.schema.json",
     SCHEMAS_DIR / "oag_subagent_receipt.schema.json",
+    SCHEMAS_DIR / "oag_subagent_diagnostic_receipt.schema.json",
     SCHEMAS_DIR / "oag_validation_report.schema.json",
     SCHEMAS_DIR / "oag_gate_decision.schema.json",
     SCHEMAS_DIR / "oag_implementation_review_report.schema.json",
@@ -488,6 +491,7 @@ REQUIRED_DOC_SNIPPETS = {
         "native Codex collaboration workers",
         "enabled = false",
         "OAG_EVIDENCE_RECORDED",
+        "oag_subagent_diagnostic_receipt.v1",
         "oag_dispatch.py",
         "oag_domain_crossing_check.py",
         "oag_pyslang_lint.py",
@@ -608,6 +612,10 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def windows_hook_command(script: str) -> str:
+    return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script
+
+
 def check_required_files(issues: list[dict[str, str]]) -> None:
     for path in REQUIRED_FILES:
         if not path.is_file():
@@ -698,20 +706,20 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
     session_start_windows = [str(item.get("commandWindows") or "") for item in session_start_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_oag_session_start.py" not in session_start_commands:
         issues.append(issue("SESSION_START_CONFIG_GUARD_MISSING", "SessionStart must run the OAG Codex config guard.", CODEX_ROOT / "hooks.json"))
-    if "python .codex/hooks/codex_oag_session_start.py" not in session_start_windows:
-        issues.append(issue("SESSION_START_WINDOWS_CONFIG_GUARD_MISSING", "SessionStart must use python on Windows.", CODEX_ROOT / "hooks.json"))
+    if windows_hook_command("codex_oag_session_start.py") not in session_start_windows:
+        issues.append(issue("SESSION_START_WINDOWS_CONFIG_GUARD_MISSING", "SessionStart must use the stable Windows Python launcher.", CODEX_ROOT / "hooks.json"))
     user_prompt = (((hooks.get("hooks") or {}).get("UserPromptSubmit") or [{}])[0])
     user_prompt_hooks = user_prompt.get("hooks") if isinstance(user_prompt, dict) else []
     user_prompt_commands = [str(item.get("command") or "") for item in user_prompt_hooks if isinstance(item, dict)]
     user_prompt_windows = [str(item.get("commandWindows") or "") for item in user_prompt_hooks if isinstance(item, dict)]
     if "python3 .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_commands:
         issues.append(issue("NATIVE_SUBAGENT_GUARD_MISSING", "UserPromptSubmit must enforce native-only subagent requests.", CODEX_ROOT / "hooks.json"))
-    if "python .codex/hooks/codex_native_subagent_guard.py" not in user_prompt_windows:
-        issues.append(issue("NATIVE_SUBAGENT_WINDOWS_GUARD_MISSING", "UserPromptSubmit native-subagent guard must use python on Windows.", CODEX_ROOT / "hooks.json"))
+    if windows_hook_command("codex_native_subagent_guard.py") not in user_prompt_windows:
+        issues.append(issue("NATIVE_SUBAGENT_WINDOWS_GUARD_MISSING", "UserPromptSubmit native-subagent guard must use the stable Windows Python launcher.", CODEX_ROOT / "hooks.json"))
     if "python3 .codex/hooks/codex_deep_interview_prompt_guard.py" not in user_prompt_commands:
         issues.append(issue("DEEP_INTERVIEW_PROMPT_GUARD_MISSING", "UserPromptSubmit must keep OAG deep interviews to one question with recommended options.", CODEX_ROOT / "hooks.json"))
-    if "python .codex/hooks/codex_deep_interview_prompt_guard.py" not in user_prompt_windows:
-        issues.append(issue("DEEP_INTERVIEW_WINDOWS_PROMPT_GUARD_MISSING", "Deep interview prompt guard must use python on Windows.", CODEX_ROOT / "hooks.json"))
+    if windows_hook_command("codex_deep_interview_prompt_guard.py") not in user_prompt_windows:
+        issues.append(issue("DEEP_INTERVIEW_WINDOWS_PROMPT_GUARD_MISSING", "Deep interview prompt guard must use the stable Windows Python launcher.", CODEX_ROOT / "hooks.json"))
     subagent_start = (((hooks.get("hooks") or {}).get("SubagentStart") or [{}])[0])
     start_matcher = str(subagent_start.get("matcher") or "")
     start_hooks = subagent_start.get("hooks") if isinstance(subagent_start, dict) else []
@@ -721,8 +729,8 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
         issues.append(issue("SUBAGENT_START_MATCHER", "SubagentStart must match OAG child agents.", CODEX_ROOT / "hooks.json"))
     if "python3 .codex/hooks/codex_subagent_oag_start.py" not in start_commands:
         issues.append(issue("SUBAGENT_START_HOOK_MISSING", "SubagentStart must inject the OAG child-work contract.", CODEX_ROOT / "hooks.json"))
-    if "python .codex/hooks/codex_subagent_oag_start.py" not in start_windows:
-        issues.append(issue("SUBAGENT_START_WINDOWS_HOOK_MISSING", "SubagentStart must use python on Windows.", CODEX_ROOT / "hooks.json"))
+    if windows_hook_command("codex_subagent_oag_start.py") not in start_windows:
+        issues.append(issue("SUBAGENT_START_WINDOWS_HOOK_MISSING", "SubagentStart must use the stable Windows Python launcher.", CODEX_ROOT / "hooks.json"))
     subagent = (((hooks.get("hooks") or {}).get("SubagentStop") or [{}])[0])
     matcher = str(subagent.get("matcher") or "")
     if "custom-researcher" in matcher or "custom-reviewer" in matcher:

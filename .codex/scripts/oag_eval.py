@@ -2104,6 +2104,9 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
 
 def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
     hooks = json.loads((smoke_test.ROOT / "hooks.json").read_text(encoding="utf-8"))
+    def win_hook(script: str) -> str:
+        return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script
+
     events = hooks.get("hooks") if isinstance(hooks.get("hooks"), dict) else {}
     user_commands = [
         hook.get("command")
@@ -2137,11 +2140,11 @@ def case_codex_runtime_hook_configuration(root: Path) -> dict[str, Any]:
     ]
     assert "python3 .codex/hooks/codex_context_inject.py" in user_commands, hooks
     assert "python3 .codex/hooks/codex_draft_pressure.py" in user_commands, hooks
-    assert "python .codex/hooks/codex_context_inject.py" in user_windows_commands, hooks
-    assert "python .codex/hooks/codex_draft_pressure.py" in user_windows_commands, hooks
+    assert win_hook("codex_context_inject.py") in user_windows_commands, hooks
+    assert win_hook("codex_draft_pressure.py") in user_windows_commands, hooks
     assert any("codex_stop_gate.py" in command for command in stop_commands), hooks
     assert "python3 .codex/hooks/codex_context_inject.py" in post_compact_commands, hooks
-    assert "python .codex/hooks/codex_context_inject.py" in post_compact_windows_commands, hooks
+    assert win_hook("codex_context_inject.py") in post_compact_windows_commands, hooks
     return {
         "hooks_json": str(smoke_test.ROOT / "hooks.json"),
         "user_prompt_submit_hooks": len(user_commands),

@@ -26,6 +26,8 @@ oag_dse_worktree = importlib.import_module("oag_dse_worktree")
 
 SCHEMA_VERSION = "oag_windows_smoke.v1"
 FORBIDDEN_RUNTIME_TOKENS = ("/bin/sh", "sh.exe", "shell=True", "bash -lc")
+WINDOWS_HOOK_PREFIX = r"cmd.exe /d /c .codex\bin\oag-python.cmd "
+WINDOWS_LAUNCHER = CODEX_ROOT / "bin" / "oag-python.cmd"
 
 
 def issue(code: str, message: str, path: str = "") -> dict[str, str]:
@@ -73,8 +75,22 @@ def scan_runtime_sources() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
             issues.append(issue("HOOK_COMMAND_SHELL_ASSUMPTION", f"{field} depends on a shell-specific executable", "hooks.json"))
         if field == "command" and not command.startswith("python3 "):
             warnings.append(issue("HOOK_COMMAND_NOT_PYTHON3", "default hook command is not a direct python3 invocation", command))
-        if field == "commandWindows" and not command.startswith("python "):
-            warnings.append(issue("HOOK_WINDOWS_COMMAND_NOT_PYTHON", "Windows hook command is not a direct python invocation", command))
+        if field == "commandWindows" and not command.startswith(WINDOWS_HOOK_PREFIX):
+            issues.append(issue("HOOK_WINDOWS_COMMAND_NOT_LAUNCHER", "Windows hook command must use the stable cmd.exe Python launcher", command))
+        if field == "commandWindows" and ("powershell" in command.lower() or "pwsh" in command.lower()):
+            issues.append(issue("HOOK_WINDOWS_POWERSHELL_DEPENDENCY", "Windows hook command must not depend on PowerShell parsing", command))
+        if field == "commandWindows" and '""' in command:
+            issues.append(issue("HOOK_WINDOWS_EMPTY_QUOTE", "Windows hook command must avoid nested empty-quote cmd.exe patterns", command))
+    if not WINDOWS_LAUNCHER.is_file():
+        issues.append(issue("WINDOWS_PYTHON_LAUNCHER_MISSING", "Windows Python launcher is missing", str(WINDOWS_LAUNCHER)))
+    else:
+        launcher = WINDOWS_LAUNCHER.read_text(encoding="utf-8", errors="ignore").lower()
+        if "py.exe -3" not in launcher or "python.exe" not in launcher:
+            issues.append(issue("WINDOWS_PYTHON_LAUNCHER_FALLBACK", "Windows Python launcher must try py.exe -3 and python.exe", str(WINDOWS_LAUNCHER)))
+        if "%*" in launcher:
+            issues.append(issue("WINDOWS_PYTHON_LAUNCHER_ARG_SPLAT", "Windows Python launcher must quote the hook script directly instead of forwarding %*", str(WINDOWS_LAUNCHER)))
+        if '"%oag_script%"' not in launcher:
+            issues.append(issue("WINDOWS_PYTHON_LAUNCHER_SCRIPT_QUOTE", "Windows Python launcher must quote the hook script path internally", str(WINDOWS_LAUNCHER)))
     return issues, warnings
 
 

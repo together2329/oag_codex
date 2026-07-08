@@ -400,8 +400,9 @@ python3 .codex/scripts/oag_windows_smoke.py --json
 ```
 
 It checks that runtime hooks and scripts do not depend on `/bin/sh`, `sh.exe`,
-or `shell=True`, that argv-style command splitting rejects shell metacharacters,
-and that Git for Windows discovery paths are present.
+or `shell=True`, that Windows hooks use `.codex/bin/oag-python.cmd` instead of
+PowerShell command parsing, that argv-style command splitting rejects shell
+metacharacters, and that Git for Windows discovery paths are present.
 
 ## When Actions Are Created
 

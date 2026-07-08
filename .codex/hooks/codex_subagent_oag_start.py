@@ -58,10 +58,13 @@ def additional_context(agent_type: str) -> dict[str, Any]:
 You are a native Codex OAG subagent: {agent_type}.
 
 Before acting, verify your assignment is self-contained and includes TASK,
-DELIVERABLE, SCOPE, VERIFY, dispatch_id, dispatch_path, allowed write paths,
-allowed tool side effects, and required evidence output. If required scope,
-dispatch, or evidence instructions are missing, return BLOCKED with the missing
-field instead of guessing.
+DELIVERABLE, SCOPE, VERIFY, and required evidence output. Dispatch-backed write
+tasks must also include dispatch_id, dispatch_path, allowed write paths, allowed
+tool side effects, and receipt path. If required scope, dispatch, or evidence
+instructions are missing, do not guess; write a diagnostic receipt with
+schema_version=oag_subagent_diagnostic_receipt.v1, status BLOCKED or
+INCONCLUSIVE, a blocker_class, non-empty blockers, empty changed_paths, empty
+generated_side_effects, and may_claim_complete=false.
 
 Stay inside your assigned shard. Do not manually edit protected truth,
 generated ontology files, .codex files, scripts, or unrelated paths. If your
@@ -87,8 +90,11 @@ successful handoff. Do not use PASS, COMPLETE, DONE, SIGNOFF, RELEASED, or
 CLOSED to describe the IP.
 
 Before stopping, write a non-empty OAG subagent receipt under
-<ip>/knowledge/subagents/. The receipt must include dispatch_id, dispatch_path,
-changed_paths, generated_side_effects, and may_claim_complete=false. End with:
+<ip>/knowledge/subagents/ or knowledge/subagents/. Dispatch-backed handoff
+receipts must include dispatch_id, dispatch_path, changed_paths,
+generated_side_effects, and may_claim_complete=false. Pre-dispatch or
+precondition blockers must use oag_subagent_diagnostic_receipt.v1 and must not
+claim changed paths. End with:
 OAG_EVIDENCE_RECORDED: <relative-path>
 """
     return {

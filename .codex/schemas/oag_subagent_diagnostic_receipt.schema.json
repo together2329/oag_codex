@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "oag_subagent_diagnostic_receipt.schema.json",
+  "title": "OAG Subagent Diagnostic Receipt",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "product_name",
+    "internal_gateway",
+    "role_name",
+    "shard_scope",
+    "stage",
+    "status",
+    "blocker_class",
+    "blockers",
+    "changed_paths",
+    "generated_side_effects",
+    "evidence_outputs",
+    "may_claim_complete",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "oag_subagent_diagnostic_receipt.v1"
+    },
+    "product_name": {
+      "const": "IP Dev Agent"
+    },
+    "internal_gateway": {
+      "const": "Ontology Agent Gateway"
+    },
+    "ip_id": {
+      "type": "string"
+    },
+    "role_name": {
+      "type": "string",
+      "pattern": "^oag-[a-z0-9_-]+$"
+    },
+    "registered_id": {
+      "type": "string"
+    },
+    "dispatch_id": {
+      "type": "string"
+    },
+    "dispatch_path": {
+      "type": "string"
+    },
+    "receipt_path": {
+      "type": "string"
+    },
+    "wavefront_run_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "ownership_mode": {
+      "type": "string"
+    },
+    "shard_scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": ["FAIL", "BLOCKED", "INCONCLUSIVE"]
+    },
+    "blocker_class": {
+      "enum": [
+        "missing_dispatch",
+        "missing_scope_lock",
+        "missing_authoring_packet",
+        "missing_verification_plan",
+        "runtime_unavailable",
+        "context_pressure",
+        "external_delta",
+        "policy_conflict",
+        "insufficient_source",
+        "tool_unavailable",
+        "other"
+      ]
+    },
+    "blockers": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      ]
+    },
+    "owned_obligations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowed_write_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "string"
+      }
+    },
+    "generated_side_effects": {
+      "type": "array",
+      "maxItems": 0,
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_outputs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "may_claim_complete": {
+      "const": false
+    },
+    "created_at": {
+      "type": "string"
+    }
+  }
+}

@@ -177,8 +177,9 @@ python3 .codex/scripts/oag_windows_smoke.py --json
 ```
 
 This checks that runtime hooks/scripts avoid `/bin/sh`, `sh.exe`, and
-`shell=True`, and that Git for Windows discovery remains available for
-PowerShell-based IP-local checkpointing.
+`shell=True`, that Windows hooks route through `.codex/bin/oag-python.cmd`
+instead of PowerShell parsing, and that Git for Windows discovery remains
+available for PowerShell-based IP-local checkpointing.
 
 ## Start
 
@@ -732,8 +733,8 @@ subagents when they help: spec extraction, reference RTL comparison, ambiguity
 lists, or candidate obligation/contract review. Their output is draft evidence
 until the user locks scope.
 
-When assigning a write-capable subagent, create a dispatch record before native
-spawn:
+When assigning a write-capable subagent for a successful handoff, create a
+dispatch record before native spawn:
 
 ```bash
 python3 .codex/scripts/oag_dispatch.py create \
@@ -752,8 +753,15 @@ tool side effects, and receipt path in the child message. `oag.compile` is
 allowed only when assigned; it may refresh `<ip>/ontology/generated/*` as
 generated tool output. The child must not manually edit generated ontology
 files, must not claim ownership of those outputs, and must report them
-separately from owned changed paths. After child completion, verify the dispatch
-and receipt before integration:
+separately from owned changed paths. If a native OAG child starts but discovers
+before write work that required dispatch, scope lock, authoring packet, runtime,
+or tool context is missing, it may write
+`schema_version=oag_subagent_diagnostic_receipt.v1` with `BLOCKED`,
+`INCONCLUSIVE`, or `FAIL`, a `blocker_class`, non-empty `blockers`, empty
+`changed_paths`, empty `generated_side_effects`, and
+`may_claim_complete=false`; diagnostic receipts preserve the blocker but do not
+cover implementation writes. After child completion, verify dispatch-backed
+handoffs before integration:
 
 ```bash
 python3 .codex/scripts/oag_dispatch.py verify \
