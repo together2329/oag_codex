@@ -6862,6 +6862,8 @@ def main() -> int:
         assert closure_pass.returncode == 0, closure_pass.stderr or closure_pass.stdout
         closure_pass_result = json.loads(closure_pass.stdout)
         assert closure_pass_result["status"] == "pass", closure_pass_result
+        assert closure_pass_result["validation_report"] == "knowledge/validations/oag_validation_report.json", closure_pass_result
+        assert closure_pass_result["gate_report"] == "knowledge/gate_reviews/oag_gate_decision.json", closure_pass_result
 
         stale_gate_ip = make_ip(Path(tmp) / "stale_gate_closure")
         close_demo_counter(stale_gate_ip, claim="stale gate smoke counter closed")

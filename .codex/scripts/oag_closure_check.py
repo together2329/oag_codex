@@ -105,7 +105,7 @@ def display_path(ip_dir: Path, path: Path | None) -> str | None:
     parts = rel.parts
     if parts and parts[0] == oag_paths.HIDDEN_DIR:
         rel = Path(*parts[1:]) if len(parts) > 1 else Path()
-    return str(rel)
+    return rel.as_posix()
 
 
 def resolve_inside_ip(ip_dir: Path, raw: str | Path, code: str, issues: list[dict[str, str]]) -> Path | None:
@@ -223,11 +223,11 @@ def required_gate_artifacts(ip_dir: Path, validation_path: Path) -> list[str]:
     # gate ledger keys/hashes never carry the .oag/ prefix.
     candidates: list[tuple[str | None, Path]] = [(display_path(ip_dir, validation_path), validation_path)]
     for rel in DEVELOPMENT_CLOSURE_ARTIFACTS:
-        candidates.append((str(rel), ip_dir / rel))
+        candidates.append((rel.as_posix(), ip_dir / rel))
     for rel in OPTIONAL_GATE_ARTIFACTS:
         fs_path = _artifact_fs_path(ip_dir, rel)
         if fs_path.is_file():
-            candidates.append((str(rel), fs_path))
+            candidates.append((rel.as_posix(), fs_path))
     result: list[str] = []
     for rendered, fs_path in candidates:
         if fs_path.is_file() and rendered:
