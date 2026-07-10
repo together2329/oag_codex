@@ -5728,12 +5728,12 @@ def _metrics_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
 
     latest_rel = METRICS_REL / "improvement_metrics.json"
     history_rel = METRICS_REL / "improvement_history.jsonl"
-    metrics["artifacts"] = {"latest": str(latest_rel), "history": str(history_rel)}
+    metrics["artifacts"] = {"latest": latest_rel.as_posix(), "history": history_rel.as_posix()}
     actor = _metrics_actor(arguments)
     payload = {
         "metrics_id": metrics_id,
-        "latest": str(latest_rel),
-        "history": str(history_rel),
+        "latest": latest_rel.as_posix(),
+        "history": history_rel.as_posix(),
         "metrics": metrics,
     }
     _assert_ledger_append_allowed(ip, action="metrics_snapshot", actor=actor, payload=payload)
@@ -6208,10 +6208,10 @@ def _handoff_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
     metrics_latest_rel = METRICS_REL / "improvement_metrics.json"
     metrics_history_rel = METRICS_REL / "improvement_history.jsonl"
     artifacts = {
-        "latest": str(HANDOFF_READINESS_REL),
-        "history": str(HANDOFF_READINESS_HISTORY_REL),
-        "metrics_latest": str(metrics_latest_rel),
-        "metrics_history": str(metrics_history_rel),
+        "latest": HANDOFF_READINESS_REL.as_posix(),
+        "history": HANDOFF_READINESS_HISTORY_REL.as_posix(),
+        "metrics_latest": metrics_latest_rel.as_posix(),
+        "metrics_history": metrics_history_rel.as_posix(),
     }
     actor = _handoff_actor(arguments)
     previous_metrics = _latest_metrics_snapshot(ip)
@@ -6235,7 +6235,10 @@ def _handoff_snapshot(arguments: dict[str, Any]) -> dict[str, Any]:
         payload=payload,
     )
 
-    metrics["artifacts"] = {"latest": str(metrics_latest_rel), "history": str(metrics_history_rel)}
+    metrics["artifacts"] = {
+        "latest": metrics_latest_rel.as_posix(),
+        "history": metrics_history_rel.as_posix(),
+    }
     ledger_metrics = metrics.get("ledger") if isinstance(metrics.get("ledger"), dict) else {}
     ledger_metrics["events"] = len(_ledger_entries(ip))
     metrics["ledger"] = ledger_metrics
@@ -6290,7 +6293,7 @@ def _handoff_report_issues(ip: Path) -> list[str]:
     path = ip / HANDOFF_READINESS_REL
     if not path.is_file():
         return []
-    rel = str(HANDOFF_READINESS_REL)
+    rel = HANDOFF_READINESS_REL.as_posix()
     issues: list[str] = []
     data = _read_json_file(path)
     if not isinstance(data, dict):
