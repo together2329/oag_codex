@@ -14,9 +14,9 @@ from typing import Any
 
 def rel(path: Path, root: Path) -> str:
     try:
-        return str(path.resolve().relative_to(root.resolve()))
+        return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def resolve_filelist_ref(ip: Path, base: Path, token: str) -> Path:

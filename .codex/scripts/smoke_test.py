@@ -5295,7 +5295,24 @@ def test_baseline_verify_git_tag(tmp_root: Path) -> None:
         check=True,
     )
     manifest_sha = "sha256:" + hashlib.sha256(manifest.read_bytes()).hexdigest()
-    subprocess.run(["git", "tag", "-a", tag, "-m", f"manifest_sha256: {manifest_sha}"], cwd=repo, text=True, capture_output=True, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Smoke",
+            "-c",
+            "user.email=smoke@example.com",
+            "tag",
+            "-a",
+            tag,
+            "-m",
+            f"manifest_sha256: {manifest_sha}",
+        ],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
 
     good = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
     assert good.returncode == 0, good.stderr or good.stdout
