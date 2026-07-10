@@ -21,6 +21,11 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - non-Windows fallback
+    msvcrt = None
+
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
@@ -631,9 +636,9 @@ def _line_number(text: str, offset: int) -> int:
 
 def _relative_to_ip(ip: Path, path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(ip.resolve()))
+        return path.resolve().relative_to(ip.resolve()).as_posix()
     except Exception:
-        return str(path)
+        return path.as_posix()
 
 
 def _expand_source_pattern(ip: Path, raw: str) -> list[Path]:
@@ -1497,7 +1502,7 @@ def _write_generated_design_views(
         packet_path = packets_dir / f"module__{_safe_filename(mid)}.json"
         _write_json_semantic_stable(packet_path, packet, volatile_keys={"generated_at"})
         live_packet_paths.add(packet_path)
-        packets.append({"module": mid, "path": str(packet_path.relative_to(ip)), "editable": editable})
+        packets.append({"module": mid, "path": packet_path.relative_to(ip).as_posix(), "editable": editable})
         module_packets_for_api.append(packet)
     rtl_api_path = oag_paths.state_path(ip, str(RTL_INTERFACE_API_REL))
     rtl_api_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1585,7 +1590,7 @@ def _write_generated_design_views(
         packet_path = packets_dir / filename
         _write_json_semantic_stable(packet_path, packet, volatile_keys={"generated_at"})
         live_packet_paths.add(packet_path)
-        packets.append({"module": "", "path": str(packet_path.relative_to(ip)), "editable": False, "packet_type": packet.get("packet_type")})
+        packets.append({"module": "", "path": packet_path.relative_to(ip).as_posix(), "editable": False, "packet_type": packet.get("packet_type")})
     for stale in packets_dir.glob("*.json"):
         if stale not in live_packet_paths:
             stale.unlink()
@@ -1703,14 +1708,26 @@ def _last_ledger_entry(ip: Path) -> dict[str, Any] | None:
 def _ledger_append_lock(ip: Path):
     lock_path = oag_paths.state_path(ip, "knowledge/.ledger.lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with lock_path.open("a+", encoding="utf-8") as handle:
+    with lock_path.open("a+b") as handle:
         if fcntl is not None:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        elif msvcrt is not None:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            raise RuntimeError("platform file locking is unavailable for OAG ledger append")
         try:
             yield
         finally:
             if fcntl is not None:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            elif msvcrt is not None:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def _is_human_approved(value: dict[str, Any]) -> bool:
@@ -3165,9 +3182,9 @@ def _implementation_artifacts(ip: Path) -> list[str]:
             try:
                 if path.stat().st_size == 0:
                     continue
-                refs.append(str(path.relative_to(ip)))
+                refs.append(path.relative_to(ip).as_posix())
             except Exception:
-                refs.append(str(path))
+                refs.append(path.as_posix())
     return sorted(dict.fromkeys(refs))
 
 
@@ -3735,9 +3752,9 @@ def _closure_evidence_report(ip: Path, evidence_files: list[str]) -> dict[str, A
 
 def _rel_to_ip(ip: Path, path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(ip.resolve()))
+        return path.resolve().relative_to(ip.resolve()).as_posix()
     except Exception:
-        return str(path)
+        return path.as_posix()
 
 
 def _logical_rel_to_ip(ip: Path, path: Path) -> str:
@@ -6431,7 +6448,7 @@ def _ticket(arguments: dict[str, Any]) -> dict[str, Any]:
     path = ip / "handoff" / "failure_tickets" / f"{ticket_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     actor = arguments.get("actor") if isinstance(arguments.get("actor"), dict) else {"kind": "ai", "id": "codex", "surface": "oag.ticket"}
-    ledger_payload = {"ticket": ticket, "path": str(path.relative_to(ip))}
+    ledger_payload = {"ticket": ticket, "path": path.relative_to(ip).as_posix()}
     _assert_ledger_append_allowed(ip, action="ticket", actor=actor, payload=ledger_payload)
     path.write_text(json.dumps(ticket, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     ledger_event = _append_ledger(
@@ -7174,8 +7191,8 @@ def _draft(arguments: dict[str, Any]) -> dict[str, Any]:
         subject=record_id,
         payload={
             "draft": draft,
-            "draft_path": str(draft_path.relative_to(ip)),
-            "markdown_path": str(md_path.relative_to(ip)),
+            "draft_path": draft_path.relative_to(ip).as_posix(),
+            "markdown_path": md_path.relative_to(ip).as_posix(),
         },
     )
     affects_scope = arguments.get("affects_scope")
@@ -7667,7 +7684,7 @@ def _save_run_state(ip: Path, state: dict[str, Any]) -> None:
             "ip": ip.name,
             "run_id": run_id,
             "status": str(state.get("status") or ""),
-            "path": str(_run_state_path(ip, run_id).relative_to(ip)),
+            "path": _run_state_path(ip, run_id).relative_to(ip).as_posix(),
             "updated_at": state["updated_at"],
         },
     )
@@ -8101,6 +8118,22 @@ def _dispatch_candidate(ip: Path, run_id: str, task: dict[str, Any]) -> dict[str
     for path in task_write_paths(task):
         create_parts.extend(["--allowed-write-path", str(ip / path)])
     create_command = " ".join(shlex.quote(part) for part in create_parts)
+    claim_parts = [
+        "python3",
+        ".codex/scripts/oag_wavefront.py",
+        "claim",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--task-id",
+        task_id,
+        "--dispatch-id",
+        "<dispatch_id>",
+        "--claimed-by",
+        "<actor>",
+        "--json",
+    ]
     claim_command = (
         "python3 .codex/scripts/oag_wavefront.py claim"
         f" --ip-dir {shlex.quote(str(ip))}"
@@ -8110,12 +8143,17 @@ def _dispatch_candidate(ip: Path, run_id: str, task: dict[str, Any]) -> dict[str
         " --claimed-by <actor>"
         " --json"
     )
+    create_argv = [sys.executable, *create_parts[1:]]
+    claim_argv = [sys.executable, *claim_parts[1:]]
     return {
         "task_id": task_id,
         "command": claim_command,
         "command_sequence": [create_command, claim_command],
+        "command_sequence_argv": [create_argv, claim_argv],
         "dispatch_create_command": create_command,
+        "dispatch_create_argv": create_argv,
         "claim_command": claim_command,
+        "claim_argv": claim_argv,
         "dispatch_id_placeholder": "<dispatch_id>",
         "agent_type": agent_type,
         "stage": stage,
@@ -8954,9 +8992,9 @@ def _run_start(arguments: dict[str, Any]) -> dict[str, Any]:
         "blocker_signature": "",
         "blocker_repeats": 0,
         "artifacts": {
-            "run_state": str(_run_state_path(ip, run_id).relative_to(ip)),
-            "next_action": str(_run_next_action_path(ip, run_id).relative_to(ip)),
-            "checkpoint_history": str(_run_history_path(ip, run_id).relative_to(ip)),
+            "run_state": _run_state_path(ip, run_id).relative_to(ip).as_posix(),
+            "next_action": _run_next_action_path(ip, run_id).relative_to(ip).as_posix(),
+            "checkpoint_history": _run_history_path(ip, run_id).relative_to(ip).as_posix(),
         },
         "compile": {"status": compile_result.get("status"), "issues": compile_result.get("issues") or []},
     }
@@ -8984,7 +9022,7 @@ def _run_start(arguments: dict[str, Any]) -> dict[str, Any]:
             "run_id": run_id,
             "stage": stage,
             "intent": intent,
-            "state": str(_run_state_path(ip, run_id).relative_to(ip)),
+            "state": _run_state_path(ip, run_id).relative_to(ip).as_posix(),
             "graph": state["graph"],
             "next_action": action,
         },

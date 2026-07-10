@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 oag_ip_git = importlib.import_module("oag_ip_git")
+oag_cli = importlib.import_module("oag_cli")
 oag_spec_to_rtl_loop = importlib.import_module("oag_spec_to_rtl_loop")
 oag_arch_bench = importlib.import_module("oag_arch_bench")
 oag_dse_worktree = importlib.import_module("oag_dse_worktree")
@@ -91,14 +94,56 @@ def scan_runtime_sources() -> tuple[list[dict[str, str]], list[dict[str, str]]]:
             issues.append(issue("WINDOWS_PYTHON_LAUNCHER_ARG_SPLAT", "Windows Python launcher must quote the hook script directly instead of forwarding %*", str(WINDOWS_LAUNCHER)))
         if '"%oag_script%"' not in launcher:
             issues.append(issue("WINDOWS_PYTHON_LAUNCHER_SCRIPT_QUOTE", "Windows Python launcher must quote the hook script path internally", str(WINDOWS_LAUNCHER)))
+        if "if not errorlevel 1 (" in launcher:
+            issues.append(issue("WINDOWS_PYTHON_LAUNCHER_ERRORLEVEL_CAPTURE", "launcher must not read %ERRORLEVEL% inside a parenthesized block", str(WINDOWS_LAUNCHER)))
     return issues, warnings
+
+
+def check_windows_launcher_runtime() -> list[dict[str, str]]:
+    if os.name != "nt" or not WINDOWS_LAUNCHER.is_file():
+        return []
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "exit_probe.py"
+        probe.write_text("raise SystemExit(23)\n", encoding="utf-8")
+        proc = subprocess.run(
+            ["cmd.exe", "/d", "/c", str(WINDOWS_LAUNCHER), str(probe)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    if proc.returncode == 23:
+        return []
+    return [
+        issue(
+            "WINDOWS_PYTHON_LAUNCHER_EXIT_CODE",
+            f"launcher returned {proc.returncode} instead of the Python exit code 23: {proc.stderr.strip() or proc.stdout.strip()}",
+            str(WINDOWS_LAUNCHER),
+        )
+    ]
+
+
+def check_ledger_locking() -> list[dict[str, str]]:
+    if os.name != "nt":
+        return []
+    if getattr(oag_cli, "msvcrt", None) is None:
+        return [issue("WINDOWS_LEDGER_LOCK_UNAVAILABLE", "msvcrt locking is unavailable")]
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            with oag_cli._ledger_append_lock(Path(tmp)):  # pylint: disable=protected-access
+                pass
+    except Exception as exc:
+        return [issue("WINDOWS_LEDGER_LOCK_FAILED", str(exc))]
+    return []
 
 
 def check_command_splitting() -> list[dict[str, str]]:
     issues: list[dict[str, str]] = []
     argv, error = oag_spec_to_rtl_loop._split_command('python -c "print(1)"')  # pylint: disable=protected-access
-    if error or argv[:2] != ["python", "-c"]:
+    if error or argv != ["python", "-c", "print(1)"]:
         issues.append(issue("ARGV_SPLIT_DIRECT_COMMAND", f"direct command split failed: argv={argv!r} error={error!r}"))
+    argv, error = oag_spec_to_rtl_loop._split_command(r'python tool.py --out "C:\Program Files\OAG\out.json"')  # pylint: disable=protected-access
+    if error or argv[-1:] != [r"C:\Program Files\OAG\out.json"]:
+        issues.append(issue("ARGV_SPLIT_WINDOWS_PATH", f"quoted Windows path split failed: argv={argv!r} error={error!r}"))
     argv, error = oag_spec_to_rtl_loop._split_command("python good.py && python bad.py")  # pylint: disable=protected-access
     if not error:
         issues.append(issue("ARGV_SPLIT_SHELL_META_ALLOWED", f"shell metacharacter command should be rejected: {argv!r}"))
@@ -152,6 +197,10 @@ def check_git_probe() -> tuple[list[dict[str, str]], list[dict[str, str]], dict[
 
 def run() -> dict[str, Any]:
     issues, warnings = scan_runtime_sources()
+    launcher_runtime_issues = check_windows_launcher_runtime()
+    issues.extend(launcher_runtime_issues)
+    ledger_lock_issues = check_ledger_locking()
+    issues.extend(ledger_lock_issues)
     issues.extend(check_command_splitting())
     issues.extend(check_arch_bench_path_guard())
     issues.extend(check_dse_worktree_path_guard())
@@ -170,6 +219,8 @@ def run() -> dict[str, Any]:
         "checks": {
             "runtime_source_scan": "pass" if not [item for item in issues if item.get("code") == "WINDOWS_SHELL_ASSUMPTION"] else "fail",
             "hook_commands": "pass" if not [item for item in issues if item.get("code") == "HOOK_COMMAND_SHELL_ASSUMPTION"] else "fail",
+            "launcher_exit_code": "not_applicable" if os.name != "nt" else ("pass" if not launcher_runtime_issues else "fail"),
+            "ledger_lock": "not_applicable" if os.name != "nt" else ("pass" if not ledger_lock_issues else "fail"),
             "argv_command_split": "pass" if not [item for item in issues if item.get("code", "").startswith("ARGV_SPLIT")] else "fail",
             "arch_bench_path_guard": "pass" if not [item for item in issues if item.get("code", "").startswith("ARCH_BENCH_PATH")] else "fail",
             "dse_worktree_path_guard": "pass" if not [item for item in issues if item.get("code", "").startswith("DSE_WORKTREE_PATH")] else "fail",

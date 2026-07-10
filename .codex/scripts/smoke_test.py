@@ -7289,9 +7289,16 @@ def main() -> int:
         assert "--wavefront-run-id" in first_candidate["dispatch_create_command"], first_candidate
         assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in first_candidate["dispatch_create_command"], first_candidate
         assert "--dispatch-id <dispatch_id>" in first_candidate["claim_command"], first_candidate
+        assert first_candidate["dispatch_create_argv"][0] == sys.executable, first_candidate
+        assert first_candidate["claim_argv"][0] == sys.executable, first_candidate
+        assert "<dispatch_id>" in first_candidate["claim_argv"], first_candidate
         assert first_candidate["command_sequence"] == [
             first_candidate["dispatch_create_command"],
             first_candidate["claim_command"],
+        ], first_candidate
+        assert first_candidate["command_sequence_argv"] == [
+            first_candidate["dispatch_create_argv"],
+            first_candidate["claim_argv"],
         ], first_candidate
         run_start_prompt = run_start["result"]["next_action"]["prompt_block"]
         assert "dispatch_candidates=" in run_start_prompt, run_start_prompt

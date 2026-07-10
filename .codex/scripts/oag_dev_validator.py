@@ -159,7 +159,7 @@ def _validator_report_gate(ip: Path) -> dict[str, Any]:
     failed_reports: list[str] = []
     for path in reports:
         present, status = oag_cli._status_from_json(path)
-        rel = str(path.relative_to(ip))
+        rel = path.relative_to(ip).as_posix()
         if present and status == "pass":
             pass_reports.append(rel)
         else:
@@ -186,7 +186,7 @@ def _stage_receipt_gate(ip: Path) -> dict[str, Any]:
         not issues,
         f"receipts={len(receipts)} issues={len(issues)}",
         issues=issues,
-        details={"receipts": [str(path.relative_to(ip)) for path in receipts]},
+        details={"receipts": [path.relative_to(ip).as_posix() for path in receipts]},
     )
 
 

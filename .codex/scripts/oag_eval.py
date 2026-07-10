@@ -281,6 +281,19 @@ def _record_closed_validation(ip: Path, *, surface: str = "eval") -> dict[str, A
     return response["result"]
 
 
+def _candidate_argv(candidate: dict[str, Any], argv_key: str, command_key: str) -> list[str]:
+    raw = candidate.get(argv_key)
+    if isinstance(raw, list) and raw and all(isinstance(item, str) and item for item in raw):
+        argv = list(raw)
+    else:
+        argv = shlex.split(str(candidate.get(command_key) or ""), posix=True)
+    if not argv:
+        raise AssertionError(f"dispatch candidate has no executable argv: {argv_key}")
+    if Path(argv[0]).name.lower() in {"python", "python.exe", "python3", "python3.exe", "py", "py.exe"}:
+        argv[0] = sys.executable
+    return argv
+
+
 def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "blocks_incomplete")
     run_id, started = _start_run(ip, intent="eval incomplete run blocks stop")
@@ -298,7 +311,7 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in reason, payload
     assert "--dispatch-id <dispatch_id>" in reason, payload
     create_proc = subprocess.run(
-        shlex.split(candidate["dispatch_create_command"]),
+        _candidate_argv(candidate, "dispatch_create_argv", "dispatch_create_command"),
         text=True,
         capture_output=True,
         check=False,
@@ -307,9 +320,12 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     )
     assert create_proc.returncode == 0, create_proc.stderr or create_proc.stdout
     dispatch_id = json.loads(create_proc.stdout)["dispatch"]["dispatch_id"]
-    claim_command = candidate["claim_command"].replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+    claim_argv = [
+        part.replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+        for part in _candidate_argv(candidate, "claim_argv", "claim_command")
+    ]
     claim_proc = subprocess.run(
-        shlex.split(claim_command),
+        claim_argv,
         text=True,
         capture_output=True,
         check=False,
