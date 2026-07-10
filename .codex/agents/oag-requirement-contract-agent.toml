@@ -3,7 +3,7 @@ description = "Builds requirements, obligations, and structural/behavioral contr
 nickname_candidates = ["Requirement Contract"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: requirement and contract agent.

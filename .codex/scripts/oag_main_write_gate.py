@@ -7,7 +7,6 @@ import argparse
 import fnmatch
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -17,6 +16,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import oag_paths  # noqa: E402
+import oag_dispatch_verify  # noqa: E402
+import oag_ip_git  # noqa: E402
 
 CODEX_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(os.environ.get("OAG_PROJECT_ROOT") or CODEX_ROOT.parent).expanduser().resolve()
@@ -62,18 +63,8 @@ IGNORED_PATH_PATTERNS = (
     "knowledge/subagents/**/*",
     "ontology/generated/**/*",
 )
-SUBAGENT_ROLE_FRAGMENTS = (
-    "rtl-implementation-agent",
-    "tb-implementation-agent",
-    "rtl-lint-static-agent",
-    "sim-execution-agent",
-    "coverage-agent",
-    "mutation-guard-agent",
-    "evidence-validator",
-    "gate-reviewer",
-    "custom-worker",
-)
-SAFE_RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"}
+COVERING_RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS"}
+TERMINAL_RECEIPT_STATUSES = COVERING_RECEIPT_STATUSES | {"FAIL", "BLOCKED", "INCONCLUSIVE"}
 WAIVER_ACTIONS = {"main_agent_subagent_waiver", "subagent_waiver", "main_agent_implementation_waiver"}
 
 
@@ -142,38 +133,23 @@ def scope_locked(ip_dir: Path) -> bool:
     return isinstance(payload, dict) and str(payload.get("state") or "").strip().lower() == "locked"
 
 
-def git_status_paths(ip_dir: Path) -> list[str]:
-    ip_rel = project_rel(ip_dir)
-    proc = subprocess.run(
-        ["git", "status", "--short", "-uall", "--", ip_rel],
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    paths: list[str] = []
-    for line in proc.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        raw = line[3:].strip()
-        if " -> " in raw:
-            raw = raw.split(" -> ", 1)[1].strip()
-        if raw.startswith('"') and raw.endswith('"'):
-            raw = raw[1:-1]
-        if raw:
-            paths.append(raw)
-    return sorted(set(paths))
+def git_status_paths(ip_dir: Path) -> tuple[list[str], list[dict[str, str]]]:
+    _raw, paths, error = oag_ip_git.repository_status_paths(ip_dir, PROJECT_ROOT)
+    if error:
+        return [], [issue("IP_GIT_STATUS_FAILED", error, project_rel(ip_dir))]
+    return paths, []
 
 
-def implementation_changes(ip_dir: Path) -> list[str]:
+def implementation_changes(ip_dir: Path) -> tuple[list[str], list[dict[str, str]]]:
     candidates: list[str] = []
-    for path in git_status_paths(ip_dir):
+    status_paths, status_issues = git_status_paths(ip_dir)
+    for path in status_paths:
         rel = ip_relative(path, ip_dir)
         if path_matches(rel, IGNORED_PATH_PATTERNS):
             continue
         if path_matches(rel, IMPLEMENTATION_PATTERNS):
             candidates.append(path)
-    return sorted(set(candidates))
+    return sorted(set(candidates)), status_issues
 
 
 def human_waiver(ip_dir: Path) -> dict[str, Any] | None:
@@ -187,14 +163,27 @@ def human_waiver(ip_dir: Path) -> dict[str, Any] | None:
             continue
         action = str(receipt.get("action") or "").strip()
         actor = receipt.get("actor") if isinstance(receipt.get("actor"), dict) else {}
-        if action in WAIVER_ACTIONS and receipt.get("allowed") is True and str(actor.get("kind") or "").lower() == "human":
+        approval = receipt.get("approval") if isinstance(receipt.get("approval"), dict) else {}
+        if (
+            action in WAIVER_ACTIONS
+            and receipt.get("allowed") is True
+            and str(actor.get("kind") or "").lower() == "human"
+            and approval.get("approved") is True
+            and str(approval.get("approved_by") or "") == str(actor.get("id") or "")
+            and str(approval.get("reason") or "").strip()
+            and str(receipt.get("ledger_event") or "").strip()
+        ):
             return {"path": project_rel(path), "receipt": receipt}
     return None
 
 
-def receipt_covered_paths(ip_dir: Path) -> tuple[set[str], list[dict[str, Any]]]:
+def receipt_covered_paths(
+    ip_dir: Path,
+) -> tuple[set[str], list[dict[str, Any]], set[str], list[dict[str, str]]]:
     covered: set[str] = set()
     receipts: list[dict[str, Any]] = []
+    completed_dispatch_ids: set[str] = set()
+    issues: list[dict[str, str]] = []
     for path in sorted(oag_paths.legacy_or_hidden(ip_dir, "knowledge/subagents").glob("*.json")):
         try:
             receipt = load_json(path)
@@ -203,32 +192,67 @@ def receipt_covered_paths(ip_dir: Path) -> tuple[set[str], list[dict[str, Any]]]
         if not isinstance(receipt, dict):
             continue
         role = str(receipt.get("role_name") or "")
-        if not role.startswith("oag-") or not any(fragment in role for fragment in SUBAGENT_ROLE_FRAGMENTS):
+        if not role.startswith("oag-"):
             continue
         if receipt.get("schema_version") != "oag_subagent_receipt.v1":
             continue
-        if receipt.get("may_claim_complete") is not False or receipt.get("status") not in SAFE_RECEIPT_STATUSES:
+        status = str(receipt.get("status") or "")
+        if receipt.get("may_claim_complete") is not False or status not in TERMINAL_RECEIPT_STATUSES:
             continue
         dispatch_path = normalize_candidate(str(receipt.get("dispatch_path") or ""), ip_dir)
         if not dispatch_path or not (PROJECT_ROOT / dispatch_path).is_file():
+            issues.append(issue("SUBAGENT_RECEIPT_DISPATCH_MISSING", "Receipt names a missing dispatch.", project_rel(path)))
             continue
+        verify_result = oag_dispatch_verify.verify_dispatch(
+            argparse.Namespace(
+                dispatch=str((PROJECT_ROOT / dispatch_path).resolve()),
+                receipt=str(path.resolve()),
+                schema_only=False,
+            )
+        )
+        if verify_result.get("status") != "pass":
+            codes = ", ".join(
+                str(item.get("code") or "UNKNOWN")
+                for item in verify_result.get("issues", [])[:6]
+                if isinstance(item, dict)
+            )
+            issues.append(
+                issue(
+                    "SUBAGENT_RECEIPT_UNVERIFIED",
+                    f"Receipt cannot cover writes because canonical dispatch verification failed: {codes or 'unknown verifier error'}.",
+                    project_rel(path),
+                )
+            )
+            continue
+        dispatch_id = str(receipt.get("dispatch_id") or "").strip()
+        if dispatch_id:
+            completed_dispatch_ids.add(dispatch_id)
         paths: list[str] = []
-        for field in ("changed_paths", "generated_side_effects", "evidence_outputs"):
+        for field in ("changed_paths", "generated_side_effects"):
             value = receipt.get(field)
             if isinstance(value, list):
                 paths.extend(str(item) for item in value if isinstance(item, str))
         normalized = {normalize_candidate(item, ip_dir) for item in paths}
-        covered.update(item for item in normalized if item)
+        covers_writes = bool(
+            status in COVERING_RECEIPT_STATUSES
+            and receipt.get("diagnostic_only") is False
+            and receipt.get("covers_writes") is True
+            and receipt.get("dispatch_verified") is True
+        )
+        if covers_writes:
+            covered.update(item for item in normalized if item)
         receipts.append(
             {
                 "path": project_rel(path),
                 "role_name": role,
-                "dispatch_id": str(receipt.get("dispatch_id") or ""),
-                "status": str(receipt.get("status") or ""),
-                "covered_paths": sorted(normalized),
+                "dispatch_id": dispatch_id,
+                "status": status,
+                "dispatch_verified": True,
+                "covers_writes": covers_writes,
+                "covered_paths": sorted(normalized) if covers_writes else [],
             }
         )
-    return covered, receipts
+    return covered, receipts, completed_dispatch_ids, issues
 
 
 def diagnostic_receipts(ip_dir: Path) -> list[dict[str, Any]]:
@@ -252,28 +276,6 @@ def diagnostic_receipts(ip_dir: Path) -> list[dict[str, Any]]:
             }
         )
     return receipts
-
-
-def safe_receipt_dispatch_ids(ip_dir: Path) -> set[str]:
-    dispatch_ids: set[str] = set()
-    for path in sorted(oag_paths.legacy_or_hidden(ip_dir, "knowledge/subagents").glob("*.json")):
-        try:
-            receipt = load_json(path)
-        except Exception:
-            continue
-        if not isinstance(receipt, dict):
-            continue
-        role = str(receipt.get("role_name") or "")
-        if not role.startswith("oag-") or not any(fragment in role for fragment in SUBAGENT_ROLE_FRAGMENTS):
-            continue
-        if receipt.get("schema_version") != "oag_subagent_receipt.v1":
-            continue
-        if receipt.get("may_claim_complete") is not False or receipt.get("status") not in SAFE_RECEIPT_STATUSES:
-            continue
-        dispatch_id = str(receipt.get("dispatch_id") or "").strip()
-        if dispatch_id:
-            dispatch_ids.add(dispatch_id)
-    return dispatch_ids
 
 
 def active_dispatch_conflicts(ip_dir: Path, changes: list[str], completed_dispatch_ids: set[str]) -> list[dict[str, str]]:
@@ -333,7 +335,8 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
         return build_result(ip_dir, locked=False, changes=[], receipts=[], waiver=None, issues=issues)
 
     locked = scope_locked(ip_dir)
-    changes = implementation_changes(ip_dir)
+    changes, git_issues = implementation_changes(ip_dir)
+    issues.extend(git_issues)
     if not locked or not changes:
         return build_result(ip_dir, locked=locked, changes=changes, receipts=[], waiver=None, issues=issues)
 
@@ -341,9 +344,9 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
     if waiver:
         return build_result(ip_dir, locked=locked, changes=changes, receipts=[], waiver=waiver, issues=issues)
 
-    covered, receipts = receipt_covered_paths(ip_dir)
+    covered, receipts, completed_dispatch_ids, receipt_issues = receipt_covered_paths(ip_dir)
+    issues.extend(receipt_issues)
     diagnostics = diagnostic_receipts(ip_dir)
-    completed_dispatch_ids = safe_receipt_dispatch_ids(ip_dir)
     for conflict in active_dispatch_conflicts(ip_dir, changes, completed_dispatch_ids):
         issues.append(
             issue(

@@ -51,6 +51,7 @@
           "allowed_write_paths",
           "ownership_mode",
           "status",
+          "patience_budget_seconds",
           "may_claim_complete"
         ],
         "properties": {
@@ -127,6 +128,14 @@
           },
           "heartbeat_message": {
             "type": "string"
+          },
+          "heartbeat_deadline_at": {
+            "type": "string"
+          },
+          "patience_budget_seconds": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 86400
           },
           "may_claim_complete": {
             "const": false

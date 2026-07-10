@@ -70,6 +70,12 @@ def normalize_task(raw: JsonObject, ip_dir: Path) -> JsonObject:
     allowed_write_paths = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("allowed_write_paths"))]
     shared_artifacts = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("shared_artifacts"))]
     stale_if_paths_changed = [ip_rel_path(item, ip_dir) for item in normalize_list(raw.get("stale_if_paths_changed"))]
+    try:
+        patience_budget_seconds = int(raw.get("patience_budget_seconds") or 900)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid patience_budget_seconds for {task_id}") from exc
+    if patience_budget_seconds < 30 or patience_budget_seconds > 86400:
+        raise ValueError(f"patience_budget_seconds for {task_id} must be between 30 and 86400")
     return {
         **raw,
         "task_id": task_id,
@@ -84,6 +90,7 @@ def normalize_task(raw: JsonObject, ip_dir: Path) -> JsonObject:
         "stale_if_paths_changed": sorted(set(stale_if_paths_changed)),
         "ownership_mode": ownership_mode,
         "status": str(raw.get("status") or "pending"),
+        "patience_budget_seconds": patience_budget_seconds,
         "may_claim_complete": False,
     }
 

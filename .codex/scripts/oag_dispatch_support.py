@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import uuid
@@ -35,6 +34,8 @@ SCHEMAS_DIR = CODEX_ROOT / "schemas"
 
 sys.path.insert(0, str(SCRIPTS_DIR))
 import oag_paths  # noqa: E402
+import oag_lock_readiness_check  # noqa: E402
+import oag_ip_git  # noqa: E402
 from oag_validate_json import validate_document  # noqa: E402
 
 if TYPE_CHECKING:
@@ -131,25 +132,10 @@ def ensure_under_ip(raw: str, ip_dir: Path, *, field: str) -> str:
 
 
 def git_status_paths(ip_rel: str) -> tuple[str, list[str]]:
-    proc = subprocess.run(
-        ["git", "status", "--short", "-uall", "--", ip_rel],
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    paths: list[str] = []
-    for line in proc.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        path = line[3:].strip()
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1].strip()
-        if path.startswith('"') and path.endswith('"'):
-            path = path[1:-1]
-        if path:
-            paths.append(path)
-    return proc.stdout, sorted(set(paths))
+    raw, paths, error = oag_ip_git.repository_status_paths(resolve_project_path(ip_rel), PROJECT_ROOT)
+    if error:
+        return f"GIT_STATUS_UNAVAILABLE: {error}", []
+    return raw, paths
 
 
 def sha256(path: Path) -> str:
@@ -365,6 +351,21 @@ def enforce_authoring_packet_gate(ip_dir: Path) -> JsonObject:
     )
 
 
+def enforce_semantic_readiness(ip_dir: Path) -> JsonObject:
+    result = oag_lock_readiness_check.check(ip_dir, require_locked=True)
+    if result.get("status") == "pass":
+        return result
+    details = "; ".join(
+        f"{item.get('code')}: {item.get('message')}"
+        for item in result.get("issues", [])[:8]
+        if isinstance(item, dict)
+    )
+    raise DispatchInputError(
+        "semantic readiness gate failed before locked-stage dispatch: "
+        + (details or "oag_lock_readiness_check returned fail")
+    )
+
+
 def path_matches(path: str, patterns: list[str]) -> bool:
     path = path.strip("/")
     while path.startswith("./"):
@@ -434,8 +435,10 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
     receipt_path = ensure_under_ip(args.receipt_path, ip_dir, field="receipt_path")
     if not path_matches(receipt_path, allowed_write_paths):
         allowed_write_paths.append(str(Path(receipt_path).parent).replace("\\", "/") + "/")
-    if dispatch_requires_lock(args.agent_type, args.stage, allowed_write_paths) and scope_lock_status(ip_dir).get("locked") is not True:
+    requires_lock = dispatch_requires_lock(args.agent_type, args.stage, allowed_write_paths)
+    if requires_lock and scope_lock_status(ip_dir).get("locked") is not True:
         raise DispatchInputError("scope lock required before implementation, validation, or gate dispatch; ask the user to confirm scope and run oag.lock")
+    semantic_readiness: JsonObject | None = enforce_semantic_readiness(ip_dir) if requires_lock else None
     authoring_packet_gate: JsonObject | None = None
     if dispatch_requires_authoring_packet_gate(args.agent_type, args.stage, allowed_write_paths, ip_rel):
         authoring_packet_gate = enforce_authoring_packet_gate(ip_dir)
@@ -482,5 +485,7 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         response: JsonObject = {"schema_version": "oag_dispatch_create_result.v1", "status": "pass", "dispatch": candidate}
         if authoring_packet_gate:
             response["authoring_packet_gate"] = authoring_packet_gate
+        if semantic_readiness:
+            response["semantic_readiness"] = semantic_readiness
         return response
     raise DispatchInputError("could not allocate a unique dispatch id")

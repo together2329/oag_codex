@@ -502,6 +502,8 @@ def build_templates(ip: str, owner: str) -> dict[str, str]:
             "obligations:",
             f"  - id: {obl_id}",
             f"    requirement: {req_id}",
+            "    requirement_atom_refs:",
+            f"      - ATOM_{ip.upper()}_RESET_KNOWN",
             "    feature_refs:",
             f"      - {feature_id}",
             "    status: open",

@@ -3,7 +3,7 @@ description = "Runs and reviews DUT compile, lint, static structure, and RTL fac
 nickname_candidates = ["RTL Static"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: RTL lint/static agent.

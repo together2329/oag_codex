@@ -28,6 +28,7 @@ from oag_hook_utils import (
     parse_run_limit_command,
     prompt_text,
     read_payload,
+    state_path,
     target_ip_dirs,
 )
 
@@ -168,7 +169,7 @@ def _remember_injection(cache: dict[str, Any], key: str, digest: str, *, hook_ev
 
 
 def _active_run_block(ip: Path) -> str:
-    active_path = ip / "ontology" / "runs" / "active_run.json"
+    active_path = state_path(ip, "ontology/runs/active_run.json")
     if not active_path.is_file():
         return ""
     try:
@@ -182,9 +183,9 @@ def _active_run_block(ip: Path) -> str:
     run_id = str(active.get("run_id") or "")
     if not run_id:
         return ""
-    state_path = ip / "ontology" / "runs" / run_id / "run_state.json"
+    run_state_path = state_path(ip, f"ontology/runs/{run_id}/run_state.json")
     try:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state = json.loads(run_state_path.read_text(encoding="utf-8"))
     except Exception:
         state = {}
     if not isinstance(state, dict):
@@ -195,7 +196,7 @@ def _active_run_block(ip: Path) -> str:
     block = str(action.get("prompt_block") or "").strip()
     if block:
         return block
-    next_path = ip / "ontology" / "runs" / run_id / "next_action.json"
+    next_path = state_path(ip, f"ontology/runs/{run_id}/next_action.json")
     try:
         next_action = json.loads(next_path.read_text(encoding="utf-8"))
     except Exception:
@@ -226,14 +227,20 @@ def _context_for(ip: Path, *, stage: str, intent: str) -> str:
 
 
 def _configure_run_limit(ip: Path, *, limit: str) -> str:
+    actor_id = os.environ.get("USER") or "owner"
     response = oag_cli.dispatch_call(
         {
             "tool": "oag.configure",
             "arguments": {
                 "ip_dir": str(ip),
                 "hook_auto_continue_until": limit,
-                "actor": {"kind": "human", "id": os.environ.get("USER") or "owner", "surface": "chat"},
-                "approval": {"kind": "human", "approved": True, "reason": "explicit short run-limit command"},
+                "actor": {"kind": "human", "id": actor_id, "surface": "chat"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": actor_id,
+                    "reason": "explicit short run-limit command",
+                },
             },
         }
     )

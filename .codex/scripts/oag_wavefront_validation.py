@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from oag_wavefront_core import Issue, JsonObject, issue, validate_named_schema
+from oag_wavefront_core import Issue, JsonObject, issue, utc_deadline_expired, validate_named_schema
 from oag_wavefront_graph import VALID_KINDS, VALID_OWNERSHIP, VALID_STATUSES, normalize_list, task_map, task_write_paths
 
 
@@ -41,6 +41,18 @@ def _check_task(tasks: dict[str, JsonObject], task: JsonObject, issues: list[Iss
         issues.append(issue("OWNERSHIP_MODE", f"invalid ownership mode: {ownership}", task_id))
     if task.get("may_claim_complete") is not False:
         issues.append(issue("TASK_COMPLETION_CLAIM", "task must keep may_claim_complete=false", task_id))
+    try:
+        patience_budget = int(task.get("patience_budget_seconds"))
+    except (TypeError, ValueError):
+        patience_budget = 0
+    if patience_budget < 30 or patience_budget > 86400:
+        issues.append(issue("TASK_PATIENCE_BUDGET", "task patience_budget_seconds must be between 30 and 86400", task_id))
+    if status in {"claimed", "review_pending"}:
+        deadline = str(task.get("heartbeat_deadline_at") or "")
+        if not deadline:
+            issues.append(issue("TASK_HEARTBEAT_DEADLINE_MISSING", "active task requires a durable heartbeat deadline", task_id))
+        elif utc_deadline_expired(deadline):
+            issues.append(issue("TASK_HEARTBEAT_STALE", f"active task exceeded heartbeat deadline {deadline}", task_id))
     for dep in normalize_list(task.get("depends_on")):
         if dep not in tasks:
             issues.append(issue("MISSING_DEPENDENCY", f"task dependency does not exist: {dep}", task_id))

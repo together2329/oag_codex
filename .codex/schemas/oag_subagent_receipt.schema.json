@@ -8,7 +8,9 @@
     "schema_version",
     "product_name",
     "internal_gateway",
+    "ip_id",
     "role_name",
+    "registered_id",
     "dispatch_id",
     "dispatch_path",
     "shard_scope",
@@ -20,6 +22,10 @@
     "changed_paths",
     "generated_side_effects",
     "evidence_outputs",
+    "diagnostic_only",
+    "covers_writes",
+    "dispatch_verified",
+    "implementation_evidence",
     "may_claim_complete",
     "created_at"
   ],
@@ -106,6 +112,18 @@
       "items": {
         "type": "string"
       }
+    },
+    "diagnostic_only": {
+      "const": false
+    },
+    "covers_writes": {
+      "type": "boolean"
+    },
+    "dispatch_verified": {
+      "const": true
+    },
+    "implementation_evidence": {
+      "type": "boolean"
     },
     "checks_run": {
       "type": "array",

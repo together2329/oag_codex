@@ -3,7 +3,7 @@ description = "Debugs failing simulation through scoreboard rows, logs, VCD/FST 
 nickname_candidates = ["Simulation Debug"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: simulation debug agent.

@@ -69,9 +69,29 @@ BOOL_FIELDS = {
 
 WORKSPACE_WRITE_AGENTS = {
     "oag-ontology-curator-agent",
+    "oag-requirement-contract-agent",
+    "oag-legacy-ip-analyzer",
+    "oag-ip-contract-agent",
+    "oag-verification-strategy-agent",
+    "oag-ip-version-steward-agent",
     "oag-rtl-implementation-agent",
+    "oag-rtl-lint-static-agent",
     "oag-tb-implementation-agent",
     "oag-sim-execution-agent",
+    "oag-sim-debug-agent",
+    "oag-coverage-agent",
+    "oag-mutation-guard-agent",
+    "oag-evidence-validator",
+    "oag-gate-reviewer",
+    "oag-custom-researcher",
+    "oag-custom-worker",
+    "oag-custom-reviewer",
+}
+
+SOURCE_WRITE_AGENTS = {
+    "oag-ontology-curator-agent",
+    "oag-rtl-implementation-agent",
+    "oag-tb-implementation-agent",
     "oag-custom-worker",
 }
 
@@ -274,7 +294,7 @@ def check_catalog() -> dict[str, Any]:
             issues.append(issue("AGENT_ALLOWED_PATHS", f"{agent_id} may_write_evidence=true requires allowed_write_paths.", str(CATALOG)))
         if agent.get("may_modify_source") is True and agent_id not in WORKSPACE_WRITE_AGENTS:
             issues.append(issue("AGENT_SOURCE_WRITE_POLICY", f"{agent_id} is not in the workspace-write role allowlist.", str(CATALOG)))
-        if agent_id in WORKSPACE_WRITE_AGENTS and agent.get("may_modify_source") is not True and agent_id != "oag-sim-execution-agent":
+        if agent_id in SOURCE_WRITE_AGENTS and agent.get("may_modify_source") is not True:
             issues.append(issue("AGENT_SOURCE_WRITE_POLICY", f"{agent_id} should declare may_modify_source=true.", str(CATALOG)))
 
         if agent.get("may_claim_complete") is True:

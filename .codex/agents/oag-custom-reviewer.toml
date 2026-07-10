@@ -3,7 +3,7 @@ description = "Dynamic OAG reviewer shard for one bounded artifact, evidence set
 nickname_candidates = ["Custom Reviewer"]
 model = "gpt-5.5"
 model_reasoning_effort = "high"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: dynamic custom reviewer.

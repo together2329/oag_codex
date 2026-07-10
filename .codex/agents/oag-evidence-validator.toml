@@ -3,7 +3,7 @@ description = "Validates ROCEV evidence freshness, schema, artifact paths, and c
 nickname_candidates = ["Evidence Validator"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: evidence validator.

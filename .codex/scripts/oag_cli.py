@@ -25,6 +25,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import oag_paths  # noqa: E402
+import oag_closure_check  # noqa: E402
+import oag_lock_readiness_check  # noqa: E402
 from oag_wavefront_core import WavefrontRun, graph_paths  # noqa: E402
 from oag_wavefront_graph import (  # noqa: E402
     DONE_STATUSES,
@@ -38,7 +40,7 @@ from oag_wavefront_graph import (  # noqa: E402
     task_map,
     task_write_paths,
 )
-from oag_wavefront_ops import PlanRequest, create_wavefront_run, load_wavefront_run_status  # noqa: E402
+from oag_wavefront_ops import ClaimRequest, PlanRequest, claim_wavefront_task, create_wavefront_run, load_wavefront_run_status  # noqa: E402
 from oag_wavefront_records import RecordRequest, record_wavefront_task  # noqa: E402
 from oag_run_authority import (  # noqa: E402
     GraphRecordContext,
@@ -58,6 +60,11 @@ from oag_loop_core import (  # noqa: E402
 
 RESPONSE_SCHEMA = "oag_tool_response.v1"
 VALID_COMPLETION_ACTIONS = {"claim_complete", "close_obligation", "merge", "promote", "signoff"}
+MAIN_AGENT_WAIVER_ACTIONS = {
+    "main_agent_subagent_waiver",
+    "subagent_waiver",
+    "main_agent_implementation_waiver",
+}
 RUN_CLOSURE_GRAPH_TEMPLATE = "oag.run.start.closure_graph.v1"
 CANONICAL_AGGREGATE_REFS = {
     "sim/scoreboard_events.jsonl": "sim",
@@ -263,6 +270,17 @@ def _ip_dir(arguments: dict[str, Any]) -> Path:
     raw = arguments.get("ip_dir") or arguments.get("ip") or arguments.get("ip_root")
     if not raw:
         raise ValueError("arguments.ip_dir is required")
+    raw_path = Path(str(raw)).expanduser()
+    cwd = Path.cwd().resolve()
+    if (
+        not raw_path.is_absolute()
+        and raw_path.parts == (cwd.name,)
+        and (cwd / "ontology").exists()
+    ):
+        raise ValueError(
+            "NESTED_IP_DIR_GENERATED_ARTIFACT: a same-name relative ip_dir was supplied from inside the IP; "
+            "use --ip-dir . or an absolute IP path"
+        )
     # Resolve here so the IP base is consistent with oag_paths.* (which resolve
     # internally); otherwise `<resolver_path>.relative_to(ip)` mismatches on
     # platforms where the temp/real root differs (e.g. macOS /var -> /private/var).
@@ -1696,18 +1714,25 @@ def _ledger_append_lock(ip: Path):
 
 
 def _is_human_approved(value: dict[str, Any]) -> bool:
-    action = str(value.get("action") or "").lower()
-    if action in APPROVAL_ACTIONS:
-        return True
     actor = value.get("actor") if isinstance(value.get("actor"), dict) else {}
-    if str(actor.get("kind") or "").lower() == "human":
-        return True
     payload = value.get("payload") if isinstance(value.get("payload"), dict) else value
     approval = payload.get("approval") if isinstance(payload.get("approval"), dict) else {}
-    if str(approval.get("kind") or "").lower() == "human" or approval.get("approved") is True:
-        return True
-    approved_by = payload.get("approved_by")
-    return bool(approved_by and str(approved_by).strip())
+    actor_id = str(actor.get("id") or "").strip()
+    approved_by = str(approval.get("approved_by") or payload.get("approved_by") or "").strip()
+    reason = str(
+        approval.get("reason")
+        or payload.get("reason")
+        or payload.get("approval_reason")
+        or ""
+    ).strip()
+    return bool(
+        str(actor.get("kind") or "").lower() == "human"
+        and actor_id
+        and approval.get("approved") is True
+        and str(approval.get("kind") or "human").lower() == "human"
+        and approved_by == actor_id
+        and reason
+    )
 
 
 def _approval_reason_text(arguments: dict[str, Any]) -> str:
@@ -3237,7 +3262,18 @@ def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
         "confirmed_scope": confirmed_scope,
     }
     if not _is_human_approved({"action": "scope_lock", "actor": actor, "payload": payload_for_approval}):
-        raise ValueError("oag.lock requires explicit human approval; use actor.kind=human or approval.approved=true")
+        raise ValueError(
+            "oag.lock requires a complete human approval: actor.kind=human, approval.approved=true, "
+            "approval.approved_by matching actor.id, and a non-empty approval reason"
+        )
+    readiness = oag_lock_readiness_check.check(ip, require_locked=True)
+    if readiness.get("status") != "pass":
+        details = "; ".join(
+            str(item.get("code") or item.get("message") or "readiness issue")
+            for item in _as_list(readiness.get("issues"))[:8]
+            if isinstance(item, dict)
+        )
+        raise ValueError(f"scope is not semantically lock-ready: {details or 'readiness check failed'}")
     previous = _scope_lock_doc(ip)
     lock_id = f"LOCK_{_stamp()}_{_slug(summary)}"
     doc = {
@@ -3270,6 +3306,7 @@ def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
         "path": str(_scope_lock_path(ip)),
         "lock": doc,
         "ledger_event": ledger_event["event_hash"],
+        "semantic_readiness": readiness,
     }
 
 
@@ -3283,7 +3320,10 @@ def _scope_unlock(arguments: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
     }
     if not _is_human_approved({"action": "scope_unlock", "actor": actor, "payload": payload_for_approval}):
-        raise ValueError("oag.unlock requires explicit human approval; use actor.kind=human or approval.approved=true")
+        raise ValueError(
+            "oag.unlock requires a complete human approval: actor.kind=human, approval.approved=true, "
+            "approval.approved_by matching actor.id, and a non-empty approval reason"
+        )
     previous = _scope_lock_doc(ip)
     doc = {
         "schema_version": "oag_scope_lock.v1",
@@ -3718,7 +3758,12 @@ def _compile_input_fingerprints(ip: Path) -> list[dict[str, str]]:
     # filesystem target, but the fingerprint key stays the LOGICAL rel so the
     # compile manifest never records a ".oag/" prefix.
     ontology_rels = [
+        "req/source_claims.yaml",
+        "req/ambiguity_register.yaml",
         "ontology/requirements.yaml",
+        "ontology/features.yaml",
+        "ontology/requirement_atoms.yaml",
+        "ontology/decision_matrix.yaml",
         "ontology/obligations.yaml",
         "ontology/contracts.yaml",
         "ontology/stages.yaml",
@@ -3893,6 +3938,11 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         manifest = _fresh_compile_manifest(ip, compile_inputs)
         if manifest is not None:
             return _cached_compile_result(ip, manifest)
+    source_claims = _yaml_items(ip, "req/source_claims.yaml", "claims")
+    ambiguities = _yaml_items(ip, "req/ambiguity_register.yaml", "ambiguities")
+    features = _yaml_items(ip, "ontology/features.yaml", "features")
+    requirement_atoms = _yaml_items(ip, "ontology/requirement_atoms.yaml", "requirement_atoms")
+    decisions = _yaml_items(ip, "ontology/decision_matrix.yaml", "decisions")
     reqs = _yaml_items(ip, "ontology/requirements.yaml", "requirements")
     obligations = _yaml_items(ip, "ontology/obligations.yaml", "obligations")
     contracts = _yaml_items(ip, "ontology/contracts.yaml", "contracts")
@@ -3933,6 +3983,11 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     issues: list[str] = []
 
+    claim_ids = {str(item.get("id") or "") for item in source_claims if item.get("id")}
+    ambiguity_ids = {str(item.get("id") or "") for item in ambiguities if item.get("id")}
+    feature_ids = {str(item.get("id") or "") for item in features if item.get("id")}
+    atom_ids = {str(item.get("id") or "") for item in requirement_atoms if item.get("id")}
+    decision_ids = {str(item.get("id") or "") for item in decisions if item.get("id")}
     req_ids = {str(item.get("id") or "") for item in reqs if item.get("id")}
     obl_ids = {str(item.get("id") or "") for item in obligations if item.get("id")}
     contract_ids = {str(item.get("id") or "") for item in contracts if item.get("id")}
@@ -4053,6 +4108,40 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
         if name in authored_module_ids:
             edges.append({"source": f"fact::module::{name}", "target": f"module::{name}", "type": "implements_module", "load_bearing": True})
 
+    for claim in source_claims:
+        cid = str(claim.get("id") or "")
+        if not cid:
+            issues.append("source claim without id")
+            continue
+        nodes.append({"id": f"source_claim::{cid}", "type": "source_claim", "label": cid, "status": str(claim.get("status") or "draft")})
+        edges.append({"source": f"ip::{ip.name}", "target": f"source_claim::{cid}", "type": "has_source_claim", "load_bearing": str(claim.get("status") or "") == "confirmed"})
+
+    for ambiguity in ambiguities:
+        aid = str(ambiguity.get("id") or "")
+        if not aid:
+            issues.append("ambiguity without id")
+            continue
+        nodes.append({"id": f"ambiguity::{aid}", "type": "ambiguity", "label": aid, "status": str(ambiguity.get("status") or "open")})
+        edges.append({"source": f"ip::{ip.name}", "target": f"ambiguity::{aid}", "type": "tracks_ambiguity", "load_bearing": bool(ambiguity.get("lock_required"))})
+        for cid in _str_items(ambiguity.get("source_claim_refs")):
+            edges.append({"source": f"source_claim::{cid}", "target": f"ambiguity::{aid}", "type": "raises_ambiguity", "load_bearing": True})
+
+    for feature in features:
+        fid = str(feature.get("id") or "")
+        if not fid:
+            issues.append("feature without id")
+            continue
+        nodes.append({"id": f"feature::{fid}", "type": "feature", "label": fid, "status": str(feature.get("status") or "draft")})
+        edges.append({"source": f"ip::{ip.name}", "target": f"feature::{fid}", "type": "has_feature", "load_bearing": True})
+
+    for decision in decisions:
+        did = str(decision.get("id") or "")
+        if not did:
+            issues.append("decision without id")
+            continue
+        nodes.append({"id": f"decision::{did}", "type": "decision", "label": did, "status": str(decision.get("status") or "unresolved")})
+        edges.append({"source": f"ip::{ip.name}", "target": f"decision::{did}", "type": "has_decision", "load_bearing": bool(decision.get("lock_required"))})
+
     for req in reqs:
         rid = str(req.get("id") or "")
         if not rid:
@@ -4060,6 +4149,34 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             continue
         nodes.append({"id": f"requirement::{rid}", "type": "requirement", "label": rid, "status": str(req.get("status") or "open")})
         edges.append({"source": f"ip::{ip.name}", "target": f"requirement::{rid}", "type": "has_requirement", "load_bearing": True})
+        for cid in _str_items(req.get("source_claim_refs")):
+            if cid not in claim_ids:
+                issues.append(f"{rid}: source claim ref not found: {cid}")
+            edges.append({"source": f"source_claim::{cid}", "target": f"requirement::{rid}", "type": "authorizes_requirement", "load_bearing": True})
+        for fid in _str_items(req.get("feature_refs")):
+            if fid not in feature_ids:
+                issues.append(f"{rid}: feature ref not found: {fid}")
+            edges.append({"source": f"feature::{fid}", "target": f"requirement::{rid}", "type": "contains_requirement", "load_bearing": True})
+        for aid in _str_items(req.get("ambiguity_refs")):
+            if aid not in ambiguity_ids:
+                issues.append(f"{rid}: ambiguity ref not found: {aid}")
+            edges.append({"source": f"ambiguity::{aid}", "target": f"requirement::{rid}", "type": "constrains_requirement", "load_bearing": True})
+        for did in _str_items(req.get("decision_refs")):
+            if did not in decision_ids:
+                issues.append(f"{rid}: decision ref not found: {did}")
+            edges.append({"source": f"decision::{did}", "target": f"requirement::{rid}", "type": "decides_requirement", "load_bearing": True})
+
+    for atom in requirement_atoms:
+        aid = str(atom.get("id") or "")
+        if not aid:
+            issues.append("requirement atom without id")
+            continue
+        source_requirement = str(atom.get("source_requirement_id") or "")
+        nodes.append({"id": f"requirement_atom::{aid}", "type": "requirement_atom", "label": aid, "status": str(atom.get("status") or "draft")})
+        if source_requirement not in req_ids:
+            issues.append(f"{aid}: source requirement ref not found: {source_requirement or '<missing>'}")
+        if source_requirement:
+            edges.append({"source": f"requirement::{source_requirement}", "target": f"requirement_atom::{aid}", "type": "decomposes_to_atom", "load_bearing": True})
 
     for obligation in obligations:
         oid = str(obligation.get("id") or "")
@@ -4074,6 +4191,17 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             if rid not in req_ids:
                 issues.append(f"{oid}: requirement ref not found: {rid}")
             edges.append({"source": f"requirement::{rid}", "target": f"obligation::{oid}", "type": "has_obligation", "load_bearing": True})
+        atom_refs = _str_items(
+            obligation.get("requirement_atom_refs")
+            or obligation.get("atom_refs")
+            or obligation.get("requirement_atoms")
+        )
+        if not atom_refs:
+            issues.append(f"{oid}: obligation missing requirement atom refs")
+        for aid in atom_refs:
+            if aid not in atom_ids:
+                issues.append(f"{oid}: requirement atom ref not found: {aid}")
+            edges.append({"source": f"requirement_atom::{aid}", "target": f"obligation::{oid}", "type": "projects_to_obligation", "load_bearing": True})
         for cid in [str(item) for item in _as_list(obligation.get("contracts") or obligation.get("contract") or obligation.get("contract_ids")) if item]:
             if cid not in contract_ids:
                 issues.append(f"{oid}: contract ref not found: {cid}")
@@ -4707,6 +4835,35 @@ def _closed_record_links(ip: Path) -> list[dict[str, str]]:
     return links
 
 
+def _obligation_waiver_receipt(ip: Path, obligation: dict[str, Any]) -> tuple[bool, str, str]:
+    oid = str(obligation.get("id") or "").strip()
+    ref = str(obligation.get("waiver_receipt_ref") or "").strip()
+    if not ref:
+        return False, "", f"{oid}: waived obligation requires waiver_receipt_ref"
+    path = oag_paths.legacy_or_hidden(ip, ref)
+    receipt = _read_json_file(path)
+    if not isinstance(receipt, dict):
+        return False, ref, f"{oid}: waiver receipt is missing or invalid: {ref}"
+    actor = receipt.get("actor") if isinstance(receipt.get("actor"), dict) else {}
+    approval = receipt.get("approval") if isinstance(receipt.get("approval"), dict) else {}
+    subjects = {
+        str(item).strip()
+        for item in _as_list(receipt.get("subjects") or receipt.get("obligation_ids") or receipt.get("obligation_id"))
+        if str(item).strip()
+    }
+    valid = bool(
+        receipt.get("allowed") is True
+        and str(receipt.get("action") or "") in {"waive_obligation", "obligation_waiver"}
+        and str(actor.get("kind") or "").lower() == "human"
+        and approval.get("approved") is True
+        and str(approval.get("approved_by") or "") == str(actor.get("id") or "")
+        and str(approval.get("reason") or "").strip()
+        and oid in subjects
+        and str(receipt.get("ledger_event") or "").strip()
+    )
+    return valid, ref, "" if valid else f"{oid}: waiver receipt is not an authorized, obligation-scoped decision: {ref}"
+
+
 def _closure_matrix(ip: Path) -> dict[str, Any]:
     obligations = _yaml_items(ip, "ontology/obligations.yaml", "obligations")
     contracts = _yaml_items(ip, "ontology/contracts.yaml", "contracts")
@@ -4721,29 +4878,68 @@ def _closure_matrix(ip: Path) -> dict[str, Any]:
         if not oid:
             continue
         status = _normal_status(obligation.get("status") or "open")
-        if status in {"template", "waived"}:
-            rows.append({"obligation": oid, "status": status, "contracts": [], "closed": True, "records": [], "waived": status == "waived"})
+        if status == "template":
+            issues.append(f"{oid}: template obligation cannot count as closed; resolve it or use an authorized waiver receipt")
+            rows.append({"obligation": oid, "status": status, "contracts": [], "closed": False, "records": [], "waived": False})
+            continue
+        if status == "waived":
+            waiver_valid, waiver_ref, waiver_issue = _obligation_waiver_receipt(ip, obligation)
+            if waiver_issue:
+                issues.append(waiver_issue)
+            rows.append(
+                {
+                    "obligation": oid,
+                    "status": status,
+                    "contracts": [],
+                    "closed": waiver_valid,
+                    "records": [],
+                    "waived": waiver_valid,
+                    "waiver_receipt_ref": waiver_ref,
+                }
+            )
             continue
         contract_refs = _obligation_contract_refs(obligation, contracts)
         for cid in contract_refs:
             if cid not in contract_ids:
                 issues.append(f"{oid}: closure matrix contract ref not found: {cid}")
-        closed_records = [
-            link["record"]
-            for link in links
-            if link["obligation"] == oid and (not contract_refs or link["contract"] in contract_refs)
-        ]
+        records_by_contract = {
+            cid: sorted(
+                {
+                    link["record"]
+                    for link in links
+                    if link["obligation"] == oid and link["contract"] == cid
+                }
+            )
+            for cid in contract_refs
+        }
+        closed_records = sorted({record for records in records_by_contract.values() for record in records})
+        satisfaction_mode = str(obligation.get("contract_satisfaction") or "all_of").strip().lower()
+        if satisfaction_mode not in {"all_of", "any_of"}:
+            issues.append(f"{oid}: contract_satisfaction must be all_of or any_of")
+            satisfaction_mode = "all_of"
+        if satisfaction_mode == "any_of" and not str(obligation.get("contract_satisfaction_rationale") or "").strip():
+            issues.append(f"{oid}: any_of contract satisfaction requires contract_satisfaction_rationale")
+        closed = bool(contract_refs) and (
+            all(records_by_contract.get(cid) for cid in contract_refs)
+            if satisfaction_mode == "all_of"
+            else any(records_by_contract.get(cid) for cid in contract_refs)
+        )
         if not contract_refs:
             issues.append(f"{oid}: no contract bound in closure matrix")
-        if contract_refs and not closed_records:
-            issues.append(f"{oid}: no closed validation record linking obligation to contract")
+        if contract_refs and not closed:
+            missing = [cid for cid in contract_refs if not records_by_contract.get(cid)]
+            issues.append(
+                f"{oid}: closure requires {satisfaction_mode} contract validation; missing closed records for {', '.join(missing)}"
+            )
         rows.append(
             {
                 "obligation": oid,
                 "status": status,
                 "contracts": contract_refs,
-                "closed": bool(closed_records),
+                "contract_satisfaction": satisfaction_mode,
+                "closed": closed,
                 "records": closed_records,
+                "records_by_contract": records_by_contract,
             }
         )
     if not obligations:
@@ -6687,6 +6883,17 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
     issues.extend(_stage_receipt_issues(ip))
     issues.extend(_scope_lock_issues(ip))
     issues.extend(_layout_issues(ip))
+    semantic_readiness = oag_lock_readiness_check.check(ip, require_locked=False)
+    semantic_issues = [
+        f"semantic readiness {item.get('code')}: {item.get('message')}"
+        for item in _as_list(semantic_readiness.get("issues"))
+        if isinstance(item, dict)
+    ]
+    semantic_advisories: list[str] = []
+    if _scope_lock_status(ip)["locked"]:
+        issues.extend(semantic_issues)
+    else:
+        semantic_advisories.extend(semantic_issues)
     result = {
         "schema_version": "oag_check.v1",
         "ip": ip.name,
@@ -6698,6 +6905,8 @@ def _check(arguments: dict[str, Any], *, include_metrics: bool = True) -> dict[s
         "truth_graph": {"compiled": _truth_graph_compiled(ip), "path": str(_truth_graph_path(ip))},
         "ledger": {"path": str(_ledger_path(ip)), "events": len(_ledger_entries(ip))},
         "closure_matrix": closure_matrix,
+        "semantic_readiness": semantic_readiness,
+        "advisories": semantic_advisories,
     }
     if include_metrics:
         result["improvement_metrics"] = _improvement_metrics(
@@ -6806,6 +7015,7 @@ def _record(arguments: dict[str, Any]) -> dict[str, Any]:
     status = validation_status or argument_status or "open"
     evidence_file_hashes = _evidence_file_hashes(ip, files)
     supersedes = [str(item).strip() for item in _as_list(arguments.get("supersedes")) if str(item).strip()]
+    approval = arguments.get("approval") if isinstance(arguments.get("approval"), dict) else {}
     record_id = f"IKL_{_stamp()}_{_slug(claim)}"
     record = {
         "schema": "ip_knowledge_record.v1",
@@ -6825,6 +7035,7 @@ def _record(arguments: dict[str, Any]) -> dict[str, Any]:
         "evidence": {"files": files, "tests": tests, "commit": commit, "file_hashes": evidence_file_hashes},
         "validation": {"status": status, "verdict": str(validation.get("verdict") or "pending"), "rationale": str(validation.get("rationale") or "")},
         "supersedes": supersedes,
+        "approval": approval,
         "promotion": {"state": "local"},
         "created_at": _now(),
     }
@@ -6833,7 +7044,13 @@ def _record(arguments: dict[str, Any]) -> dict[str, Any]:
     action = str(record["type"] or "record")
     # Keep the ledger-recorded path LOGICAL so the hash chain never captures a
     # ".oag/" prefix regardless of the active layout.
-    ledger_payload = {"record": record, "path": record_rel}
+    ledger_payload = {
+        "record": record,
+        "path": record_rel,
+        "approval": approval,
+        "approved_by": arguments.get("approved_by"),
+        "reason": _approval_reason_text(arguments),
+    }
     _assert_ledger_append_allowed(ip, action=action, actor=record["actor"], payload=ledger_payload)
     path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _rebuild_knowledge_index(ip)
@@ -6995,12 +7212,19 @@ def _review_policy(ip: Path) -> dict[str, Any]:
 
 
 def _reviewer_required(ip: Path, action: str) -> bool:
-    if action not in {"signoff", "promote"}:
+    if action not in VALID_COMPLETION_ACTIONS:
         return False
     policy = _review_policy(ip)
+    required_actions = {
+        str(item).strip()
+        for item in _as_list(policy.get("independent_reviewer_actions"))
+        if str(item).strip()
+    }
+    if required_actions:
+        return action in required_actions
     if "require_independent_reviewer" in policy:
         return bool(policy.get("require_independent_reviewer"))
-    return _policy_profile(ip) == "signoff"
+    return True
 
 
 def _reviewer_receipts(ip: Path, action: str = "") -> list[dict[str, Any]]:
@@ -7025,10 +7249,15 @@ def _passing_reviewer_receipts(ip: Path, action: str) -> list[dict[str, Any]]:
     receipts = []
     for receipt in _reviewer_receipts(ip, action):
         verdict = _normal_status(receipt.get("verdict") or receipt.get("status"))
+        actor = receipt.get("actor") if isinstance(receipt.get("actor"), dict) else {}
+        actor_id = str(actor.get("id") or "")
+        actor_role = str(receipt.get("role_name") or actor.get("role_name") or actor_id)
         if (
             receipt.get("allowed") is True
             and receipt.get("independent") is True
             and verdict in {"pass", "approved", "closed", "validated"}
+            and actor_role == "oag-gate-reviewer"
+            and str(receipt.get("ledger_event") or "")
         ):
             receipts.append(receipt)
     return receipts
@@ -7081,6 +7310,7 @@ def _write_reviewer_receipt(
         "id": receipt_id,
         "ip": ip.name,
         "action": action,
+        "role_name": "oag-gate-reviewer",
         "allowed": allowed,
         "reason": reason,
         "verdict": verdict,
@@ -7119,7 +7349,10 @@ def _review(arguments: dict[str, Any]) -> dict[str, Any]:
     check = _check(arguments)
     allowed = True
     reason = "allowed"
-    if _same_actor(actor, producer_actor):
+    if str(actor.get("id") or "") != "oag-gate-reviewer":
+        allowed = False
+        reason = "reviewer_not_authorized"
+    elif _same_actor(actor, producer_actor):
         allowed = False
         reason = "reviewer_not_independent"
     elif verdict not in {"pass", "approved", "closed", "validated"}:
@@ -7258,7 +7491,7 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
                 allowed = False
                 reason = "stage_receipts_not_fresh"
                 next_action = receipt_issues[0]
-        if allowed and action in {"signoff", "promote"}:
+        if allowed:
             review_issues = _reviewer_receipt_issues(
                 _ip_dir(arguments),
                 action=action,
@@ -7268,6 +7501,18 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
                 allowed = False
                 reason = "reviewer_receipt_required"
                 next_action = review_issues[0]
+        if allowed:
+            closure_gate = oag_closure_check.check_closure(
+                str(ip),
+                str(arguments.get("validation_report") or "") or None,
+                str(arguments.get("gate_report") or "") or None,
+            )
+            if closure_gate.get("status") != "pass":
+                allowed = False
+                reason = "canonical_closure_gate_failed"
+                gate_issues = closure_gate.get("issues") if isinstance(closure_gate.get("issues"), list) else []
+                first = gate_issues[0] if gate_issues and isinstance(gate_issues[0], dict) else {}
+                next_action = str(first.get("message") or "produce fresh evidence-validator and oag-gate-reviewer reports")
         if allowed and arguments.get("record_decision") is not True:
             allowed = False
             reason = "decision_receipt_required"
@@ -7275,7 +7520,20 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
         if allowed and not approval_ok:
             allowed = False
             reason = "completion_approval_required"
-            next_action = "rerun oag.decide with approval.approved=true and a non-empty approval reason before closing the run"
+            next_action = "rerun oag.decide as the approving human with matching approval.approved_by and a non-empty reason"
+    elif action in MAIN_AGENT_WAIVER_ACTIONS:
+        if not scope_lock["locked"]:
+            allowed = False
+            reason = "scope_lock_required"
+            next_action = "lock the semantically ready scope before recording an implementation-write waiver"
+        elif arguments.get("record_decision") is not True:
+            allowed = False
+            reason = "decision_receipt_required"
+            next_action = "rerun oag.decide with record_decision=true to write the auditable waiver receipt"
+        elif not approval_ok:
+            allowed = False
+            reason = "human_waiver_approval_required"
+            next_action = "rerun as the approving human with matching approval.approved_by and a non-empty waiver reason"
     decision_receipt = None
     if arguments.get("record_decision") is True:
         decision_receipt = _write_decision_receipt(
@@ -7287,7 +7545,7 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
             actor=actor,
             inspect=inspect,
             check=check,
-            approval=approval_payload if action in VALID_COMPLETION_ACTIONS else {},
+            approval=approval_payload if action in VALID_COMPLETION_ACTIONS | MAIN_AGENT_WAIVER_ACTIONS else {},
         )
     return {
         "schema_version": "oag_decision.v1",
@@ -7296,8 +7554,8 @@ def _decide(arguments: dict[str, Any]) -> dict[str, Any]:
         "allowed": allowed,
         "reason": reason,
         "next_action": next_action,
-        "approval_required": action in VALID_COMPLETION_ACTIONS,
-        "approval": approval_payload if action in VALID_COMPLETION_ACTIONS else {},
+        "approval_required": action in VALID_COMPLETION_ACTIONS | MAIN_AGENT_WAIVER_ACTIONS,
+        "approval": approval_payload if action in VALID_COMPLETION_ACTIONS | MAIN_AGENT_WAIVER_ACTIONS else {},
         "policy": {"closure_profile": _policy_profile(_ip_dir(arguments))},
         "scope_lock": scope_lock,
         "inspect": inspect,
@@ -7760,8 +8018,17 @@ def _run_graph_planner_status(ip: Path, state: dict[str, Any], graph: dict[str, 
         if isinstance(row, dict) and row.get("closed") is not True and row.get("waived") is not True
     ]
     graph_tasks = [task for task in graph.get("tasks", []) if isinstance(task, dict)]
-    if graph_tasks and not open_obligations and all(str(task.get("status") or "") in DONE_STATUSES for task in graph_tasks):
-        return {"status": "pass", "issues": []}
+    if graph_tasks and not open_obligations:
+        settling_review = all(
+            str(task.get("status") or "") in DONE_STATUSES
+            or (
+                str(task.get("kind") or "") == "closure"
+                and str(task.get("status") or "") == "review_pending"
+            )
+            for task in graph_tasks
+        )
+        if settling_review:
+            return {"status": "pass", "issues": []}
     missing = sorted(set(expected_hashes) - set(observed_hashes))
     extra = sorted(set(observed_hashes) - set(expected_hashes))
     changed = sorted(task_id for task_id in set(expected_hashes) & set(observed_hashes) if expected_hashes[task_id] != observed_hashes[task_id])
@@ -7827,6 +8094,10 @@ def _dispatch_candidate(ip: Path, run_id: str, task: dict[str, Any]) -> dict[str
     ]
     if ownership_mode:
         create_parts.extend(["--ownership-mode", ownership_mode])
+    for obligation_id in _str_items(task.get("owned_obligations")):
+        create_parts.extend(["--owned-obligation", obligation_id])
+    for contract_id in _str_items(task.get("contracts")):
+        create_parts.extend(["--contract", contract_id])
     for path in task_write_paths(task):
         create_parts.extend(["--allowed-write-path", str(ip / path)])
     create_command = " ".join(shlex.quote(part) for part in create_parts)
@@ -7867,7 +8138,7 @@ def _task_lock_blockers(task: dict[str, Any], locks: dict[str, Any]) -> list[str
 def _blocked_graph_tasks(graph: dict[str, Any], barriers: dict[str, Any], locks: dict[str, Any]) -> list[dict[str, Any]]:
     tasks = task_map(graph)
     blocked: list[dict[str, Any]] = []
-    active_statuses = {"claimed", "blocked", "failed", "inconclusive"}
+    active_statuses = {"claimed", "review_pending", "blocked", "failed", "inconclusive"}
     for task in graph.get("tasks", []):
         if not isinstance(task, dict):
             continue
@@ -8936,13 +9207,27 @@ def _run_record(arguments: dict[str, Any]) -> dict[str, Any]:
             },
         }
     )
+    graph_record: dict[str, Any] | None = None
     if graph_context is not None:
+        graph_claim = claim_wavefront_task(
+            ClaimRequest(
+                run=_wavefront_run(ip, str(state.get("run_id") or "")),
+                task_id=str(graph_context.task.get("task_id") or ""),
+                claimed_by=str(actor.get("id") or "oag-parent-closure"),
+            )
+        )
+        if graph_claim.get("status") != "pass":
+            issues = graph_claim.get("issues") if isinstance(graph_claim.get("issues"), list) else []
+            raise OagGraphRecordError(
+                "PARENT_AUTHORITY_GRAPH_CLAIM_FAILED",
+                f"parent-authority error: graph closure task claim failed: {issues}",
+            )
         graph_record = record_wavefront_task(
             RecordRequest(
                 run=_wavefront_run(ip, str(state.get("run_id") or "")),
                 task_id=str(graph_context.task.get("task_id") or ""),
-                status="closed",
-                barrier_outputs=_str_items(graph_context.task.get("barrier_outputs")),
+                status="review_pending",
+                barrier_outputs=[],
                 receipt=str(record_response.get("path") or ""),
             )
         )
@@ -8950,7 +9235,7 @@ def _run_record(arguments: dict[str, Any]) -> dict[str, Any]:
             issues = graph_record.get("issues") if isinstance(graph_record.get("issues"), list) else []
             raise OagGraphRecordError(
                 "PARENT_AUTHORITY_GRAPH_RECORD_FAILED",
-                f"parent-authority error: graph closure task record failed: {issues}",
+                f"parent-authority error: graph closure task review handoff failed: {issues}",
             )
         action = _run_graph_action_from_state(ip, state)
     else:
@@ -8982,6 +9267,7 @@ def _run_record(arguments: dict[str, Any]) -> dict[str, Any]:
         "run_id": state["run_id"],
         "status": state["status"],
         "record": record_response,
+        "graph_record": graph_record,
         "next_action": action,
         "prompt_block": action["prompt_block"],
     }

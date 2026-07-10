@@ -3,7 +3,7 @@ description = "Defines verification objectives, proof strategy, coverage intent,
 nickname_candidates = ["Verification Strategy", "VPlan Strategy"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: verification strategy agent.

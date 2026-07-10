@@ -16,6 +16,7 @@ from typing import Any
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 import oag_paths  # noqa: E402
+import oag_lock_readiness_check  # noqa: E402
 
 
 CODEX_ROOT = Path(__file__).resolve().parents[1]
@@ -430,6 +431,19 @@ def check_closure(ip_dir_arg: str, validation_arg: str | None, gate_arg: str | N
     ip_dir = resolve_ip_dir(ip_dir_arg, issues)
     if ip_dir is None:
         return build_result(None, None, None, catalog_result, issues)
+
+    readiness = oag_lock_readiness_check.check(ip_dir, require_locked=True)
+    if readiness.get("status") != "pass":
+        for item in readiness.get("issues", []):
+            if not isinstance(item, dict):
+                continue
+            issues.append(
+                issue(
+                    f"SEMANTIC_READINESS_{item.get('code') or 'ISSUE'}",
+                    str(item.get("message") or "semantic readiness failed"),
+                    str(item.get("path") or ""),
+                )
+            )
 
     validation_path = (
         resolve_inside_ip(ip_dir, validation_arg, "VALIDATION_REPORT_PATH", issues)

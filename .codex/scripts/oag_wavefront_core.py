@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -56,6 +57,18 @@ class WavefrontEvent:
 
 def utc_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def utc_after(seconds: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def utc_deadline_expired(value: str) -> bool:
+    try:
+        deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    return datetime.now(timezone.utc) > deadline
 
 
 def issue(code: str, message: str, path: str | None = None) -> Issue:

@@ -142,8 +142,10 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     issues: list[dict[str, str]] = []
 
     claims = yaml_items(ip_dir, "req/source_claims.yaml", "claims")
+    ambiguities = yaml_items(ip_dir, "req/ambiguity_register.yaml", "ambiguities")
     requirements = yaml_items(ip_dir, "ontology/requirements.yaml", "requirements")
     atoms = yaml_items(ip_dir, "ontology/requirement_atoms.yaml", "requirement_atoms")
+    decisions = yaml_items(ip_dir, "ontology/decision_matrix.yaml", "decisions")
     obligations = yaml_items(ip_dir, "ontology/obligations.yaml", "obligations")
     contracts = yaml_items(ip_dir, "ontology/contracts.yaml", "contracts")
     vobjs = yaml_items(ip_dir, "ontology/verification_plan.yaml", "verification_objectives")
@@ -153,19 +155,16 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     issues.extend(scoreboard_issues)
 
     claim_ids = collect_ids(claims)
+    claim_statuses = {item_id(claim): text(claim.get("status")).lower() for claim in claims if item_id(claim)}
+    ambiguity_ids = collect_ids(ambiguities)
     req_ids = collect_ids(requirements)
     atom_ids = collect_ids(atoms)
+    atom_requirement = {item_id(atom): text(atom.get("source_requirement_id")) for atom in atoms if item_id(atom)}
+    decision_ids = collect_ids(decisions)
     obligation_ids = collect_ids(obligations)
     contract_ids = collect_ids(contracts)
     scenario_ids = set(planned_scenarios)
     row_ids = set(planned_rows) | scoreboard_row_ids
-
-    for contract in contracts:
-        scenario_ids.update(contract_refs(contract, "scenario_refs", "scenarios"))
-        row_ids.update(contract_refs(contract, "scoreboard_row_refs", "scoreboard_rows"))
-    for objective in vobjs:
-        scenario_ids.update(str_items(objective.get("scenarios")))
-        scenario_ids.update(str_items(objective.get("negative_scenarios")))
 
     for index, req in enumerate(requirements):
         rid = item_id(req) or f"requirements[{index}]"
@@ -173,15 +172,29 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         if hard_gate and not refs:
             issues.append(issue("TRACE_REQ_SOURCE_CLAIM_MISSING", f"{rid} missing source_claim_refs.", f"requirements[{index}]"))
         for ref in refs:
-            if claim_ids and ref not in claim_ids:
+            if ref not in claim_ids:
                 issues.append(issue("TRACE_REQ_SOURCE_CLAIM_UNKNOWN", f"{rid} references unknown source claim {ref}.", f"requirements[{index}]"))
+            elif hard_gate and claim_statuses.get(ref) != "confirmed":
+                issues.append(
+                    issue(
+                        "TRACE_REQ_SOURCE_CLAIM_NOT_AUTHORITATIVE",
+                        f"{rid} references source claim {ref} with status {claim_statuses.get(ref) or '<missing>'}; locked trace roots must be confirmed.",
+                        f"requirements[{index}]",
+                    )
+                )
+        for ref in str_items(req.get("ambiguity_refs")):
+            if ref not in ambiguity_ids:
+                issues.append(issue("TRACE_REQ_AMBIGUITY_UNKNOWN", f"{rid} references unknown ambiguity {ref}.", f"requirements[{index}]"))
+        for ref in str_items(req.get("decision_refs")):
+            if ref not in decision_ids:
+                issues.append(issue("TRACE_REQ_DECISION_UNKNOWN", f"{rid} references unknown decision {ref}.", f"requirements[{index}]"))
 
     for index, atom in enumerate(atoms):
         aid = item_id(atom) or f"requirement_atoms[{index}]"
         ref = text(atom.get("source_requirement_id"))
         if hard_gate and not ref:
             issues.append(issue("TRACE_ATOM_REQUIREMENT_MISSING", f"{aid} missing source_requirement_id.", f"requirement_atoms[{index}]"))
-        elif req_ids and ref and ref not in req_ids:
+        elif ref and ref not in req_ids:
             issues.append(issue("TRACE_ATOM_REQUIREMENT_UNKNOWN", f"{aid} references unknown requirement {ref}.", f"requirement_atoms[{index}]"))
 
     for index, obligation in enumerate(obligations):
@@ -191,8 +204,26 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         if hard_gate and not refs:
             issues.append(issue("TRACE_OBLIGATION_REQUIREMENT_MISSING", f"{oid} missing requirement ref.", f"obligations[{index}]"))
         for ref in refs:
-            if req_ids and ref not in req_ids:
+            if ref not in req_ids:
                 issues.append(issue("TRACE_OBLIGATION_REQUIREMENT_UNKNOWN", f"{oid} references unknown requirement {ref}.", f"obligations[{index}]"))
+        atom_refs = (
+            str_items(obligation.get("requirement_atom_refs"))
+            or str_items(obligation.get("atom_refs"))
+            or str_items(obligation.get("requirement_atoms"))
+        )
+        if hard_gate and not atom_refs:
+            issues.append(issue("TRACE_OBLIGATION_ATOM_MISSING", f"{oid} missing requirement atom refs.", f"obligations[{index}]"))
+        for ref in atom_refs:
+            if ref not in atom_ids:
+                issues.append(issue("TRACE_OBLIGATION_ATOM_UNKNOWN", f"{oid} references unknown requirement atom {ref}.", f"obligations[{index}]"))
+            elif refs and atom_requirement.get(ref) not in refs:
+                issues.append(
+                    issue(
+                        "TRACE_OBLIGATION_ATOM_REQUIREMENT_MISMATCH",
+                        f"{oid} atom {ref} derives from {atom_requirement.get(ref)}, outside obligation requirement refs.",
+                        f"obligations[{index}]",
+                    )
+                )
 
     for index, contract in enumerate(contracts):
         cid = item_id(contract) or f"contracts[{index}]"
@@ -201,13 +232,13 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         if hard_gate and not refs:
             issues.append(issue("TRACE_CONTRACT_OBLIGATION_MISSING", f"{cid} missing obligation ref.", f"contracts[{index}]"))
         for ref in refs:
-            if obligation_ids and ref not in obligation_ids:
+            if ref not in obligation_ids:
                 issues.append(issue("TRACE_CONTRACT_OBLIGATION_UNKNOWN", f"{cid} references unknown obligation {ref}.", f"contracts[{index}]"))
         for ref in contract_refs(contract, "scenario_refs", "scenarios"):
-            if scenario_ids and ref not in scenario_ids:
+            if ref not in scenario_ids:
                 issues.append(issue("TRACE_CONTRACT_SCENARIO_UNKNOWN", f"{cid} references unknown scenario {ref}.", f"contracts[{index}]"))
         for ref in contract_refs(contract, "scoreboard_row_refs", "scoreboard_rows"):
-            if row_ids and ref not in row_ids:
+            if ref not in row_ids:
                 issues.append(issue("TRACE_CONTRACT_SCOREBOARD_ROW_UNKNOWN", f"{cid} references unknown scoreboard row {ref}.", f"contracts[{index}]"))
 
     for index, objective in enumerate(vobjs):
@@ -219,17 +250,26 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         ):
             if hard_gate and not ref:
                 issues.append(issue("TRACE_VOBJ_REF_MISSING", f"{oid} missing {label} ref.", f"verification_objectives[{index}]"))
-            elif known and ref and ref not in known:
+            elif ref and ref not in known:
                 issues.append(issue("TRACE_VOBJ_REF_UNKNOWN", f"{oid} references unknown {label} {ref}.", f"verification_objectives[{index}]"))
+        for scenario_ref in str_items(objective.get("scenarios")) + str_items(objective.get("negative_scenarios")):
+            if scenario_ref not in scenario_ids:
+                issues.append(issue("TRACE_VOBJ_SCENARIO_UNKNOWN", f"{oid} references unknown scenario {scenario_ref}.", f"verification_objectives[{index}]"))
 
     for index, row in enumerate(scoreboard_rows):
         rid = text(row.get("event_id") or row.get("id")) or f"scoreboard[{index}]"
-        if not text(row.get("scenario_id")):
+        scenario_ref = text(row.get("scenario_id"))
+        if not scenario_ref:
             issues.append(issue("TRACE_SCOREBOARD_SCENARIO_MISSING", f"{rid} missing scenario_id.", f"scoreboard_events[{index}]"))
+        elif scenario_ref not in scenario_ids:
+            issues.append(issue("TRACE_SCOREBOARD_SCENARIO_UNKNOWN", f"{rid} references unknown scenario {scenario_ref}.", f"scoreboard_events[{index}]"))
         refs = str_items(row.get("contract_refs")) or str_items(row.get("contracts")) or [text(row.get("contract_id"))]
         refs = [ref for ref in refs if ref]
         if not refs:
             issues.append(issue("TRACE_SCOREBOARD_CONTRACTS_MISSING", f"{rid} missing contract refs.", f"scoreboard_events[{index}]"))
+        for ref in refs:
+            if ref not in contract_ids:
+                issues.append(issue("TRACE_SCOREBOARD_CONTRACT_UNKNOWN", f"{rid} references unknown contract {ref}.", f"scoreboard_events[{index}]"))
         if not row.get("expected_source"):
             issues.append(issue("TRACE_SCOREBOARD_EXPECTED_SOURCE_MISSING", f"{rid} missing expected_source.", f"scoreboard_events[{index}]"))
 
@@ -238,6 +278,9 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         refs = [text(goal.get("requirement")), text(goal.get("obligation")), text(goal.get("contract"))]
         if hard_gate and not any(refs):
             issues.append(issue("TRACE_COVERAGE_GOAL_UNMAPPED", f"{gid} must map to requirement, obligation, or contract.", f"coverage_goals[{index}]"))
+        for label, ref, known in zip(("requirement", "obligation", "contract"), refs, (req_ids, obligation_ids, contract_ids)):
+            if ref and ref not in known:
+                issues.append(issue("TRACE_COVERAGE_GOAL_UNKNOWN", f"{gid} references unknown {label} {ref}.", f"coverage_goals[{index}]"))
 
     next_actions = ["Resolve orphan refs or missing source-to-contract-to-evidence links."] if issues else ["Trace graph IDs are consistent for the checked scope."]
     if not hard_gate and not issues:
@@ -251,8 +294,10 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         "hard_gate": hard_gate,
         "counts": {
             "source_claims": len(claims),
+            "ambiguities": len(ambiguities),
             "requirements": len(requirements),
             "requirement_atoms": len(atoms),
+            "decisions": len(decisions),
             "obligations": len(obligations),
             "contracts": len(contracts),
             "verification_objectives": len(vobjs),

@@ -3,7 +3,7 @@ description = "Derives per-IP evidence contracts, observables, monitor obligatio
 nickname_candidates = ["IP Contract"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: IP contract agent.

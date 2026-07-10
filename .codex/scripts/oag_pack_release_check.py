@@ -36,6 +36,8 @@ SOURCE_SCAN_EXCLUDED_PARTS = {
 OAG_MCP_SERVER_NAMES = ("ip-dev-agent-oag", "ontology" + "-ip-agent-oag")
 
 REQUIRED_FILES = (
+    PROJECT_ROOT / "requirements-dev.txt",
+    PROJECT_ROOT / ".github" / "workflows" / "oag-ci.yml",
     CODEX_ROOT / "AGENTS.md",
     CODEX_ROOT / "config.toml",
     CODEX_ROOT / "hooks.json",
@@ -733,12 +735,14 @@ def check_hooks_policy(issues: list[dict[str, str]]) -> None:
         issues.append(issue("SUBAGENT_START_WINDOWS_HOOK_MISSING", "SubagentStart must use the stable Windows Python launcher.", CODEX_ROOT / "hooks.json"))
     subagent = (((hooks.get("hooks") or {}).get("SubagentStop") or [{}])[0])
     matcher = str(subagent.get("matcher") or "")
-    if "custom-researcher" in matcher or "custom-reviewer" in matcher:
-        issues.append(issue("SUBAGENT_MATCHER_TOO_BROAD", "SubagentStop should only require receipts from write-capable evidence producers.", CODEX_ROOT / "hooks.json"))
-    required_agents = ("rtl-implementation-agent", "tb-implementation-agent", "evidence-validator", "gate-reviewer")
-    missing_agents = [agent for agent in required_agents if agent not in matcher]
-    if missing_agents:
-        issues.append(issue("SUBAGENT_MATCHER_MISSING_AGENT", f"SubagentStop matcher must include: {', '.join(missing_agents)}.", CODEX_ROOT / "hooks.json"))
+    if matcher != "^oag-":
+        issues.append(
+            issue(
+                "SUBAGENT_MATCHER_SCOPE",
+                "SubagentStop must cover every OAG evidence-writing role with the universal ^oag- matcher.",
+                CODEX_ROOT / "hooks.json",
+            )
+        )
     mode_trigger = CODEX_ROOT / "hooks" / "codex_oag_mode_trigger.py"
     if mode_trigger.is_file():
         text = read_text(mode_trigger)

@@ -3,7 +3,7 @@ description = "Analyzes legacy/reference IP, RTL, patterns, tests, and gaps as e
 nickname_candidates = ["Legacy IP Analyzer"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: legacy/reference IP analyzer.

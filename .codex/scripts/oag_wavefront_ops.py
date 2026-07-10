@@ -15,9 +15,13 @@ from oag_wavefront_core import (
     display_path,
     graph_paths,
     issue,
+    load_json,
+    project_rel,
     result,
     run_state_lock,
     utc_now,
+    utc_after,
+    validate_named_schema,
     write_json,
 )
 from oag_wavefront_graph import (
@@ -40,6 +44,8 @@ from oag_wavefront_graph import (
     write_locks,
 )
 from oag_wavefront_validation import verify_invariants
+import oag_paths
+from oag_dispatch_support import dispatch_integrity, path_matches
 
 
 @dataclass(frozen=True)
@@ -247,10 +253,104 @@ def _collect_claim_issues(check: ClaimCheck) -> list[Issue]:
                 request.task_id,
             )
         )
+    elif request.dispatch_id:
+        check.issues.extend(_dispatch_claim_issues(request, task, write_paths))
     for path in write_paths:
         if path in active:
             check.issues.append(issue("OWNERSHIP_CONFLICT", f"path already locked by {active[path]}", path))
     return check.issues
+
+
+def _dispatch_claim_issues(request: ClaimRequest, task: JsonObject, write_paths: list[str]) -> list[Issue]:
+    dispatch_path = oag_paths.legacy_or_hidden(
+        request.run.ip_dir,
+        f"knowledge/dispatches/{request.dispatch_id}.json",
+    )
+    if not dispatch_path.is_file():
+        return [
+            issue(
+                "CLAIM_DISPATCH_NOT_FOUND",
+                "claim dispatch_id must name a pre-created dispatch record",
+                display_path(dispatch_path),
+            )
+        ]
+    try:
+        dispatch = load_json(dispatch_path)
+    except (OSError, ValueError) as exc:
+        return [issue("CLAIM_DISPATCH_LOAD_FAILED", str(exc), display_path(dispatch_path))]
+    if not isinstance(dispatch, dict):
+        return [issue("CLAIM_DISPATCH_OBJECT", "dispatch record must be a JSON object", display_path(dispatch_path))]
+
+    issues = [
+        issue(f"CLAIM_DISPATCH_SCHEMA_{item['code']}", item["message"], item.get("path") or display_path(dispatch_path))
+        for item in validate_named_schema("oag_dispatch.schema.json", dispatch)
+    ]
+    expected_integrity = dispatch_integrity(dispatch)
+    if dispatch.get("dispatch_integrity") != expected_integrity:
+        issues.append(
+            issue(
+                "CLAIM_DISPATCH_INTEGRITY",
+                "dispatch protected fields do not match dispatch_integrity.scope_hash",
+                display_path(dispatch_path),
+            )
+        )
+
+    expected_scalars = {
+        "dispatch_id": request.dispatch_id,
+        "ip_id": request.run.ip_dir.name,
+        "wavefront_run_id": request.run.run_id,
+        "task_id": request.task_id,
+        "ownership_mode": str(task.get("ownership_mode") or ""),
+        "stage": str(task.get("phase") or task.get("kind") or ""),
+    }
+    expected_agent_type = str(task.get("agent_type") or "")
+    if expected_agent_type:
+        expected_scalars["agent_type"] = expected_agent_type
+    for field, expected in expected_scalars.items():
+        observed = str(dispatch.get(field) or "")
+        if observed != expected:
+            issues.append(
+                issue(
+                    "CLAIM_DISPATCH_SCOPE_MISMATCH",
+                    f"dispatch {field}={observed!r} does not match wavefront task value {expected!r}",
+                    request.task_id,
+                )
+            )
+
+    expected_ip_dir = project_rel(request.run.ip_dir)
+    if str(dispatch.get("ip_dir") or "").strip("/") != expected_ip_dir.strip("/"):
+        issues.append(
+            issue(
+                "CLAIM_DISPATCH_IP_DIR_MISMATCH",
+                "dispatch ip_dir does not match the wavefront IP directory",
+                request.task_id,
+            )
+        )
+
+    for field in ("owned_obligations", "contracts"):
+        expected_values = sorted(str(item) for item in task.get(field, []) if str(item))
+        observed_values = sorted(str(item) for item in dispatch.get(field, []) if str(item))
+        if observed_values != expected_values:
+            issues.append(
+                issue(
+                    "CLAIM_DISPATCH_SCOPE_MISMATCH",
+                    f"dispatch {field} does not exactly match the wavefront task",
+                    request.task_id,
+                )
+            )
+
+    allowed = [str(item) for item in dispatch.get("allowed_write_paths", []) if str(item)]
+    for rel_path in write_paths:
+        expected_path = project_rel(request.run.ip_dir / rel_path)
+        if not path_matches(expected_path, allowed):
+            issues.append(
+                issue(
+                    "CLAIM_DISPATCH_WRITE_SCOPE_MISMATCH",
+                    f"dispatch does not cover wavefront write path: {rel_path}",
+                    request.task_id,
+                )
+            )
+    return issues
 
 
 def _persist_claim(persistence: ClaimPersistence) -> JsonObject:
@@ -282,6 +382,8 @@ def _persist_claim(persistence: ClaimPersistence) -> JsonObject:
     task["claimed_by"] = request.claimed_by
     task["dispatch_id"] = request.dispatch_id
     task["claimed_at"] = claim_time
+    patience_budget = int(task.get("patience_budget_seconds") or 900)
+    task["heartbeat_deadline_at"] = utc_after(patience_budget)
     for lock_path in write_paths:
         locks.setdefault("locks", []).append(
             {
