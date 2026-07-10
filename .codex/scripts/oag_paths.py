@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 
@@ -39,15 +39,19 @@ def oag_root(ip_dir: str | Path) -> Path:
 
 
 def _clean_rel(rel: str | Path) -> Path:
-    path = Path(rel)
-    if path.is_absolute():
+    raw = os.fspath(rel)
+    if "\x00" in raw:
+        raise ValueError(f"OAG relative path must not contain NUL: {rel}")
+    posix = PurePosixPath(raw.replace("\\", "/"))
+    windows = PureWindowsPath(raw)
+    if posix.is_absolute() or windows.is_absolute() or bool(windows.drive) or bool(windows.root):
         raise ValueError(f"OAG relative path must not be absolute: {rel}")
-    parts = path.parts
+    parts = posix.parts
     if not parts or any(part in ("", ".", "..") for part in parts):
         raise ValueError(f"OAG relative path must be normalized: {rel}")
     if parts[0] == HIDDEN_DIR:
         return Path(*parts[1:]) if len(parts) > 1 else Path()
-    return path
+    return Path(*parts)
 
 
 def _state_rel(rel: str | Path) -> Path:

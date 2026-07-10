@@ -1130,10 +1130,25 @@ def test_oag_paths_resolver(tmp_root: Path) -> None:
             return
         raise AssertionError(f"expected ValueError for rel={rel!r}")
 
-    for bad in ("/abs/path", "../escape", "a/../b", "", ".", ".oag"):
+    for bad in (
+        "/abs/path",
+        r"C:\abs\path",
+        r"C:drive-relative",
+        r"\\server\share\file",
+        r"\rooted\path",
+        "../escape",
+        r"..\escape",
+        "a/../b",
+        r"a\..\b",
+        "",
+        ".",
+        ".oag",
+        "bad\x00path",
+    ):
         _expect_value_error(bad)
     # a single '.' is normalized away (not rejected) — pin the documented subtlety.
     assert module.state_path(legacy_ip, "a/./b") == legacy_root / "a" / "b"
+    assert module.state_path(legacy_ip, r"knowledge\ledger.jsonl") == legacy_root / "knowledge" / "ledger.jsonl"
 
     # oag_root() is public but otherwise only indirectly exercised via layout_status.
     assert module.oag_root(legacy_ip) == legacy_root / ".oag"
