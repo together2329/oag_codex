@@ -1478,7 +1478,13 @@ def case_draft_on_pressure_injects_guard(root: Path) -> dict[str, Any]:
     context = _additional_context(payload)
     assert "OAG DRAFT PRESSURE GUARD" in context, payload
     assert "oag.draft" in context, payload
-    assert str(ip) in context, payload
+    command_line = next(
+        (line for line in context.splitlines() if line.startswith("Command: ") and " --json " in line),
+        "",
+    )
+    assert command_line, payload
+    command_payload = json.loads(command_line.split(" --json ", 1)[1])
+    assert Path(command_payload["arguments"]["ip_dir"]).resolve() == ip.resolve(), command_payload
     return {
         "ip": str(ip),
         "hook": "codex_draft_pressure.py",
