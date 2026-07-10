@@ -36,6 +36,14 @@ def run_git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_git_bytes(root: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        check=False,
+    )
+
+
 def git_root(path: Path) -> tuple[Path | None, list[dict[str, str]]]:
     probe = run_git(path, ["rev-parse", "--show-toplevel"])
     if probe.returncode != 0:
@@ -77,11 +85,15 @@ def verify_git_tag(manifest_path: Path, payload: dict[str, Any]) -> list[dict[st
         issues.append(issue("BASELINE_VERIFY_MANIFEST_PATH", "Manifest path is not under the git repository.", str(manifest_path)))
         return issues
 
-    show = run_git(root, ["show", f"{commit.stdout.strip()}:{rel}"])
+    show = run_git_bytes(root, ["show", f"{commit.stdout.strip()}:{rel}"])
     if show.returncode != 0:
-        issues.append(issue("BASELINE_VERIFY_MANIFEST_AT_TAG", "Manifest file is not present in the tag commit tree.", rel))
+        details = show.stderr.decode("utf-8", errors="replace").strip()
+        message = "Manifest file is not present in the tag commit tree."
+        if details:
+            message = f"{message} {details}"
+        issues.append(issue("BASELINE_VERIFY_MANIFEST_AT_TAG", message, rel))
     else:
-        tree_bytes = show.stdout.encode("utf-8")
+        tree_bytes = show.stdout
         current_bytes = manifest_path.read_bytes()
         if tree_bytes != current_bytes:
             issues.append(issue("BASELINE_VERIFY_MANIFEST_TREE_MISMATCH", "Current manifest bytes differ from the manifest stored in the tag commit.", rel))

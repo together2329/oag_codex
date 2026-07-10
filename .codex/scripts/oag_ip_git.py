@@ -214,7 +214,18 @@ def ensure_repo(ip_dir: Path) -> tuple[dict[str, Any], list[dict[str, str]]]:
             issues.append(issue("IP_GIT_INIT_FAILED", proc.stderr.strip() or proc.stdout.strip(), str(ip_dir)))
         else:
             initialized = True
-    return {"initialized": initialized, "git_available": True}, issues
+    raw_bytes_configured = False
+    if not issues:
+        config = run_git(ip_dir, ["config", "--local", "core.autocrlf", "false"])
+        if config.returncode != 0:
+            issues.append(issue("IP_GIT_CONFIG_FAILED", config.stderr.strip() or config.stdout.strip(), str(ip_dir)))
+        else:
+            raw_bytes_configured = True
+    return {
+        "initialized": initialized,
+        "git_available": True,
+        "core_autocrlf": "false" if raw_bytes_configured else "",
+    }, issues
 
 
 def status_porcelain(ip_dir: Path) -> str:

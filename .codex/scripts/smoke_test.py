@@ -5235,6 +5235,7 @@ def test_baseline_verify_git_tag(tmp_root: Path) -> None:
     repo = tmp_root / "verify_repo"
     repo.mkdir()
     subprocess.run(["git", "init"], cwd=repo, text=True, capture_output=True, check=True)
+    subprocess.run(["git", "config", "--local", "core.autocrlf", "false"], cwd=repo, text=True, capture_output=True, check=True)
     ip = repo / "verify_ip"
     (ip / "ontology" / "baselines").mkdir(parents=True)
     (ip / "ontology" / "gates").mkdir(parents=True)
@@ -5286,6 +5287,7 @@ def test_baseline_verify_git_tag(tmp_root: Path) -> None:
         cwd=repo,
     )
     assert cut.returncode == 0, cut.stderr or cut.stdout
+    manifest.write_bytes(manifest.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
     subprocess.run(["git", "add", "."], cwd=repo, text=True, capture_output=True, check=True)
     subprocess.run(
         ["git", "-c", "user.name=Smoke", "-c", "user.email=smoke@example.com", "commit", "-m", "baseline"],
@@ -5317,6 +5319,16 @@ def test_baseline_verify_git_tag(tmp_root: Path) -> None:
     good = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
     assert good.returncode == 0, good.stderr or good.stdout
     assert json.loads(good.stdout)["status"] == "pass", good.stdout
+
+    crlf_bytes = manifest.read_bytes()
+    manifest.write_bytes(crlf_bytes.replace(b"\r\n", b"\n"))
+    eol_mismatch = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
+    assert eol_mismatch.returncode != 0, eol_mismatch.stdout
+    eol_codes = {item["code"] for item in json.loads(eol_mismatch.stdout)["issues"]}
+    assert "BASELINE_VERIFY_MANIFEST_TREE_MISMATCH" in eol_codes, eol_mismatch.stdout
+    manifest.write_bytes(crlf_bytes)
+    restored = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
+    assert restored.returncode == 0, restored.stderr or restored.stdout
 
     manifest.write_text(manifest.read_text(encoding="utf-8") + "# local edit after tag\n", encoding="utf-8")
     stale = run_baseline_verify("--manifest", str(manifest), "--verify-git-tag", "--json", cwd=repo)
@@ -5406,6 +5418,7 @@ def test_ip_git_helper_checkpoint(tmp_root: Path) -> None:
     init_doc = json.loads(init.stdout)
     assert init_doc["status"] == "pass", init_doc
     assert init_doc["commit"]["committed"] is True, init_doc
+    assert init_doc["repo"]["core_autocrlf"] == "false", init_doc
     assert (ip / ".git").exists(), init_doc
     assert "*.fst" in (ip / ".gitignore").read_text(encoding="utf-8")
 
