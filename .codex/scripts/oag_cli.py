@@ -81,6 +81,9 @@ CANONICAL_RUN_ARCHIVE_REFS = {
 }
 SCOREBOARD_REQUIRED_FIELDS = {
     "goal_id",
+    "obligation_id",
+    "contract_id",
+    "contract_refs",
     "scenario_id",
     "cycle",
     "stimulus",
@@ -764,7 +767,16 @@ def _sv_dimensions(value: Any) -> list[str]:
 def _extract_sv_with_pyslang(text: str, rel: str) -> tuple[list[dict[str, Any]], list[str]]:
     import pyslang  # type: ignore
 
-    tree = pyslang.SyntaxTree.fromText(text)
+    syntax_tree_type = getattr(pyslang, "SyntaxTree", None)
+    if syntax_tree_type is None:
+        syntax_module = getattr(pyslang, "syntax", None)
+        syntax_tree_type = getattr(syntax_module, "SyntaxTree", None)
+    if syntax_tree_type is None:
+        raise AttributeError(
+            "installed pyslang does not expose SyntaxTree at the top level or pyslang.syntax.SyntaxTree"
+        )
+
+    tree = syntax_tree_type.fromText(text)
     diagnostics = [str(item) for item in tree.diagnostics]
     data = json.loads(tree.to_json())
     root = data.get("root") if isinstance(data.get("root"), dict) else {}
@@ -3263,6 +3275,28 @@ def _write_scope_lock(ip: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _write_scope_lock_with_ledger(
+    ip: Path,
+    doc: dict[str, Any],
+    *,
+    action: str,
+    actor: dict[str, Any],
+    subject: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    path = _scope_lock_path(ip)
+    previous = path.read_bytes() if path.is_file() else None
+    _write_scope_lock(ip, doc)
+    try:
+        return _append_ledger(ip, action=action, actor=actor, subject=subject, payload=payload)
+    except Exception:
+        if previous is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(previous)
+        raise
+
+
 def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
     ip = _ip_dir(arguments)
     _ensure_knowledge(ip)
@@ -3307,13 +3341,17 @@ def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
         "locked_at": _now(),
         "previous_state": str(previous.get("state") or "draft"),
     }
-    _write_scope_lock(ip, doc)
-    ledger_event = _append_ledger(
+    ledger_event = _write_scope_lock_with_ledger(
         ip,
+        doc,
         action="scope_lock",
         actor=actor,
         subject=lock_id,
-        payload={"path": str(SCOPE_LOCK_REL), "lock": doc},
+        payload={
+            "path": str(SCOPE_LOCK_REL),
+            "lock": doc,
+            "approval": payload_for_approval["approval"],
+        },
     )
     return {
         "schema_version": "oag_scope_lock.v1",
@@ -3352,13 +3390,17 @@ def _scope_unlock(arguments: dict[str, Any]) -> dict[str, Any]:
         "unlocked_by": actor,
         "unlocked_at": _now(),
     }
-    _write_scope_lock(ip, doc)
-    ledger_event = _append_ledger(
+    ledger_event = _write_scope_lock_with_ledger(
         ip,
+        doc,
         action="scope_unlock",
         actor=actor,
         subject=str(previous.get("lock_id") or "scope"),
-        payload={"path": str(SCOPE_LOCK_REL), "lock": doc},
+        payload={
+            "path": str(SCOPE_LOCK_REL),
+            "lock": doc,
+            "approval": payload_for_approval["approval"],
+        },
     )
     return {
         "schema_version": "oag_scope_unlock.v1",
@@ -3386,9 +3428,9 @@ def _mark_scope_draft_after_interview(ip: Path, *, actor: dict[str, Any], draft_
         "updated_by": actor,
         "updated_at": _now(),
     }
-    _write_scope_lock(ip, doc)
-    ledger_event = _append_ledger(
+    ledger_event = _write_scope_lock_with_ledger(
         ip,
+        doc,
         action="scope_draft",
         actor=actor,
         subject=draft_id,

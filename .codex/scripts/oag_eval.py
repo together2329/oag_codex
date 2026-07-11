@@ -1220,6 +1220,9 @@ def case_scoreboard_without_scenario_id_fails_check(root: Path) -> dict[str, Any
         {
             "event_id": "EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS",
             "goal_id": "GOAL_COUNTER_INC",
+            "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+            "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+            "contract_refs": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
             "cycle": 3,
             "stimulus": {"valid": 1},
             "expected": {"count": 3},

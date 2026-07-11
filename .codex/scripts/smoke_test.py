@@ -2635,6 +2635,9 @@ def make_ip(root: Path) -> Path:
     assert "tb_methodology_policy:" in policy_text, policy_text
     assert (ip / "ontology" / "protection.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "scoreboard_rows.v1.yaml").is_file()
+    scoreboard_schema_text = (ip / "ontology" / "evidence" / "scoreboard_rows.v1.yaml").read_text(encoding="utf-8")
+    for identity_field in ("obligation_id", "contract_id", "contract_refs"):
+        assert f"  - {identity_field}" in scoreboard_schema_text, scoreboard_schema_text
     assert (ip / "ontology" / "evidence" / "stage_run_receipt.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "cdc_rdc_report.v1.yaml").is_file()
     assert (ip / "ontology" / "evidence" / "verification_plan_report.v1.yaml").is_file()
@@ -4104,6 +4107,103 @@ def test_pyslang_lint_runner() -> None:
         assert result["status"] in {"pass", "skipped"}, result
         assert result["tool"] == "pyslang", result
         assert result["files"] == ["rtl/demo.sv"], result
+
+
+def test_pyslang_v11_syntax_namespace_compatibility() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_module = Path(tmp) / "pyslang.py"
+        fake_module.write_text(
+            "\n".join(
+                [
+                    "import json",
+                    "class _Tree:",
+                    "    diagnostics = []",
+                    "    def to_json(self):",
+                    "        return json.dumps({'root': {'kind': 'ModuleDeclaration', 'header': {'name': {'text': 'demo'}, 'ports': {'ports': []}}, 'members': []}})",
+                    "class _SyntaxTree:",
+                    "    @classmethod",
+                    "    def fromText(cls, text):",
+                    "        return _Tree()",
+                    "class _Syntax:",
+                    "    SyntaxTree = _SyntaxTree",
+                    "syntax = _Syntax()",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join([tmp, str(ROOT / "scripts")])
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json, oag_cli; "
+                    "modules, diagnostics = oag_cli._extract_sv_with_pyslang('module demo; endmodule', 'rtl/demo.sv'); "
+                    "print(json.dumps({'modules': modules, 'diagnostics': diagnostics}))"
+                ),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+            env=env,
+        )
+        assert proc.returncode == 0, proc.stderr or proc.stdout
+        result = json.loads(proc.stdout)
+        assert result["diagnostics"] == [], result
+        assert [module["name"] for module in result["modules"]] == ["demo"], result
+
+
+def test_scope_lock_approval_records_protected_promotion(tmp_root: Path) -> None:
+    ip = tmp_root / "scope_lock_protected_promotion"
+    scaffold = call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(ip), "owner": "smoke"}})
+    assert scaffold["ok"] is True, scaffold
+    baseline = call(
+        {
+            "tool": "oag.record",
+            "arguments": {
+                "ip_dir": str(ip),
+                "stage": "req",
+                "type": "log",
+                "claim": "draft truth before approved promotion",
+                "actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                "status": "open",
+            },
+        }
+    )
+    assert baseline["ok"] is True, baseline
+    write_minimal_rtl_dispatch_readiness(
+        ip,
+        module_id="demo",
+        rtl_file="rtl/demo.sv",
+        contract_id="CONTRACT_DEMO",
+        obligation_id="OBL_DEMO",
+    )
+    locked = call(
+        {
+            "tool": "oag.lock",
+            "arguments": {
+                "ip_dir": str(ip),
+                "summary": "Approve protected draft truth promotion.",
+                "confirmed_scope": ["demo contract"],
+                "actor": {"kind": "human", "id": "smoke-owner", "surface": "smoke"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "smoke-owner",
+                    "reason": "The protected semantic promotion is reviewed and approved.",
+                },
+            },
+        }
+    )
+    assert locked["ok"] is True and locked["result"]["locked"] is True, locked
+    status = call({"tool": "oag.lock_status", "arguments": {"ip_dir": str(ip)}})
+    assert status["result"]["state"] == "locked", status
+    ledger = [json.loads(line) for line in (ip / "knowledge" / "ledger.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert ledger[-1]["action"] == "scope_lock", ledger[-1]
+    assert ledger[-1]["payload"]["approval"]["approved"] is True, ledger[-1]
 
 
 def test_rtl_role_wavefront_template(tmp_root: Path) -> None:
@@ -5666,6 +5766,8 @@ def main() -> int:
         assert windows_smoke_payload["checks"]["hook_commands"] == "pass", windows_smoke_payload
         assert windows_smoke_payload["checks"]["argv_command_split"] == "pass", windows_smoke_payload
         test_pyslang_lint_runner()
+        test_pyslang_v11_syntax_namespace_compatibility()
+        test_scope_lock_approval_records_protected_promotion(Path(tmp))
         test_rtl_role_wavefront_template(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
         test_dispatch_prompt_contract_subagent_boundary()
