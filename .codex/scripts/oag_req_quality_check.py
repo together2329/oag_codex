@@ -19,6 +19,7 @@ from oag_validate_json import contextual_schema_issues  # noqa: E402
 LOCK_READY_AMBIGUITY_STATUSES = {"resolved", "waived"}
 VALID_AMBIGUITY_STATUSES = {"open", "unresolved", "proposed", "resolved", "waived", "blocked"}
 LOCK_READY_REQUIREMENT_AMBIGUITY = {"clear", "waived"}
+AUTHORITATIVE_SOURCE_CLAIM_STATUSES = {"confirmed"}
 
 
 def read_yaml(path: Path) -> dict[str, Any]:
@@ -79,19 +80,24 @@ def item_id(item: Any) -> str:
     return text(item.get("id")) if isinstance(item, dict) else ""
 
 
-def check_source_claims(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, str]], set[str], dict[str, int]]:
+def check_source_claims(
+    ip_dir: Path,
+    *,
+    hard_gate: bool,
+) -> tuple[list[dict[str, str]], set[str], set[str], dict[str, int]]:
     path = ip_dir / "req" / "source_claims.yaml"
     doc = read_yaml(path)
     issues: list[dict[str, str]] = []
     claim_ids: set[str] = set()
+    authoritative_claim_ids: set[str] = set()
     counts = {"source_claims": 0}
 
     if "__load_error__" in doc:
-        return [issue("SOURCE_CLAIMS_INVALID", f"Cannot read source_claims.yaml: {doc['__load_error__']}", str(path))], claim_ids, counts
+        return [issue("SOURCE_CLAIMS_INVALID", f"Cannot read source_claims.yaml: {doc['__load_error__']}", str(path))], claim_ids, authoritative_claim_ids, counts
     if not doc:
         if hard_gate:
             issues.append(issue("SOURCE_CLAIMS_MISSING", "Locked or required scope needs req/source_claims.yaml.", str(path)))
-        return issues, claim_ids, counts
+        return issues, claim_ids, authoritative_claim_ids, counts
     issues.extend(
         contextual_schema_issues(
             "oag_source_claims.schema.json",
@@ -114,6 +120,11 @@ def check_source_claims(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str
         elif cid in claim_ids:
             issues.append(issue("SOURCE_CLAIM_DUPLICATE_ID", f"Duplicate source claim id {cid}.", base))
         claim_ids.add(cid)
+        status = text(claim.get("status")).lower()
+        if status in AUTHORITATIVE_SOURCE_CLAIM_STATUSES and cid:
+            authoritative_claim_ids.add(cid)
+        if hard_gate and status == "draft":
+            issues.append(issue("SOURCE_CLAIM_NOT_CONFIRMED", f"{cid or base} is draft and cannot authorize locked requirements.", base))
         if not text(claim.get("source")):
             issues.append(issue("SOURCE_CLAIM_SOURCE", f"{cid or base} missing source.", base))
         if hard_gate and not (text(claim.get("quote")) or text(claim.get("summary"))):
@@ -123,7 +134,7 @@ def check_source_claims(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str
 
     if hard_gate and not claim_ids:
         issues.append(issue("SOURCE_CLAIMS_REQUIRED", "Locked or required scope needs at least one source claim.", "claims"))
-    return issues, claim_ids, counts
+    return issues, claim_ids, authoritative_claim_ids, counts
 
 
 def check_ambiguities(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, str]], set[str], dict[str, int], list[str]]:
@@ -222,7 +233,14 @@ def check_features(ip_dir: Path, *, hard_gate: bool) -> tuple[list[dict[str, str
     return issues, feature_ids, counts
 
 
-def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str], feature_ids: set[str]) -> tuple[list[dict[str, str]], dict[str, int]]:
+def check_requirements(
+    ip_dir: Path,
+    *,
+    hard_gate: bool,
+    claim_ids: set[str],
+    authoritative_claim_ids: set[str],
+    feature_ids: set[str],
+) -> tuple[list[dict[str, str]], dict[str, int]]:
     path = oag_paths.legacy_or_hidden(ip_dir, "ontology/requirements.yaml")
     doc = read_yaml(path)
     issues: list[dict[str, str]] = []
@@ -260,6 +278,14 @@ def check_requirements(ip_dir: Path, *, hard_gate: bool, claim_ids: set[str], fe
             for ref in source_claim_refs:
                 if ref not in claim_ids:
                     issues.append(issue("REQ_SOURCE_CLAIM_UNKNOWN", f"{rid or base} references unknown source claim {ref}.", base))
+                elif ref not in authoritative_claim_ids:
+                    issues.append(
+                        issue(
+                            "REQ_SOURCE_CLAIM_NOT_AUTHORITATIVE",
+                            f"{rid or base} references source claim {ref}, but only confirmed claims may authorize locked requirements.",
+                            base,
+                        )
+                    )
         feature_refs = [text(item) for item in as_list(req.get("feature_refs")) if text(item)]
         if feature_ids:
             if not feature_refs:
@@ -281,10 +307,16 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     ip_dir = oag_paths.ip_root(ip_dir)
     locked = is_locked(ip_dir)
     hard_gate = require_locked or locked
-    source_issues, claim_ids, source_counts = check_source_claims(ip_dir, hard_gate=hard_gate)
+    source_issues, claim_ids, authoritative_claim_ids, source_counts = check_source_claims(ip_dir, hard_gate=hard_gate)
     ambiguity_issues, _ambiguity_ids, ambiguity_counts, blockers = check_ambiguities(ip_dir, hard_gate=hard_gate)
     feature_issues, feature_ids, feature_counts = check_features(ip_dir, hard_gate=hard_gate)
-    req_issues, req_counts = check_requirements(ip_dir, hard_gate=hard_gate, claim_ids=claim_ids, feature_ids=feature_ids)
+    req_issues, req_counts = check_requirements(
+        ip_dir,
+        hard_gate=hard_gate,
+        claim_ids=claim_ids,
+        authoritative_claim_ids=authoritative_claim_ids,
+        feature_ids=feature_ids,
+    )
     issues = source_issues + ambiguity_issues + feature_issues + req_issues
     next_actions: list[str] = []
     if ambiguity_counts["unresolved_lock_ambiguities"]:

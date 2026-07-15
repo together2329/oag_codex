@@ -18,6 +18,7 @@ from oag_wavefront_core import (
     result,
     run_state_lock,
     utc_now,
+    utc_after,
     validate_named_schema,
 )
 from oag_wavefront_graph import (
@@ -38,6 +39,7 @@ from oag_wavefront_core import graph_paths
 from oag_wavefront_validation import verify_invariants
 
 ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
+REVIEW_DECISION_STATUSES = {"handoff_pass", "closed", "waived"}
 
 
 @dataclass(frozen=True)
@@ -164,6 +166,7 @@ def record_wavefront_heartbeat(request: HeartbeatRequest) -> JsonObject:
         heartbeat_at = utc_now()
         task["heartbeat_at"] = heartbeat_at
         task["heartbeat_message"] = request.message
+        task["heartbeat_deadline_at"] = utc_after(int(task.get("patience_budget_seconds") or 900))
         write_graph(request.run, graph)
         append_event(
             WavefrontEvent(
@@ -192,11 +195,11 @@ def _transition_issues(request: RecordRequest, task: JsonObject) -> list[dict[st
                 request.task_id,
             )
         ]
-    if request.status == "handoff_pass" and current_status != "review_pending":
+    if request.status in REVIEW_DECISION_STATUSES and current_status != "review_pending":
         return [
             issue(
-                "TASK_HANDOFF_PASS_TRANSITION",
-                f"handoff_pass requires current task status review_pending, got {current_status}",
+                "TASK_REVIEW_DECISION_TRANSITION",
+                f"{request.status} requires current task status review_pending, got {current_status}",
                 request.task_id,
             )
         ]
@@ -216,10 +219,10 @@ def _barrier_output_issues(request: RecordRequest) -> list[dict[str, str]]:
 
 
 def _validated_decision(request: RecordRequest) -> tuple[Path | None, JsonObject, list[dict[str, str]]]:
-    if request.status != "handoff_pass" and not request.decision:
+    if request.status not in REVIEW_DECISION_STATUSES and not request.decision:
         return None, {}, []
-    if request.status == "handoff_pass" and not request.decision:
-        return None, {}, [issue("HANDOFF_DECISION_REQUIRED", "handoff_pass requires an approved review decision", request.task_id)]
+    if request.status in REVIEW_DECISION_STATUSES and not request.decision:
+        return None, {}, [issue("TERMINAL_DECISION_REQUIRED", f"{request.status} requires a review decision", request.task_id)]
     path = resolve_read_path(request.decision)
     if not path.is_file():
         return path, {}, [issue("DECISION_NOT_FOUND", f"decision file not found: {display_path(path)}", request.task_id)]
@@ -245,8 +248,13 @@ def _decision_semantic_issues(request: RecordRequest, payload: JsonObject) -> li
     if str(target.get("task_id") or "") != request.task_id:
         issues.append(issue("DECISION_TASK_MISMATCH", "decision target.task_id does not match wavefront task", request.task_id))
     verdict = str(payload.get("verdict") or "")
-    if request.status == "handoff_pass" and verdict != "approved":
-        issues.append(issue("DECISION_NOT_APPROVED", f"handoff_pass requires verdict=approved, got {verdict}", request.task_id))
+    if request.status in {"handoff_pass", "closed"} and verdict != "approved":
+        issues.append(issue("DECISION_NOT_APPROVED", f"{request.status} requires verdict=approved, got {verdict}", request.task_id))
+    if request.status == "waived" and verdict != "waived":
+        issues.append(issue("DECISION_NOT_WAIVED", f"waived requires verdict=waived, got {verdict}", request.task_id))
+    reviewer = payload.get("reviewer") if isinstance(payload.get("reviewer"), dict) else {}
+    if request.status == "waived" and str(reviewer.get("kind") or "").lower() != "human":
+        issues.append(issue("WAIVER_HUMAN_REVIEW_REQUIRED", "waived terminal status requires reviewer.kind=human", request.task_id))
     rationale = payload.get("rationale") if isinstance(payload.get("rationale"), dict) else {}
     blockers = rationale.get("blockers") if isinstance(rationale.get("blockers"), list) else []
     if verdict == "approved" and blockers:

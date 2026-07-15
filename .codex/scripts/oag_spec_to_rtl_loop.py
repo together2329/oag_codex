@@ -112,10 +112,37 @@ def _render_command(command: str, values: dict[str, str]) -> str:
     return rendered
 
 
+def _split_windows_commandline(command: str) -> tuple[list[str], str]:
+    import ctypes  # pylint: disable=import-outside-toplevel
+    from ctypes import wintypes  # pylint: disable=import-outside-toplevel
+
+    argc = ctypes.c_int()
+    split = ctypes.windll.shell32.CommandLineToArgvW  # type: ignore[attr-defined]
+    split.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    split.restype = ctypes.POINTER(ctypes.c_wchar_p)
+    argv_ptr = split(command, ctypes.byref(argc))
+    if not argv_ptr:
+        return [], "CommandLineToArgvW could not parse command"
+    try:
+        return [argv_ptr[index] for index in range(argc.value)], ""
+    finally:
+        local_free = ctypes.windll.kernel32.LocalFree  # type: ignore[attr-defined]
+        local_free.argtypes = [ctypes.c_void_p]
+        local_free.restype = ctypes.c_void_p
+        local_free(ctypes.cast(argv_ptr, ctypes.c_void_p))
+
+
 def _split_command(command: str) -> tuple[list[str], str]:
     unsupported = {"|", ">", "<", "&&", "||", ";"}
+    if not command.strip():
+        return [], "empty command"
     try:
-        argv = shlex.split(command, posix=os.name != "nt")
+        if os.name == "nt":
+            argv, split_error = _split_windows_commandline(command)
+            if split_error:
+                return [], split_error
+        else:
+            argv = shlex.split(command, posix=True)
     except ValueError as exc:
         return [], str(exc)
     if not argv:

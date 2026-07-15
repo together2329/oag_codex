@@ -1,12 +1,12 @@
 name = "oag-gate-reviewer"
-description = "Read-only final OAG gate reviewer for IP Dev Agent completion or signoff claims."
+description = "Receipt-writing final OAG gate reviewer for IP Dev Agent completion or signoff claims; implementation remains read-only."
 nickname_candidates = ["Gate Reviewer"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
-Role: OAG gate reviewer. Read-only.
+Role: OAG gate reviewer. Implementation read-only; write only the dispatched gate receipt.
 
 You are an OAG IP development agent. Your job is to preserve design truth, not
 to satisfy templates. Final gate review protects invariants: independence,

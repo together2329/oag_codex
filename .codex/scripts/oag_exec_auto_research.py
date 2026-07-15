@@ -65,7 +65,10 @@ def _read_text(path: Path) -> str:
 
 
 def _codex_version() -> str:
-    proc = subprocess.run(["codex", "--version"], text=True, capture_output=True, check=False)
+    try:
+        proc = subprocess.run(["codex", "--version"], text=True, capture_output=True, check=False)
+    except FileNotFoundError:
+        return "unavailable"
     return (proc.stdout or proc.stderr).strip()
 
 
@@ -78,18 +81,24 @@ def _build_prompt(args: argparse.Namespace, ip: Path) -> str:
             "then include dispatch_id, dispatch_path, allowed write paths, allowed tool side effects, and receipt path in the child assignment."
         )
         write_policy = "Research may write only bounded OAG research/report artifacts that are explicitly named in the final summary."
+        mode_title = "Dispatch-bounded subagent capability run for exec-mode auto research."
+        child_scope = f"inspect `{ip_rel}` and write only the dispatch-authorized research/report artifacts"
+        edit_policy = "Do not edit implementation files; only dispatch-authorized research/report paths may change."
     else:
         subagent_policy = (
             "For read-only discovery, prefer a built-in explorer-style native subagent, not an OAG custom/write-capable role that requires dispatch metadata."
         )
         write_policy = "Read and analyze only; do not edit the IP directory or product files. Put results in the final response for the wrapper manifest."
+        mode_title = "Read-only subagent capability probe for exec-mode auto research."
+        child_scope = f"inspect only `{ip_rel}` top-level files"
+        edit_policy = "Do not edit files."
     return "\n".join(
         [
-            "Read-only subagent capability probe for exec-mode auto research.",
-            "Use a native Codex subagent. Spawn one built-in explorer subagent.",
-            f"Child task: from product root `{PROJECT_ROOT}`, run the two preflight checks below, inspect only `{ip_rel}` top-level files, and reply with `FINAL_AUTO_RESEARCH_SUMMARY`.",
+            mode_title,
+            "Use a native Codex subagent. Spawn one bounded research subagent that follows the policy below.",
+            f"Child task: from product root `{PROJECT_ROOT}`, run the two preflight checks below, {child_scope}, and reply with `FINAL_AUTO_RESEARCH_SUMMARY`.",
             "Wait for the child result, then synthesize the parent `FINAL_AUTO_RESEARCH_SUMMARY`.",
-            "Do not edit files. Do not run parent-side shell commands before the native spawn attempt.",
+            f"{edit_policy} Do not run parent-side shell commands before the native spawn attempt.",
             "",
             f"Product root: {PROJECT_ROOT}",
             f"IP directory: {ip_rel}",
@@ -216,6 +225,8 @@ def _parse_events(stdout: str) -> dict[str, Any]:
     final_message = agent_messages[-1] if agent_messages else ""
     blocker_text = "\n".join([final_message, *child_messages]).lower()
     blocker = any(token in blocker_text for token in ("blocked", "unavailable", "cannot spawn", "spawn attempt fails"))
+    final_summary_observed = "FINAL_AUTO_RESEARCH_SUMMARY" in final_message
+    child_summary_observed = any("FINAL_AUTO_RESEARCH_SUMMARY" in message for message in child_messages)
     return {
         "thread_id": thread_id,
         "event_count": event_count,
@@ -227,6 +238,11 @@ def _parse_events(stdout: str) -> dict[str, Any]:
         "wait_completed": wait_completed,
         "child_messages": child_messages[-8:],
         "native_spawn_observed": spawn_started > 0 or spawn_completed > 0,
+        "native_spawn_completed": spawn_completed > 0,
+        "native_wait_completed": wait_completed > 0,
+        "child_result_observed": bool(child_messages),
+        "child_summary_observed": child_summary_observed,
+        "final_summary_observed": final_summary_observed,
         "blocker_detected": blocker,
     }
 
@@ -238,6 +254,14 @@ def _status(returncode: int, summary: dict[str, Any]) -> str:
         return "blocked"
     if not summary.get("native_spawn_observed"):
         return "blocked_no_native_spawn_observed"
+    if not summary.get("native_spawn_completed"):
+        return "blocked_native_spawn_not_completed"
+    if not summary.get("native_wait_completed"):
+        return "blocked_native_wait_not_completed"
+    if not summary.get("child_result_observed") or not summary.get("child_summary_observed"):
+        return "blocked_child_result_not_observed"
+    if not summary.get("final_summary_observed"):
+        return "blocked_parent_summary_missing"
     return "pass"
 
 

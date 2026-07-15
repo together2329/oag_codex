@@ -40,18 +40,26 @@ PROJECT = smoke_test.ROOT.parent
 def _approve_eval_protected_update(ip: Path, *, summary: str) -> dict[str, Any]:
     response = smoke_test.call(
         {
-            "tool": "oag.decide",
+            "tool": "oag.record",
             "arguments": {
                 "ip_dir": str(ip),
-                "action": "protected_ontology_eval_update",
                 "stage": "ontology",
-                "record_decision": True,
-                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "type": "decision",
+                "claim": "protected ontology evaluation update approved",
                 "summary": summary,
+                "tags": ["human_approval", "protected_truth"],
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": summary,
+                },
+                "status": "open",
             },
         }
     )
-    assert response["result"]["decision_receipt"], response
+    assert response["result"]["ledger_event"], response
     return response["result"]
 
 
@@ -85,6 +93,29 @@ def _close_run(ip: Path, run_id: str, *, intent: str) -> dict[str, Any]:
             },
         }
     )
+    smoke_test.approve_and_close_wavefront_task(
+        ip.parent,
+        ip,
+        run_id,
+        "closure.OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+        barrier_outputs=["closure:OBL_DEMO_COUNTER_CX1_RESET_KNOWN:recorded"],
+    )
+    smoke_test.write_closure_reports(ip)
+    review = smoke_test.call(
+        {
+            "tool": "oag.review",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "claim_complete",
+                "stage": "sim",
+                "verdict": "pass",
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
+                "producer_actor": {"kind": "ai", "id": "codex", "surface": "eval"},
+                "findings": [],
+            },
+        }
+    )
+    assert review["result"]["allowed"] is True, review
     checkpoint = smoke_test.call(
         {
             "tool": "oag.run.checkpoint",
@@ -93,11 +124,35 @@ def _close_run(ip: Path, run_id: str, *, intent: str) -> dict[str, Any]:
                 "run_id": run_id,
                 "stage": "sim",
                 "intent": intent,
-                "approval": {"approved": True, "reason": "eval owner approved run checkpoint completion"},
-                "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved run checkpoint completion",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
     )
+    waiver = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "main_agent_subagent_waiver",
+                "stage": "sim",
+                "record_decision": True,
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "Evaluation fixture intentionally synthesizes implementation evidence in the parent process.",
+                },
+            },
+        }
+    )
+    assert waiver["result"]["allowed"] is True, waiver
     return {"record": record["result"], "checkpoint": checkpoint["result"]}
 
 
@@ -110,8 +165,7 @@ def _close_run_graph_prerequisites(ip: Path, run_id: str) -> None:
         "evidence.sim.OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
         "merge.sim.aggregate",
     ):
-        graph_record = smoke_test.run_wavefront("record", "--ip-dir", str(ip), "--run-id", run_id, "--task-id", task_id, "--status", "closed", "--json", project_root=ip.parent)
-        assert graph_record.returncode == 0, graph_record.stderr or graph_record.stdout
+        smoke_test.approve_and_close_wavefront_task(ip.parent, ip, run_id, task_id)
 
 
 def _hook_json(ip: Path, run_id: str) -> tuple[int, dict[str, Any] | None, str]:
@@ -158,7 +212,12 @@ def _human_approve_signoff_profile(ip: Path) -> None:
                 "claim": "human approval to enter signoff closure profile",
                 "summary": "Human owner approved the protected policy transition to signoff.",
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
-                "approval": {"kind": "human", "approved": True, "reason": "eval signoff path"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval signoff path",
+                },
                 "status": "open",
             },
         }
@@ -178,6 +237,20 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
     import yaml  # type: ignore
 
     path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def _force_negative_fixture_locked(ip: Path) -> None:
+    """Mark an intentionally incomplete scaffold locked without exercising oag.lock."""
+    path = oag_paths.legacy_or_hidden(ip, "ontology/scope_lock.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.update(
+        {
+            "state": "locked",
+            "locked_at": "2026-01-01T00:00:00Z",
+            "locked_by": {"kind": "human", "id": "eval-negative-fixture", "surface": "eval"},
+        }
+    )
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def _check_issues(ip: Path) -> list[str]:
@@ -208,6 +281,19 @@ def _record_closed_validation(ip: Path, *, surface: str = "eval") -> dict[str, A
     return response["result"]
 
 
+def _candidate_argv(candidate: dict[str, Any], argv_key: str, command_key: str) -> list[str]:
+    raw = candidate.get(argv_key)
+    if isinstance(raw, list) and raw and all(isinstance(item, str) and item for item in raw):
+        argv = list(raw)
+    else:
+        argv = shlex.split(str(candidate.get(command_key) or ""), posix=True)
+    if not argv:
+        raise AssertionError(f"dispatch candidate has no executable argv: {argv_key}")
+    if Path(argv[0]).name.lower() in {"python", "python.exe", "python3", "python3.exe", "py", "py.exe"}:
+        argv[0] = sys.executable
+    return argv
+
+
 def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "blocks_incomplete")
     run_id, started = _start_run(ip, intent="eval incomplete run blocks stop")
@@ -225,7 +311,7 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     assert "--task-id triage.OBL_DEMO_COUNTER_CX1_RESET_KNOWN" in reason, payload
     assert "--dispatch-id <dispatch_id>" in reason, payload
     create_proc = subprocess.run(
-        shlex.split(candidate["dispatch_create_command"]),
+        _candidate_argv(candidate, "dispatch_create_argv", "dispatch_create_command"),
         text=True,
         capture_output=True,
         check=False,
@@ -234,9 +320,12 @@ def case_stop_gate_blocks_incomplete(root: Path) -> dict[str, Any]:
     )
     assert create_proc.returncode == 0, create_proc.stderr or create_proc.stdout
     dispatch_id = json.loads(create_proc.stdout)["dispatch"]["dispatch_id"]
-    claim_command = candidate["claim_command"].replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+    claim_argv = [
+        part.replace("<dispatch_id>", dispatch_id).replace("<actor>", "eval-triage")
+        for part in _candidate_argv(candidate, "claim_argv", "claim_command")
+    ]
     claim_proc = subprocess.run(
-        shlex.split(claim_command),
+        claim_argv,
         text=True,
         capture_output=True,
         check=False,
@@ -267,10 +356,34 @@ def case_stop_gate_obeys_policy_limit(root: Path) -> dict[str, Any]:
                 "ip_dir": str(ip),
                 "hook_auto_continue_until": "rtl",
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
-                "approval": {"kind": "human", "approved": True, "reason": "eval policy limit"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval policy limit",
+                },
             },
         }
     )
+    waiver = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "main_agent_subagent_waiver",
+                "stage": "sim",
+                "record_decision": True,
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "Evaluation fixture intentionally writes synthetic implementation evidence.",
+                },
+            },
+        }
+    )
+    assert waiver["result"]["allowed"] is True, waiver
     stop = smoke_test.call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
     rc, payload, stderr = _hook_json(ip, run_id)
     assert rc == 0, stderr
@@ -404,7 +517,10 @@ def case_requirement_atom_scaffold_seed(root: Path) -> dict[str, Any]:
     draft = json.loads(draft_proc.stdout)
     assert draft["status"] == "pass", draft
 
-    locked_ip = smoke_test.make_ip(root / "requirement_atom_locked")
+    locked_ip = root / "requirement_atom_locked" / "demo_counter_cx1"
+    locked_scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(locked_ip), "owner": "eval"}})
+    assert locked_scaffold["ok"] is True, locked_scaffold
+    _force_negative_fixture_locked(locked_ip)
     locked_proc = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / "oag_requirement_atom_check.py"), "--ip-dir", str(locked_ip), "--json"],
         text=True,
@@ -471,7 +587,30 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
     assert "VOBJ_NOT_READY" in hard_codes, hard
     assert "VOBJ_OPEN_RISK" in hard_codes, hard
 
-    locked_ip = smoke_test.make_ip(root / "lock_readiness_locked")
+    locked_ip = root / "lock_readiness_locked" / "demo_counter_cx1"
+    locked_scaffold = smoke_test.call({"tool": "oag.scaffold", "arguments": {"ip_dir": str(locked_ip), "owner": "eval"}})
+    assert locked_scaffold["ok"] is True, locked_scaffold
+    refused_lock = smoke_test.call_process(
+        {
+            "tool": "oag.lock",
+            "arguments": {
+                "ip_dir": str(locked_ip),
+                "summary": "Negative evaluation verifies incomplete semantic scope cannot lock.",
+                "confirmed_scope": ["intentionally incomplete scaffold"],
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "exercise semantic readiness rejection",
+                },
+            },
+        }
+    )
+    assert refused_lock.returncode != 0, refused_lock.stdout
+    refused_status = smoke_test.call({"tool": "oag.lock_status", "arguments": {"ip_dir": str(locked_ip)}})
+    assert refused_status["result"]["state"] == "draft", refused_status
+    _force_negative_fixture_locked(locked_ip)
     locked_proc = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / "oag_lock_readiness_check.py"), "--ip-dir", str(locked_ip), "--json"],
         text=True,
@@ -498,6 +637,7 @@ def case_lock_readiness_scaffold_seed(root: Path) -> dict[str, Any]:
         "draft_status": draft["status"],
         "hard_status": hard["status"],
         "locked_status": locked["status"],
+        "oag_lock_refused_incomplete_scope": True,
         "hard_issue_codes": sorted(hard_codes),
         "locked_issue_codes": sorted(locked_codes),
     }
@@ -1068,13 +1208,9 @@ def case_prose_only_contract_fails_closure_grade_check(root: Path) -> dict[str, 
     _approve_eval_protected_update(ip, summary="eval downgrades a contract to prose-only closure")
     issues = _check_issues(ip)
     assert any("CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE" in issue for issue in issues), issues
-    assert any("CHECK_PLANNED_SCENARIOS_EXIST_BEFORE_IMPL_CLOSURE" in issue for issue in issues), issues
     return {
         "ip": str(ip),
-        "matched_issues": [
-            "CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE",
-            "CHECK_PLANNED_SCENARIOS_EXIST_BEFORE_IMPL_CLOSURE",
-        ],
+        "matched_issues": ["CHECK_BEHAVIOR_MODEL_REQUIRED_FOR_BEHAVIORAL_CLOSURE"],
     }
 
 
@@ -1084,6 +1220,9 @@ def case_scoreboard_without_scenario_id_fails_check(root: Path) -> dict[str, Any
         {
             "event_id": "EVT_DEMO_COUNTER_CX1_RESET_DEFAULTS",
             "goal_id": "GOAL_COUNTER_INC",
+            "obligation_id": "OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
+            "contract_id": "CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
+            "contract_refs": ["CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD"],
             "cycle": 3,
             "stimulus": {"valid": 1},
             "expected": {"count": 3},
@@ -1185,13 +1324,13 @@ def case_stop_gate_allows_needs_human(root: Path) -> dict[str, Any]:
     assert checkpoint["result"]["status"] == "needs_human", checkpoint
     rc, payload, stderr = _hook_json(ip, run_id)
     assert rc == 0, stderr
-    assert payload is None, payload
+    assert payload is not None and payload.get("decision") == "block", payload
     return {
         "ip": str(ip),
         "run_id": run_id,
         "checkpoint_status": checkpoint["result"]["status"],
-        "hook_stdout": "",
-        "allows_stop": True,
+        "hook_decision": payload["decision"],
+        "allows_stop": False,
     }
 
 
@@ -1233,8 +1372,13 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
                 "action": "claim_complete",
                 "stage": "sim",
                 "record_decision": True,
-                "approval": {"approved": True, "reason": "eval owner approved claim_complete"},
-                "actor": {"kind": "ai", "id": "codex", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved claim_complete",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
     )
@@ -1337,7 +1481,13 @@ def case_draft_on_pressure_injects_guard(root: Path) -> dict[str, Any]:
     context = _additional_context(payload)
     assert "OAG DRAFT PRESSURE GUARD" in context, payload
     assert "oag.draft" in context, payload
-    assert str(ip) in context, payload
+    command_line = next(
+        (line for line in context.splitlines() if line.startswith("Command: ") and " --json " in line),
+        "",
+    )
+    assert command_line, payload
+    command_payload = json.loads(command_line.split(" --json ", 1)[1])
+    assert Path(command_payload["arguments"]["ip_dir"]).resolve() == ip.resolve(), command_payload
     return {
         "ip": str(ip),
         "hook": "codex_draft_pressure.py",
@@ -1456,7 +1606,7 @@ def case_no_vacuous_pass_blocks_empty_matrix(root: Path) -> dict[str, Any]:
     assert "closure matrix has no obligations" in check["result"]["issues"], check
     assert decision["result"]["allowed"] is False, decision
     assert decision["result"]["reason"] == "scope_lock_required", decision
-    locked = smoke_test.call(
+    locked = smoke_test.call_process(
         {
             "tool": "oag.lock",
             "arguments": {
@@ -1464,10 +1614,16 @@ def case_no_vacuous_pass_blocks_empty_matrix(root: Path) -> dict[str, Any]:
                 "summary": "Evaluation locks empty scope to verify vacuous closure remains blocked after lock.",
                 "confirmed_scope": ["empty matrix must not be accepted as closure"],
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "verify empty semantic scope remains un-lockable",
+                },
             },
         }
     )
-    assert locked["result"]["locked"] is True, locked
+    assert locked.returncode != 0, locked.stdout
     locked_decision = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -1479,13 +1635,14 @@ def case_no_vacuous_pass_blocks_empty_matrix(root: Path) -> dict[str, Any]:
         }
     )
     assert locked_decision["result"]["allowed"] is False, locked_decision
-    assert locked_decision["result"]["reason"] == "knowledge_check_failed", locked_decision
+    assert locked_decision["result"]["reason"] == "scope_lock_required", locked_decision
     return {
         "ip": str(ip),
         "compile_status": compile_result["result"]["status"],
         "check_ok": check["result"]["ok"],
         "decision_allowed": decision["result"]["allowed"],
         "decision_reason": decision["result"]["reason"],
+        "lock_refused": True,
         "locked_decision_reason": locked_decision["result"]["reason"],
         "matrix_issue": "closure matrix has no obligations",
     }
@@ -1665,7 +1822,7 @@ def case_interleaved_context_coverage_gate(root: Path) -> dict[str, Any]:
                 "  - id: INST_CONTEXT_A_B_INTERLEAVED",
                 "    rule: RULE_INTERLEAVED_CONTEXT_COVERAGE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    context_count: 2",
@@ -1715,7 +1872,7 @@ def case_fault_model_coverage_gate(root: Path) -> dict[str, Any]:
             "  - id: INST_COUNTER_INC_FAULT_MODEL_COVERAGE",
             "    rule: RULE_FAULT_MODEL_COVERAGE",
             "    status: closed",
-            "    requirement: REQ_DEMO_COUNTER_CX1_001",
+            "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
             "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
             "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
             "    coverage_refs: [COV_INC]",
@@ -1789,7 +1946,7 @@ def case_verification_role_decomposition_gate(root: Path) -> dict[str, Any]:
             "  - id: INST_COUNTER_VERIF_ARCH",
             "    rule: RULE_VERIFICATION_ROLE_DECOMPOSITION",
             "    status: closed",
-            "    requirement: REQ_DEMO_COUNTER_CX1_001",
+            "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
             "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
             "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
             "    style: uvm_concepts",
@@ -1867,7 +2024,7 @@ def case_signoff_domain_rule_gates(root: Path) -> dict[str, Any]:
                 "  - id: INST_AXI_APB_CDC",
                 "    rule: RULE_CDC_CROSSING_COVERAGE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    clock_domains: [axi_aclk, pclk]",
@@ -1876,7 +2033,7 @@ def case_signoff_domain_rule_gates(root: Path) -> dict[str, Any]:
                 "  - id: INST_AXI4_PROTOCOL",
                 "    rule: RULE_PROTOCOL_COMPLIANCE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    protocol: AXI4",
@@ -1885,7 +2042,7 @@ def case_signoff_domain_rule_gates(root: Path) -> dict[str, Any]:
                 "  - id: INST_STA_TIMING",
                 "    rule: RULE_TIMING_CLOSURE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    sdc_refs: [sdc/top.sdc]",
@@ -1898,7 +2055,7 @@ def case_signoff_domain_rule_gates(root: Path) -> dict[str, Any]:
                 "  - id: INST_FUNCTIONAL_COVERAGE",
                 "    rule: RULE_FUNCTIONAL_COVERAGE_CLOSURE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    coverage_refs: [COV_FUNC_DONE]",
@@ -1908,7 +2065,7 @@ def case_signoff_domain_rule_gates(root: Path) -> dict[str, Any]:
                 "  - id: INST_RESET_XPROP",
                 "    rule: RULE_RESET_XPROP_COVERAGE",
                 "    status: closed",
-                "    requirement: REQ_DEMO_COUNTER_CX1_001",
+                "    requirement: REQ_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    obligation: OBL_DEMO_COUNTER_CX1_RESET_KNOWN",
                 "    contract: CONTRACT_DEMO_COUNTER_CX1_SIM_SCOREBOARD",
                 "    reset_scenarios: [async_assert_sync_deassert]",
@@ -2011,6 +2168,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     compiled = smoke_test.call({"tool": "oag.compile", "arguments": {"ip_dir": str(ip)}})
     assert compiled["result"]["status"] == "pass", compiled
     smoke_test.write_stage_receipt(ip, "sim")
+    smoke_test.write_closure_reports(ip)
     blocked = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -2019,13 +2177,33 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
-                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
     )
     assert blocked["result"]["allowed"] is False, blocked
     assert blocked["result"]["reason"] == "reviewer_receipt_required", blocked
+    missing_producer = smoke_test.call(
+        {
+            "tool": "oag.review",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "verdict": "pass",
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
+                "findings": [],
+            },
+        }
+    )
+    assert missing_producer["result"]["allowed"] is False, missing_producer
+    assert missing_producer["result"]["reason"] == "producer_actor_required", missing_producer
     fake_review_path = oag_paths.ontology_path(ip, "validations/REV_SELF_ALLOWED.json")
     fake_review_path.parent.mkdir(parents=True, exist_ok=True)
     fake_review_path.write_text(
@@ -2056,13 +2234,63 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
-                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
     )
     assert still_blocked["result"]["allowed"] is False, still_blocked
     assert still_blocked["result"]["reason"] == "reviewer_receipt_required", still_blocked
+    forged_review_path = oag_paths.ontology_path(ip, "validations/REV_FORGED_LEDGER.json")
+    forged_review_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_reviewer_receipt.v1",
+                "id": "REV_FORGED_LEDGER",
+                "ip": ip.name,
+                "action": "signoff",
+                "role_name": "oag-gate-reviewer",
+                "allowed": True,
+                "reason": "allowed",
+                "verdict": "pass",
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
+                "producer_actor": {"kind": "ai", "id": "producer", "surface": "eval"},
+                "independent": True,
+                "review_context": {"context_hash": "forged"},
+                "review_context_hash": "forged",
+                "findings": [],
+                "ledger_event": "not-a-real-ledger-event",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    forged_blocked = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "record_decision": True,
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+            },
+        }
+    )
+    assert forged_blocked["result"]["allowed"] is False, forged_blocked
+    assert forged_blocked["result"]["reason"] == "reviewer_receipt_required", forged_blocked
     review = smoke_test.call(
         {
             "tool": "oag.review",
@@ -2071,7 +2299,7 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "verdict": "pass",
-                "actor": {"kind": "ai", "id": "signoff-reviewer", "surface": "eval"},
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
                 "producer_actor": {"kind": "ai", "id": "producer", "surface": "eval"},
                 "findings": [],
             },
@@ -2079,6 +2307,32 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     )
     assert review["result"]["allowed"] is True, review
     assert Path(review["result"]["reviewer_receipt"]["path"]).is_file(), review
+    gate_path = ip / "knowledge" / "gate_reviews" / "oag_gate_decision.json"
+    original_gate = gate_path.read_text(encoding="utf-8")
+    gate_doc = json.loads(original_gate)
+    gate_doc["created_at"] = "2026-01-02T00:00:00Z"
+    gate_path.write_text(json.dumps(gate_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    stale_review = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "record_decision": True,
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+            },
+        }
+    )
+    assert stale_review["result"]["allowed"] is False, stale_review
+    assert stale_review["result"]["reason"] == "reviewer_receipt_required", stale_review
+    gate_path.write_text(original_gate, encoding="utf-8")
     allowed = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -2087,7 +2341,12 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
                 "action": "signoff",
                 "stage": "signoff",
                 "record_decision": True,
-                "approval": {"approved": True, "reason": "eval owner approved signoff after independent review"},
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
                 "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
             },
         }
@@ -2096,7 +2355,10 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     return {
         "ip": str(ip),
         "blocked_reason": blocked["result"]["reason"],
+        "missing_producer_rejected": missing_producer["result"]["reason"] == "producer_actor_required",
         "non_independent_receipt_rejected": still_blocked["result"]["reason"] == "reviewer_receipt_required",
+        "forged_ledger_receipt_rejected": forged_blocked["result"]["reason"] == "reviewer_receipt_required",
+        "stale_review_receipt_rejected": stale_review["result"]["reason"] == "reviewer_receipt_required",
         "review_receipt": review["result"]["reviewer_receipt"]["id"],
         "signoff_allowed_after_review": allowed["result"]["allowed"],
     }

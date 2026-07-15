@@ -15,8 +15,8 @@ the stop with that run's prompt block. It also runs the main-write gate: after
 scope lock, RTL/TB/sim/lint/coverage/formal/SDC/signoff/filelist writes require
 native OAG subagent dispatch + receipt or a human waiver. Human-decision states
 stay silent because the agent has no further local action to take. Repeated
-identical blocks are also capped so a stale run-loop prompt cannot burn the
-whole turn.
+identical failures remain blocked; the durable cache records retry exhaustion
+without turning a failed gate into permission to stop.
 
 This is the Codex-hook-shaped sibling of scripts-driven oag.stop_check; the older
 hooks/oag_stop_check.py stays as a manual/example runner.
@@ -41,6 +41,7 @@ INACTIVE_RUN_STATUSES = {"complete", "parked", "needs_human"}
 
 import oag_cli  # noqa: E402
 import oag_main_write_gate  # noqa: E402
+from oag_hook_utils import scan_ip_dirs, state_path  # noqa: E402
 
 
 def _read_cache() -> dict:
@@ -82,8 +83,7 @@ def _max_block_repeats(result: dict) -> int:
 
 
 def _block_allowed(cache: dict, *, key: str, digest: str, max_repeats: int) -> bool:
-    if max_repeats <= 0:
-        return False
+    max_repeats = max(max_repeats, 1)
     entries = cache.setdefault("entries", {})
     if not isinstance(entries, dict):
         cache["entries"] = entries = {}
@@ -92,13 +92,15 @@ def _block_allowed(cache: dict, *, key: str, digest: str, max_repeats: int) -> b
         entries[key] = {
             "digest": digest,
             "count": 1,
+            "retry_exhausted": False,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         return True
     count = int(entry.get("count") or 0) + 1
     entry["count"] = count
+    entry["retry_exhausted"] = count > max_repeats
     entry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return count <= max_repeats
+    return True
 
 
 def _read_payload() -> dict:
@@ -134,7 +136,10 @@ def _target_runs(payload: dict) -> list[dict[str, str]]:
         return [{"ip_dir": _project_path(explicit_ip), "run_id": run_id}]
 
     found: list[dict[str, str]] = []
-    for active in PROJECT.glob("*/ontology/runs/active_run.json"):
+    for ip_dir in scan_ip_dirs():
+        active = state_path(ip_dir, "ontology/runs/active_run.json")
+        if not active.is_file():
+            continue
         try:
             data = json.loads(active.read_text(encoding="utf-8"))
         except Exception:
@@ -142,9 +147,9 @@ def _target_runs(payload: dict) -> list[dict[str, str]]:
         active_run = str(data.get("run_id") or "") if isinstance(data, dict) else ""
         status = str(data.get("status") or "") if isinstance(data, dict) else ""
         if not status and active_run:
-            state_path = active.parents[2] / "ontology" / "runs" / active_run / "run_state.json"
+            run_state_path = state_path(ip_dir, f"ontology/runs/{active_run}/run_state.json")
             try:
-                state = json.loads(state_path.read_text(encoding="utf-8"))
+                state = json.loads(run_state_path.read_text(encoding="utf-8"))
             except Exception:
                 state = {}
             status = str(state.get("status") or "") if isinstance(state, dict) else ""
@@ -152,8 +157,7 @@ def _target_runs(payload: dict) -> list[dict[str, str]]:
             continue
         if run_id and active_run != run_id:
             continue
-        # <ip>/ontology/runs/active_run.json -> <ip>
-        found.append({"ip_dir": str(active.parents[2]), "run_id": active_run})
+        found.append({"ip_dir": str(ip_dir), "run_id": active_run})
     return found
 
 
@@ -215,8 +219,10 @@ def main() -> int:
     for target in targets:
         try:
             result = _stop_check(target)
-        except Exception:
-            continue  # fail open: a hook must never break the turn
+        except Exception as exc:
+            name = Path(target["ip_dir"]).name
+            blocks.append(f"[OAG:{name}] stop check failed closed: {exc}")
+            continue
         if result.get("reason") == "needs_human_decision":
             continue
         should_continue = result.get("should_continue") is True
@@ -235,7 +241,9 @@ def main() -> int:
     for target in _dedupe_targets(write_gate_targets):
         try:
             result = _main_write_gate(target)
-        except Exception:
+        except Exception as exc:
+            name = Path(target["ip_dir"]).name
+            blocks.append(f"[OAG:{name}] main-write gate failed closed: {exc}")
             continue
         if result.get("status") != "fail":
             continue

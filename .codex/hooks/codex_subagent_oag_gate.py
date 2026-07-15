@@ -46,7 +46,9 @@ REQUIRED_HANDOFF_RECEIPT_FIELDS = {
     "schema_version",
     "product_name",
     "internal_gateway",
+    "ip_id",
     "role_name",
+    "registered_id",
     "dispatch_id",
     "dispatch_path",
     "shard_scope",
@@ -156,7 +158,7 @@ def cache_key(payload: dict) -> str:
     return hashlib.sha256("::".join(parts).encode("utf-8")).hexdigest()
 
 
-def attempt_allowed(payload: dict) -> bool:
+def record_attempt(payload: dict) -> int:
     cache = read_cache()
     entries = cache.setdefault("entries", {})
     if not isinstance(entries, dict):
@@ -170,7 +172,7 @@ def attempt_allowed(payload: dict) -> bool:
     entry["attempts"] = attempts
     entry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     write_cache(cache)
-    return attempts <= MAX_ATTEMPTS
+    return attempts
 
 
 def clear_attempt(payload: dict) -> None:
@@ -446,14 +448,19 @@ def main() -> int:
         return 0
     if not str(payload.get("agent_type") or "").startswith("oag-"):
         return 0
-    if transcript_has_context_pressure(str(payload.get("transcript_path") or "")):
-        return 0
     valid, reason = valid_receipt(payload)
     if valid:
         clear_attempt(payload)
         return 0
-    if attempt_allowed(payload):
-        print(json.dumps({"decision": "block", "reason": directive(payload, reason)}, ensure_ascii=False))
+    if transcript_has_context_pressure(str(payload.get("transcript_path") or "")):
+        reason = f"{reason}; context pressure does not waive the durable receipt requirement"
+    attempt = record_attempt(payload)
+    if attempt > MAX_ATTEMPTS:
+        reason = (
+            f"{reason}; receipt retry budget exhausted after {attempt} attempts. "
+            "Record a valid BLOCKED/INCONCLUSIVE diagnostic receipt or escalate to the parent; the gate remains closed"
+        )
+    print(json.dumps({"decision": "block", "reason": directive(payload, reason)}, ensure_ascii=False))
     return 0
 
 

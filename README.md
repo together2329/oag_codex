@@ -23,6 +23,20 @@ Individual IP workspaces can exist on disk for development or testing, but the
 pack is the reusable machinery that controls intake, ontology, implementation
 handoff, evidence, and closure.
 
+## Local Validation Setup
+
+Use Python 3.11 or newer and install the pinned validation dependencies:
+
+```text
+python -m venv .venv
+python -m pip install -r requirements-dev.txt
+python .codex/scripts/smoke_test.py
+```
+
+The dependency set includes `pyslang==11.0.0` for real SystemVerilog parsing,
+plus PyYAML and jsonschema for ontology and receipt validation. The GitHub
+Actions workflow runs the same checks on Ubuntu and Windows.
+
 ## The Problem OAG Solves
 
 When an LLM implements hardware IP directly from prose, it can silently

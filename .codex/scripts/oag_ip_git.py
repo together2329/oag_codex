@@ -121,6 +121,64 @@ def git_available() -> bool:
     return proc.returncode == 0
 
 
+def repository_status_paths(ip_dir: Path, project_root: Path) -> tuple[str, list[str], str]:
+    """Return project-relative porcelain paths from the repository that owns *ip_dir*.
+
+    An IP may intentionally be its own nested repository. Running status only in
+    the product repository then reports the IP as one untracked directory and
+    hides modified RTL below it. Resolve the owning repository first and use
+    NUL-delimited porcelain output so spaces, renames, and Windows paths remain
+    unambiguous.
+    """
+
+    ip_dir = ip_dir.expanduser().resolve()
+    project_root = project_root.expanduser().resolve()
+    git = git_executable()
+    if git is None:
+        return "", [], "git executable is not available"
+    root_probe = subprocess.run(
+        [git, "-C", str(ip_dir), "rev-parse", "--show-toplevel"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if root_probe.returncode != 0:
+        return "", [], root_probe.stderr.strip() or root_probe.stdout.strip() or "IP is not inside a git repository"
+    repo_root = Path(root_probe.stdout.strip()).expanduser().resolve()
+    try:
+        ip_pathspec = ip_dir.relative_to(repo_root).as_posix()
+    except ValueError:
+        return "", [], f"resolved git root does not contain IP directory: {repo_root}"
+    args = [git, "-C", str(repo_root), "status", "--porcelain=v1", "-z", "--untracked-files=all"]
+    if ip_pathspec not in {"", "."}:
+        args.extend(["--", ip_pathspec])
+    proc = subprocess.run(args, text=True, capture_output=True, check=False)
+    if proc.returncode != 0:
+        return proc.stdout.replace("\0", "\n"), [], proc.stderr.strip() or "git status failed"
+
+    paths: list[str] = []
+    entries = proc.stdout.split("\0")
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        status = entry[:2]
+        raw_path = entry[3:]
+        if not raw_path:
+            continue
+        if "R" in status or "C" in status:
+            index += 1  # the following NUL field is the original path
+        absolute = (repo_root / Path(raw_path)).resolve()
+        try:
+            normalized = absolute.relative_to(project_root).as_posix()
+        except ValueError:
+            normalized = absolute.as_posix()
+        paths.append(normalized)
+    return proc.stdout.replace("\0", "\n"), sorted(set(paths)), ""
+
+
 def issue(code: str, message: str, path: str = "") -> dict[str, str]:
     payload = {"code": code, "message": message}
     if path:
@@ -156,7 +214,18 @@ def ensure_repo(ip_dir: Path) -> tuple[dict[str, Any], list[dict[str, str]]]:
             issues.append(issue("IP_GIT_INIT_FAILED", proc.stderr.strip() or proc.stdout.strip(), str(ip_dir)))
         else:
             initialized = True
-    return {"initialized": initialized, "git_available": True}, issues
+    raw_bytes_configured = False
+    if not issues:
+        config = run_git(ip_dir, ["config", "--local", "core.autocrlf", "false"])
+        if config.returncode != 0:
+            issues.append(issue("IP_GIT_CONFIG_FAILED", config.stderr.strip() or config.stdout.strip(), str(ip_dir)))
+        else:
+            raw_bytes_configured = True
+    return {
+        "initialized": initialized,
+        "git_available": True,
+        "core_autocrlf": "false" if raw_bytes_configured else "",
+    }, issues
 
 
 def status_porcelain(ip_dir: Path) -> str:

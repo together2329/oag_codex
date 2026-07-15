@@ -846,10 +846,10 @@ def _rel_path(value: str, ip_dir: Path) -> str:
     path = Path(value)
     if path.is_absolute():
         try:
-            return str(path.relative_to(ip_dir))
+            return path.relative_to(ip_dir).as_posix()
         except Exception:
-            return str(path)
-    return value
+            return path.as_posix()
+    return value.replace("\\", "/")
 
 
 def _stats(graph: Graph, inspect: dict[str, Any], records: list[dict[str, Any]]) -> dict[str, Any]:

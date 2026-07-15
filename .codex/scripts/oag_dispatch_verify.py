@@ -40,6 +40,8 @@ RECEIPT_SAFE_STATUSES = {
 LEGACY_RECEIPT_STATUSES = {"PASS"}
 FORBIDDEN_STATUS_WORDS = ("COMPLETE", "DONE", "SIGNOFF", "RELEASED", "CLOSED")
 WAVEFRONT_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
+MIRRORED_SCALAR_FIELDS = ("role_name", "stage", "ip_id", "registered_id")
+MIRRORED_LIST_FIELDS = ("owned_obligations", "contracts", "allowed_write_paths")
 
 
 def string_list(payload: JsonObject, *fields: str) -> list[str]:
@@ -242,8 +244,23 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
             issues.append(issue("DISPATCH_PATH_MISMATCH", "receipt.dispatch_path does not match the dispatch file"))
         if normalize_rel(str(dispatch.get("receipt_path") or "")) != project_rel(receipt_path):
             issues.append(issue("RECEIPT_PATH_MISMATCH", "dispatch.receipt_path does not match the receipt file"))
+        for field in MIRRORED_SCALAR_FIELDS:
+            if str(receipt.get(field) or "") != str(dispatch.get(field) or ""):
+                issues.append(issue("RECEIPT_SCOPE_FIELD_MISMATCH", f"receipt.{field} does not match dispatch.{field}"))
+        for field in MIRRORED_LIST_FIELDS:
+            dispatch_values = string_list(dispatch, field)
+            receipt_values = string_list(receipt, field)
+            if field == "allowed_write_paths":
+                dispatch_values = sorted(normalize_rel(item) for item in dispatch_values)
+                receipt_values = sorted(normalize_rel(item) for item in receipt_values)
+            if receipt_values != dispatch_values:
+                issues.append(issue("RECEIPT_SCOPE_LIST_MISMATCH", f"receipt.{field} does not match dispatch.{field}"))
         if receipt.get("may_claim_complete") is not False or dispatch.get("may_claim_complete") is not False:
             issues.append(issue("COMPLETION_CLAIM", "dispatch and receipt must keep may_claim_complete=false"))
+        if receipt.get("diagnostic_only") is not False:
+            issues.append(issue("RECEIPT_DIAGNOSTIC_ONLY", "dispatch-backed handoff receipt must set diagnostic_only=false"))
+        if receipt.get("dispatch_verified") is not True:
+            issues.append(issue("RECEIPT_DISPATCH_VERIFIED", "dispatch-backed handoff receipt must set dispatch_verified=true"))
 
         wavefront_dispatch = dispatch_has_wavefront_metadata(dispatch)
         if wavefront_dispatch:
@@ -264,6 +281,8 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
             issues.append(issue("LEGACY_STATUS", "receipt status PASS is no longer accepted for dispatch-verified subagents"))
         elif status not in RECEIPT_SAFE_STATUSES:
             issues.append(issue("STATUS", f"receipt status is not an OAG handoff status: {status}"))
+        if status in {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS"} and receipt.get("covers_writes") is not True:
+            issues.append(issue("RECEIPT_WRITE_COVERAGE", "passing handoff receipt must set covers_writes=true"))
         if any(word in status.upper() for word in FORBIDDEN_STATUS_WORDS):
             issues.append(issue("STATUS_COMPLETION_LANGUAGE", "receipt status must not imply completion or signoff"))
 

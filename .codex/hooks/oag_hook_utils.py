@@ -129,10 +129,22 @@ def project_path(value: str) -> Path:
     return path.resolve()
 
 
+def state_root(ip_dir: Path) -> Path:
+    hidden = ip_dir / ".oag"
+    if (hidden / "ontology").is_dir() or (hidden / "knowledge").is_dir():
+        return hidden
+    return ip_dir
+
+
+def state_path(ip_dir: Path, relative: str | Path) -> Path:
+    return state_root(ip_dir) / Path(relative)
+
+
 def is_ip_dir(path: Path) -> bool:
-    return (path / "ontology").is_dir() and (
-        (path / "ontology" / "requirements.yaml").is_file()
-        or (path / "ontology" / "ip.yaml").is_file()
+    ontology = state_path(path, "ontology")
+    return ontology.is_dir() and (
+        (ontology / "requirements.yaml").is_file()
+        or (ontology / "ip.yaml").is_file()
         or (path / "req" / "locked_truth.md").is_file()
     )
 
@@ -147,7 +159,10 @@ def scan_ip_dirs() -> list[Path]:
 
 def active_run_ips() -> list[Path]:
     ips: list[Path] = []
-    for active in PROJECT.glob("*/ontology/runs/active_run.json"):
+    for ip in scan_ip_dirs():
+        active = state_path(ip, "ontology/runs/active_run.json")
+        if not active.is_file():
+            continue
         try:
             data = json.loads(active.read_text(encoding="utf-8"))
         except Exception:
@@ -155,15 +170,15 @@ def active_run_ips() -> list[Path]:
         status = str(data.get("status") or "") if isinstance(data, dict) else ""
         run_id = str(data.get("run_id") or "") if isinstance(data, dict) else ""
         if not status and run_id:
-            state_path = active.parents[2] / "ontology" / "runs" / run_id / "run_state.json"
+            run_state_path = state_path(ip, f"ontology/runs/{run_id}/run_state.json")
             try:
-                state = json.loads(state_path.read_text(encoding="utf-8"))
+                state = json.loads(run_state_path.read_text(encoding="utf-8"))
             except Exception:
                 state = {}
             status = str(state.get("status") or "") if isinstance(state, dict) else ""
         if status in INACTIVE_RUN_STATUSES:
             continue
-        ips.append(active.parents[2].resolve())
+        ips.append(ip.resolve())
     return ips
 
 
@@ -202,7 +217,7 @@ def _ip_name_in_prompt(ip_name: str, prompt: str) -> bool:
 def prompt_path_refs(prompt: str) -> list[str]:
     refs: list[str] = []
     seen: set[str] = set()
-    for match in PATH_REF_RE.finditer(prompt or ""):
+    for match in PATH_REF_RE.finditer((prompt or "").replace("\\", "/")):
         ref = match.group("path").strip().strip("`'\"<>()[]{}.,;:!?。")
         if not ref or "://" in ref:
             continue
@@ -235,7 +250,7 @@ def _ip_has_bare_file_ref(ip: Path, ref: str) -> bool:
     if (ip / ref).is_file():
         return True
     for dirname in BARE_FILE_SEARCH_DIRS:
-        root = ip / dirname
+        root = state_path(ip, dirname) if dirname in {"ontology", "knowledge"} else ip / dirname
         if not root.is_dir():
             continue
         try:

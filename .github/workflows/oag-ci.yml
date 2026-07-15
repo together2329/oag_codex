@@ -1,0 +1,53 @@
+name: OAG cross-platform validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Validate agent catalog
+        run: python .codex/scripts/oag_agent_catalog_check.py
+      - name: Validate Windows portability contracts
+        run: python .codex/scripts/oag_windows_smoke.py
+      - name: Validate release pack
+        run: python .codex/scripts/oag_pack_release_check.py
+      - name: Run full smoke suite
+        run: python .codex/scripts/smoke_test.py
+
+  semantic-evals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Run OAG evals
+        run: python .codex/scripts/oag_eval.py
+      - name: Run answer-key evals
+        run: python .codex/scripts/oag_answer_key_eval.py

@@ -3,7 +3,7 @@ description = "Reviews IP functional semantic versions, IP-local git readiness, 
 nickname_candidates = ["IP Version Steward", "Baseline Steward"]
 model = "gpt-5.5"
 model_reasoning_effort = "xhigh"
-sandbox_mode = "read-only"
+sandbox_mode = "workspace-write"
 
 developer_instructions = """
 Role: IP version steward.

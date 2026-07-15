@@ -127,6 +127,7 @@ def check_atoms(ip_dir: Path, *, require_locked: bool) -> list[dict[str, str]]:
         issues.append(issue("ATOM_REQUIRED", "Locked scope requires at least one requirement atom.", str(path)))
 
     seen: set[str] = set()
+    atom_source_requirements: set[str] = set()
     for index, atom in enumerate(atoms):
         base = f"requirement_atoms[{index}]"
         aid = item_id(atom)
@@ -141,6 +142,8 @@ def check_atoms(ip_dir: Path, *, require_locked: bool) -> list[dict[str, str]]:
             issues.append(issue("ATOM_SOURCE_REQUIREMENT", f"{aid or base} missing source_requirement_id.", base))
         elif req_ids and source not in req_ids:
             issues.append(issue("ATOM_SOURCE_UNKNOWN", f"{aid or base} references unknown requirement {source}.", base))
+        elif source:
+            atom_source_requirements.add(source)
         if not text(atom.get("normalized_text")):
             issues.append(issue("ATOM_NORMALIZED_TEXT", f"{aid or base} missing normalized_text.", base))
 
@@ -161,6 +164,20 @@ def check_atoms(ip_dir: Path, *, require_locked: bool) -> list[dict[str, str]]:
         missing_terms, open_questions = ambiguity_values(atom)
         if locked and (missing_terms or open_questions) and text(atom.get("status")) != "blocked":
             issues.append(issue("ATOM_AMBIGUITY", f"{aid or base} has unresolved ambiguity after lock.", base))
+
+    if locked:
+        for requirement in as_list(req_doc.get("requirements")):
+            if not isinstance(requirement, dict):
+                continue
+            rid = item_id(requirement)
+            if rid and text(requirement.get("status")).lower() not in {"template", "retired", "superseded"} and rid not in atom_source_requirements:
+                issues.append(
+                    issue(
+                        "ATOM_REQUIREMENT_COVERAGE",
+                        f"{rid} has no requirement atom; every locked requirement needs at least one semantic atom.",
+                        "ontology/requirements.yaml",
+                    )
+                )
 
     return issues
 
@@ -196,6 +213,9 @@ def check_obligations(ip_dir: Path, *, require_locked: bool) -> list[dict[str, s
         return issues
     path = ip_dir / Path("ontology/obligations.yaml")
     doc = read_yaml(oag_paths.legacy_or_hidden(ip_dir, "ontology/obligations.yaml"))
+    atoms_doc = read_yaml(oag_paths.legacy_or_hidden(ip_dir, "ontology/requirement_atoms.yaml"))
+    atoms = [item for item in as_list(atoms_doc.get("requirement_atoms")) if isinstance(item, dict)]
+    atom_to_requirement = {item_id(atom): text(atom.get("source_requirement_id")) for atom in atoms if item_id(atom)}
     if "__load_error__" in doc:
         return [issue("OBLIGATION_FILE_INVALID", f"Cannot read obligations.yaml: {doc['__load_error__']}", str(path))]
     for index, obligation in enumerate(as_list(doc.get("obligations"))):
@@ -204,6 +224,46 @@ def check_obligations(ip_dir: Path, *, require_locked: bool) -> list[dict[str, s
         status = text(obligation.get("status")).lower()
         if status in {"draft", "template"}:
             continue
+        atom_refs = [
+            text(item)
+            for item in as_list(
+                obligation.get("requirement_atom_refs")
+                or obligation.get("atom_refs")
+                or obligation.get("requirement_atoms")
+            )
+            if text(item)
+        ]
+        oid = item_id(obligation) or f"obligations[{index}]"
+        if not atom_refs:
+            issues.append(
+                issue(
+                    "OBLIGATION_ATOM_REFS",
+                    f"{oid} must reference one or more requirement atoms.",
+                    f"obligations[{index}]",
+                )
+            )
+        requirement_refs = {
+            text(item)
+            for item in as_list(
+                obligation.get("requirement_refs")
+                or obligation.get("requirements")
+                or obligation.get("requirement")
+            )
+            if text(item)
+        }
+        for atom_ref in atom_refs:
+            if atom_ref not in atom_to_requirement:
+                issues.append(issue("OBLIGATION_ATOM_UNKNOWN", f"{oid} references unknown atom {atom_ref}.", f"obligations[{index}]"))
+                continue
+            source_requirement = atom_to_requirement[atom_ref]
+            if requirement_refs and source_requirement not in requirement_refs:
+                issues.append(
+                    issue(
+                        "OBLIGATION_ATOM_REQUIREMENT_MISMATCH",
+                        f"{oid} atom {atom_ref} derives from {source_requirement}, outside the obligation requirement refs.",
+                        f"obligations[{index}]",
+                    )
+                )
         if obligation_is_shallow(obligation):
             issues.append(
                 issue(

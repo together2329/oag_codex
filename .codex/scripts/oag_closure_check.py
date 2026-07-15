@@ -16,6 +16,7 @@ from typing import Any
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 import oag_paths  # noqa: E402
+import oag_lock_readiness_check  # noqa: E402
 
 
 CODEX_ROOT = Path(__file__).resolve().parents[1]
@@ -104,7 +105,7 @@ def display_path(ip_dir: Path, path: Path | None) -> str | None:
     parts = rel.parts
     if parts and parts[0] == oag_paths.HIDDEN_DIR:
         rel = Path(*parts[1:]) if len(parts) > 1 else Path()
-    return str(rel)
+    return rel.as_posix()
 
 
 def resolve_inside_ip(ip_dir: Path, raw: str | Path, code: str, issues: list[dict[str, str]]) -> Path | None:
@@ -222,11 +223,11 @@ def required_gate_artifacts(ip_dir: Path, validation_path: Path) -> list[str]:
     # gate ledger keys/hashes never carry the .oag/ prefix.
     candidates: list[tuple[str | None, Path]] = [(display_path(ip_dir, validation_path), validation_path)]
     for rel in DEVELOPMENT_CLOSURE_ARTIFACTS:
-        candidates.append((str(rel), ip_dir / rel))
+        candidates.append((rel.as_posix(), ip_dir / rel))
     for rel in OPTIONAL_GATE_ARTIFACTS:
         fs_path = _artifact_fs_path(ip_dir, rel)
         if fs_path.is_file():
-            candidates.append((str(rel), fs_path))
+            candidates.append((rel.as_posix(), fs_path))
     result: list[str] = []
     for rendered, fs_path in candidates:
         if fs_path.is_file() and rendered:
@@ -430,6 +431,19 @@ def check_closure(ip_dir_arg: str, validation_arg: str | None, gate_arg: str | N
     ip_dir = resolve_ip_dir(ip_dir_arg, issues)
     if ip_dir is None:
         return build_result(None, None, None, catalog_result, issues)
+
+    readiness = oag_lock_readiness_check.check(ip_dir, require_locked=True)
+    if readiness.get("status") != "pass":
+        for item in readiness.get("issues", []):
+            if not isinstance(item, dict):
+                continue
+            issues.append(
+                issue(
+                    f"SEMANTIC_READINESS_{item.get('code') or 'ISSUE'}",
+                    str(item.get("message") or "semantic readiness failed"),
+                    str(item.get("path") or ""),
+                )
+            )
 
     validation_path = (
         resolve_inside_ip(ip_dir, validation_arg, "VALIDATION_REPORT_PATH", issues)

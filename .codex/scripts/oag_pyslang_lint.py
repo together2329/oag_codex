@@ -14,9 +14,9 @@ from typing import Any
 
 def rel(path: Path, root: Path) -> str:
     try:
-        return str(path.resolve().relative_to(root.resolve()))
+        return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
-        return str(path)
+        return path.as_posix()
 
 
 def resolve_filelist_ref(ip: Path, base: Path, token: str) -> Path:
@@ -112,13 +112,30 @@ def build_result(ip: Path, filelist: Path, *, allow_missing: bool) -> dict[str, 
         }
 
     diagnostics: list[dict[str, str]] = []
+    syntax_tree_type = getattr(pyslang, "SyntaxTree", None)
+    if syntax_tree_type is None:
+        syntax_module = getattr(pyslang, "syntax", None)
+        syntax_tree_type = getattr(syntax_module, "SyntaxTree", None)
+    if syntax_tree_type is None:
+        return {
+            "schema_version": "oag_pyslang_lint.v1",
+            "status": "fail",
+            "tool": "pyslang",
+            "available": True,
+            "reason": "installed pyslang does not expose SyntaxTree at the top level or pyslang.syntax.SyntaxTree",
+            "files": [rel(path, ip) for path in files],
+            "include_dirs": incdirs,
+            "warnings": warnings,
+            "diagnostics": [],
+            "counts": {"files": len(files), "diagnostics": 0},
+        }
     for path in files:
         if not path.is_file():
             diagnostics.append({"path": rel(path, ip), "message": "RTL file missing"})
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         try:
-            tree = pyslang.SyntaxTree.fromText(text)
+            tree = syntax_tree_type.fromText(text)
             for item in getattr(tree, "diagnostics", []):
                 diagnostics.append({"path": rel(path, ip), "message": str(item)})
         except Exception as exc:
