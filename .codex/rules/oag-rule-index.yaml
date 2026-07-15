@@ -101,6 +101,21 @@ rules:
       draft: warn
       post_lock: block
       closure: block
+  - id: RULE-SEMANTIC-PROJECTION-001
+    text: Locked/load-bearing source, atom, obligation, and contract projections must preserve or explicitly authorize semantic drift before implementation or closure.
+    policy_refs:
+      - oag/deep-semantic-intake-policy.md
+      - oag/requirement-decomposition-principles.md
+      - oag/traceability-policy.md
+    checker_refs:
+      - scripts/oag_semantic_projection_check.py
+      - scripts/oag_lock_readiness_check.py
+    tested_by:
+      - oag_selective_hardening_test.py::semantic_projection_regression
+    severity:
+      draft: warn
+      post_lock: block
+      closure: block
   - id: RULE-PACKET-ROLE-001
     text: Locked RTL/TB implementation must use role-specific generated authoring packets.
     policy_refs:
@@ -166,6 +181,20 @@ rules:
       - scripts/oag_closure_check.py
     tested_by:
       - smoke_test.py::test_oag_stale_and_lifecycle_checks
+    severity:
+      draft: warn
+      post_lock: warn
+      closure: block
+  - id: RULE-CLOSURE-SUPER-GATE-001
+    text: Release/signoff closure must consume a complete, fresh, validator-seen, and gate-seen checker report bundle.
+    policy_refs:
+      - oag/coverage-closure-policy.md
+      - oag/recovery-playbook.md
+    checker_refs:
+      - scripts/oag_closure_super_gate.py
+      - scripts/oag_closure_check.py
+    tested_by:
+      - oag_selective_hardening_test.py::closure_gate_regression
     severity:
       draft: warn
       post_lock: warn

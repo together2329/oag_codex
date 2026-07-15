@@ -178,8 +178,9 @@ python3 .codex/scripts/oag_windows_smoke.py --json
 
 This checks that runtime hooks/scripts avoid `/bin/sh`, `sh.exe`, and
 `shell=True`, that Windows hooks route through `.codex/bin/oag-python.cmd`
-instead of PowerShell parsing, and that Git for Windows discovery remains
-available for PowerShell-based IP-local checkpointing.
+instead of PowerShell parsing, that argv splitting rejects shell metacharacters,
+that `.codex` source paths avoid Windows filename/path hazards, and that Git for
+Windows discovery remains available for PowerShell-based IP-local checkpointing.
 
 ## Start
 
@@ -284,22 +285,14 @@ No lock, no RTL. No lock, no TB. No lock, no closure.
 Check status before implementation or closure:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.lock_status --file <lock_status_args.json>
 ```
 
 When the user explicitly says `lock`, `lock this`, `lock scope`, or `lock
 requirements`, record the approval:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{
-  "tool": "oag.lock",
-  "arguments": {
-    "ip_dir": "<ip>",
-    "summary": "Human-confirmed scope summary.",
-    "confirmed_scope": ["confirmed requirement or boundary"],
-    "actor": {"kind": "human", "id": "user", "surface": "codex"}
-  }
-}'
+python3 .codex/scripts/oag_cli.py call oag.lock --file <lock_args.json>
 ```
 
 If the user changes requirements after lock, save the new answer with
@@ -331,7 +324,7 @@ IP closure.
 Before dispatching RTL or TB agents after lock, run:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
 python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json
 ```
 
@@ -526,9 +519,9 @@ not count toward closure coverage.
 Before editing or claiming analysis, call OAG for the active IP:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.inspect","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+python3 .codex/scripts/oag_cli.py call oag.inspect --file <inspect_args.json>
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
+python3 .codex/scripts/oag_cli.py call oag.context --file <context_args.json>
 ```
 
 Use `oag.inspect` for legacy IP folders with no knowledge ledger. Legacy
@@ -544,8 +537,8 @@ For work that should keep moving across edit/test/stop boundaries, start a
 durable run loop:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>","actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.run.start --file <run_start_args.json>
+python3 .codex/scripts/oag_cli.py call oag.run.next --file <run_next_args.json>
 python3 .codex/scripts/oag_mission_loop.py tick --ip-dir <ip> --json
 python3 .codex/scripts/oag_mission_loop.py run --ip-dir <ip> --max-ticks 5 --json
 python3 .codex/scripts/oag_mission_loop.py pause --ip-dir <ip> --reason "<why>" --json
@@ -813,31 +806,14 @@ When checking instruction files, avoid unbounded parent-directory scans such as
 When a meaningful stage boundary is reached, append one record:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{
-  "tool": "oag.record",
-  "arguments": {
-    "ip_dir": "<ip>",
-    "stage": "sim",
-    "type": "finding",
-    "claim": "scoreboard reset rows closed",
-    "summary": "Observed reset rows matched expected state.",
-    "actor": {"kind": "ai", "id": "codex", "surface": "cli"},
-    "rocev": {
-      "requirement": {"id": "REQ_RESET", "source": "req/locked_truth.md"},
-      "obligation": {"id": "OBL_RESET_STATE", "text": "reset state is observable and stable"},
-      "contract": {"id": "CONTRACT_SIM_SCOREBOARD", "method": "scoreboard", "pass_condition": "mismatch count is zero"},
-      "evidence": {"files": ["sim/results.xml", "sim/scoreboard_events.jsonl"], "tests": [], "commit": ""},
-      "validation": {"status": "closed", "verdict": "pass", "rationale": "simulation and scoreboard evidence are clean"}
-    }
-  }
-}'
+python3 .codex/scripts/oag_cli.py call oag.record --file <record_args.json>
 ```
 
 When an OAG run is active, use `oag.run.record` to record evidence against the
 current run target and refresh the next action:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.record","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","summary":"evidence inspected and validation recorded"}}'
+python3 .codex/scripts/oag_cli.py call oag.run.record --file <run_record_args.json>
 ```
 
 Closed records require `rocev.validation.status` to be explicit. Evidence files
@@ -847,19 +823,7 @@ are SHA-256 fingerprinted by `oag.record`; if an evidence file changes later,
 For interview draft capture:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{
-  "tool": "oag.draft",
-  "arguments": {
-    "ip_dir": "<ip>",
-    "stage": "req",
-    "title": "requirement interview round",
-    "summary": "What was learned in this round.",
-    "facts": ["confirmed fact"],
-    "decisions": ["explicitly chosen default"],
-    "assumptions": ["temporary assumption"],
-    "open_questions": ["remaining question"]
-  }
-}'
+python3 .codex/scripts/oag_cli.py call oag.draft --file <draft_args.json>
 ```
 
 `oag.record`, `oag.draft`, and `oag.ticket` append hash-chained events to
@@ -972,20 +936,7 @@ does not close CDC/RDC.
 When a failure needs routed repair, create one failure ticket:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{
-  "tool": "oag.ticket",
-  "arguments": {
-    "ip_dir": "<ip>",
-    "stage": "sim",
-    "reason": "scoreboard mismatch",
-    "failing_contract": {"id": "CONTRACT_SIM_SCOREBOARD"},
-    "expected": {},
-    "observed": {},
-    "evidence": {"files": ["sim/scoreboard_events.jsonl"]},
-    "editable_files": ["rtl/<ip>.sv"],
-    "required_evidence_after_patch": ["sim/results.xml", "sim/scoreboard_events.jsonl"]
-  }
-}'
+python3 .codex/scripts/oag_cli.py call oag.ticket --file <ticket_args.json>
 ```
 
 ## Visualize
@@ -1010,16 +961,16 @@ search, type/status filters, node lists, and node detail inspection.
 Before claiming completion:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
+python3 .codex/scripts/oag_cli.py call oag.check --file <check_args.json>
 python3 .codex/scripts/oag_closure_check.py --ip-dir <ip>
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","stage":"<stage>","intent":"<task>","record_decision":true,"approval":{"approved":true,"reason":"Human or owner-approved completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call oag.decide --file <claim_complete_args.json>
 ```
 
 For an active run, prefer:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.checkpoint","arguments":{"ip_dir":"<ip>","run_id":"<run_id>","stage":"<stage>","intent":"<task>","approval":{"approved":true,"reason":"Human or owner-approved run completion reason."},"actor":{"kind":"ai","id":"codex","surface":"cli"}}}'
+python3 .codex/scripts/oag_cli.py call oag.run.checkpoint --file <run_checkpoint_args.json>
 ```
 
 If a stop hook is available, call `oag.stop_check`. If it returns

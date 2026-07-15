@@ -32,13 +32,13 @@ Run the closure audit set:
 python3 .codex/scripts/oag_trace_graph_check.py --ip-dir <ip> --require-locked --json
 python3 .codex/scripts/oag_verification_plan_check.py --ip-dir <ip> --require-locked --json
 python3 .codex/scripts/oag_closure_check.py --ip-dir <ip> --json
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.check","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.check --file <check_args.json>
 ```
 
 Before claiming completion:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.decide","arguments":{"ip_dir":"<ip>","action":"claim_complete","record_decision":true}}'
+python3 .codex/scripts/oag_cli.py call oag.decide --file <claim_complete_args.json>
 ```
 
 If any command blocks, report the blocker instead of claiming closure.

@@ -1521,19 +1521,48 @@ def _write_generated_design_views(
     rtl_api_text = render_rtl_interface_api(module_packets_for_api)
     if not rtl_api_path.is_file() or rtl_api_path.read_text(encoding="utf-8") != rtl_api_text:
         rtl_api_path.write_text(rtl_api_text, encoding="utf-8")
+    def lifecycle_input_refs_for(consumer: str, allowed_sources: list[str]) -> list[str]:
+        lifecycle = _read_json_file(oag_paths.legacy_or_hidden(ip, "ontology/artifact_lifecycle.json"))
+        if not isinstance(lifecycle, dict):
+            return []
+        source_rank = {source: index for index, source in enumerate(allowed_sources)}
+        refs: dict[str, int] = {}
+        for item in _as_list(lifecycle.get("artifacts")):
+            if not isinstance(item, dict):
+                continue
+            if consumer not in _str_items(item.get("allowed_consumers")):
+                continue
+            artifact_id = str(item.get("id") or "").strip()
+            artifact_path = str(item.get("path") or "").strip()
+            candidates = [candidate for candidate in (artifact_id, artifact_path) if candidate in source_rank]
+            if not candidates:
+                continue
+            ref = candidates[0]
+            refs[artifact_id or ref] = source_rank[ref]
+        return sorted(refs, key=lambda ref: (refs[ref], ref))
+
+    rtl_allowed_truth_sources = [
+        "ontology/contracts.yaml",
+        str(MODELING_REL),
+        str(DOMAIN_INTENT_REL),
+        str(STRUCTURE_REL),
+        str(DECOMPOSITION_REL),
+    ]
+    tb_allowed_truth_sources = [
+        "ontology/contracts.yaml",
+        str(MODELING_REL),
+        str(TB_METHODOLOGY_REL),
+        str(VERIFICATION_PLAN_REL),
+        "req/evidence_plan.yaml",
+    ]
     rtl_packet = {
         "schema_version": "oag_rtl_authoring_packet.v1",
         "packet_type": "rtl_authoring_packet",
         "generated_by": "oag.compile",
         "generated_at": _now(),
         "ip": ip.name,
-        "allowed_truth_sources": [
-            "ontology/contracts.yaml",
-            str(MODELING_REL),
-            str(DOMAIN_INTENT_REL),
-            str(STRUCTURE_REL),
-            str(DECOMPOSITION_REL),
-        ],
+        "allowed_truth_sources": rtl_allowed_truth_sources,
+        "lifecycle_input_refs": lifecycle_input_refs_for("rtl_authoring_packet", rtl_allowed_truth_sources),
         "forbidden_sources": ["tb/", "sim/scoreboard_events.jsonl", "observed DUT behavior"],
         "structure_profile": profile,
         "top_interface_refs": _str_items(structure.get("interfaces")),
@@ -1556,13 +1585,8 @@ def _write_generated_design_views(
         "generated_by": "oag.compile",
         "generated_at": _now(),
         "ip": ip.name,
-        "allowed_truth_sources": [
-            "ontology/contracts.yaml",
-            str(MODELING_REL),
-            str(TB_METHODOLOGY_REL),
-            str(VERIFICATION_PLAN_REL),
-            "req/evidence_plan.yaml",
-        ],
+        "allowed_truth_sources": tb_allowed_truth_sources,
+        "lifecycle_input_refs": lifecycle_input_refs_for("tb_authoring_packet", tb_allowed_truth_sources),
         "expected_source_policy": "contract_oracle_only",
         "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation", "observed DUT behavior"],
         "scenario_refs": all_scenarios,

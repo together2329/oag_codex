@@ -20,6 +20,7 @@ oag_requirement_atom_check = importlib.import_module("oag_requirement_atom_check
 oag_req_quality_check = importlib.import_module("oag_req_quality_check")
 oag_verification_plan_check = importlib.import_module("oag_verification_plan_check")
 oag_contract_strength_check = importlib.import_module("oag_contract_strength_check")
+oag_semantic_projection_check = importlib.import_module("oag_semantic_projection_check")
 oag_trace_graph_check = importlib.import_module("oag_trace_graph_check")
 oag_domain_crossing_check = importlib.import_module("oag_domain_crossing_check")
 oag_decision_autoresolve = importlib.import_module("oag_decision_autoresolve")
@@ -402,6 +403,8 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
     atom_issues = atom_result.get("issues", []) if isinstance(atom_result, dict) else []
     contract_strength_result = oag_contract_strength_check.check(ip_dir, require_locked=hard_gate)
     contract_strength_issues = contract_strength_result.get("issues", []) if isinstance(contract_strength_result, dict) else []
+    semantic_projection_result = oag_semantic_projection_check.check(ip_dir, phase="lock" if hard_gate else "draft")
+    semantic_projection_issues = semantic_projection_result.get("issues", []) if isinstance(semantic_projection_result, dict) else []
     vplan_result = oag_verification_plan_check.check(ip_dir, require_locked=hard_gate)
     vplan_issues = vplan_result.get("issues", []) if isinstance(vplan_result, dict) else []
     trace_result = oag_trace_graph_check.check(ip_dir, require_locked=hard_gate)
@@ -446,7 +449,18 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         issue("DOMAIN_CROSSING_READINESS", str(item), str(domain_result.get("domain_intent") or "ontology/domain_intent.yaml"))
         for item in raw_domain_issues
     ]
-    issues = decision_issues + req_quality_issues + atom_issues + contract_strength_issues + vplan_issues + trace_issues + rtl_consistency_issues + cleanup_issues + domain_issues
+    issues = (
+        decision_issues
+        + req_quality_issues
+        + atom_issues
+        + contract_strength_issues
+        + semantic_projection_issues
+        + vplan_issues
+        + trace_issues
+        + rtl_consistency_issues
+        + cleanup_issues
+        + domain_issues
+    )
 
     next_actions: list[str] = []
     if decision_counts["unresolved_lock_blockers"]:
@@ -457,6 +471,8 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         next_actions.append("Resolve requirement atom, shallow obligation, or assume/guarantee contract issues.")
     if contract_strength_issues:
         next_actions.append("Resolve closure-grade contract strength issues before implementation or validation.")
+    if semantic_projection_issues:
+        next_actions.append("Resolve locked/load-bearing semantic projection gaps before implementation or closure.")
     if vplan_issues:
         next_actions.append("Resolve verification strategy plan issues before TB implementation or closure.")
     if trace_issues:
@@ -483,6 +499,7 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
             "requirement_quality_issues": len(req_quality_issues),
             "atom_issues": len(atom_issues),
             "contract_strength_issues": len(contract_strength_issues),
+            "semantic_projection_issues": len(semantic_projection_issues),
             "verification_plan_issues": len(vplan_issues),
             "trace_issues": len(trace_issues),
             "decision_rtl_consistency_issues": len(rtl_consistency_issues),
@@ -493,6 +510,7 @@ def check(ip_dir: Path, *, require_locked: bool = False) -> dict[str, Any]:
         },
         "unresolved_lock_blockers": blockers,
         "provisional_review_items": provisional_review_items,
+        "semantic_projection": semantic_projection_result,
         "decision_rtl_consistency": rtl_consistency_result,
         "exploration_cleanup": cleanup_result,
         "issues": issues,

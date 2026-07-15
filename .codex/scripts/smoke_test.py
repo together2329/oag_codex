@@ -74,6 +74,7 @@ OPERATION_REVIEW_FRAME = ROOT / "scripts" / "oag_operation_review_frame.py"
 ROLE_HEALTH = ROOT / "scripts" / "oag_role_health.py"
 ORCHESTRATION_GUARD = ROOT / "scripts" / "oag_orchestration_guard.py"
 WINDOWS_SMOKE = ROOT / "scripts" / "oag_windows_smoke.py"
+SELECTIVE_HARDENING_TEST = ROOT / "scripts" / "oag_selective_hardening_test.py"
 REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
 GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
@@ -2146,6 +2147,9 @@ def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: 
                         "id": contract_id,
                         "status": "locked",
                         "obligation": obligation_id,
+                        "obligation_refs": [obligation_id],
+                        "atom_refs": [atom_id],
+                        "feature_refs": [feature_id],
                         "contract_type": "behavioral",
                         "variables": {"inputs": ["clk", "rst_n"], "outputs": ["smoke_output"]},
                         "assume": {"clock": "stable", "reset": "released before sample"},
@@ -2161,6 +2165,39 @@ def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: 
                     }
                 ],
             }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    semantic_inputs = [
+        "req/source_claims.yaml",
+        "ontology/requirements.yaml",
+        "ontology/requirement_atoms.yaml",
+        "ontology/obligations.yaml",
+        "ontology/contracts.yaml",
+    ]
+    (ip / "ontology" / "semantic_projection.yaml").write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_semantic_projection.v1",
+                "ip": ip.name,
+                "projections": [
+                    {
+                        "id": f"PROJ_{obligation_id}",
+                        "status": "ready",
+                        "load_bearing": True,
+                        "projection_class": "preserved",
+                        "source_claim_refs": [claim_id],
+                        "requirement_refs": [req_id],
+                        "atom_refs": [atom_id],
+                        "obligation_refs": [obligation_id],
+                        "contract_refs": [contract_id],
+                        "input_hashes": {rel: sha256(ip / rel) for rel in semantic_inputs},
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
         )
         + "\n",
         encoding="utf-8",
@@ -2308,6 +2345,7 @@ def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: 
                 "allowed_truth_sources": ["ontology/contracts.yaml"],
                 "forbidden_sources": ["tb", "sim", "dut_output"],
                 "contract_refs_to_implement": [contract_id],
+                "decision_refs_to_honor": [decision_id],
                 "behavior_refs_implemented_target": ["behavior_model.seed_obligations.reset_known_state"],
                 "ppa_notes_required": True,
                 "cdc_rdc_notes_required": True,
@@ -2327,6 +2365,7 @@ def write_minimal_rtl_dispatch_readiness(ip: Path, *, module_id: str, rtl_file: 
                 "expected_source_policy": "contract_oracle_only",
                 "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation"],
                 "contract_refs": [contract_id],
+                "decision_refs_to_honor": [decision_id],
                 "scenario_refs": ["SCN_SMOKE"],
                 "scoreboard_row_refs": ["EVT_SMOKE"],
             },
@@ -4976,6 +5015,7 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
         "allowed_truth_sources": ["ontology/contracts.yaml"],
         "forbidden_sources": ["tb", "sim", "dut_output"],
         "contract_refs_to_implement": ["CONTRACT_DEMO"],
+        "decision_refs_to_honor": [],
         "behavior_refs_implemented_target": ["behavior_model.demo"],
         "ppa_notes_required": True,
         "cdc_rdc_notes_required": True,
@@ -4988,6 +5028,7 @@ def test_authoring_packet_lifecycle_firewall(tmp_root: Path) -> None:
         "expected_source_policy": "contract_oracle_only",
         "forbidden_expected_sources": ["dut_output", "rtl_expression", "post_hoc_simulation"],
         "contract_refs": ["CONTRACT_DEMO"],
+        "decision_refs_to_honor": [],
         "scenario_refs": ["SCN_DEMO"],
         "scoreboard_row_refs": ["EVT_DEMO"],
         "lifecycle_input_refs": ["ontology/contracts.yaml"],
@@ -5702,6 +5743,14 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
+        selective = subprocess.run(
+            [sys.executable, str(SELECTIVE_HARDENING_TEST)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert selective.returncode == 0, selective.stderr or selective.stdout
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         def win_hook(script: str) -> str:
             return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script

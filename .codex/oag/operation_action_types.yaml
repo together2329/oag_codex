@@ -523,6 +523,40 @@ action_types:
     fallback_policy:
       dispatch_verify_fail: route_inconclusive
       active_lock_conflict: block_until_released
+  - id: ACT_RTL_CONFORMANCE_REVIEW
+    label: RTL Conformance Review
+    phase: review
+    owner_role: oag-custom-reviewer
+    consumes:
+      - rtl_file
+      - top_integration
+      - contract
+      - obligation
+      - authoring_packet
+      - design_rule
+      - lint_static_result
+    preconditions:
+      - scope_lock_locked
+      - rtl_available
+      - authoring_packet_check_pass
+      - contract_strength_check_pass
+      - no_conflicting_wavefront_lock
+    produces:
+      - rtl_conformance_review_matrix
+      - implementation_review_gap_matrix
+      - reviewer_receipt
+      - recommended_repair_or_formal_targets
+    allowed_write_policy:
+      source: dispatch_or_read_only_receipt
+      required: false
+    cannot_claim:
+      - final_completion
+      - closure
+      - signoff
+    fallback_policy:
+      p0_p1_finding: route_to_repair_action
+      unverifiable_contract: route_to_contract_or_formal_target_review
+      active_lock_conflict: block_until_released
   - id: ACT_TB_IMPLEMENTATION
     label: Testbench Implementation
     phase: verification

@@ -283,7 +283,7 @@ For implementation, validation, coverage, mutation, evidence-validator,
 gate-review, or closure subagents, the IP scope must already be locked:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.lock_status --file <lock_status_args.json>
 ```
 
 If `ontology/scope_lock.json` is missing or `state=draft`, do not spawn the
@@ -294,7 +294,7 @@ Before RTL or TB dispatch, compile the authored ontology and verify
 role-specific packet projection:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
 python3 .codex/scripts/oag_authoring_packet_check.py --ip-dir <ip> --require-packets --json
 ```
 
