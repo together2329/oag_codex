@@ -22,38 +22,52 @@ from typing import Any
 from oag_hook_utils import (
     INACTIVE_RUN_STATUSES,
     ROOT,
+    cache_file_lock,
     first_text,
+    hook_cache_path,
+    hook_identity,
     hook_additional_context,
+    identity_matches,
     infer_stage,
+    is_ip_dir,
     parse_run_limit_command,
+    path_under,
     prompt_text,
     read_payload,
     state_path,
-    target_ip_dirs,
+    target_ip_selections,
 )
 
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import oag_cli  # noqa: E402
 
-CACHE_PATH = ROOT / ".cache" / "context_inject.json"
 RECOVERY_KEY = "__post_compact_recovery__"
 
 
-def _read_cache() -> dict[str, Any]:
+def _default_cache(identity: dict[str, str]) -> dict[str, Any]:
+    return {"schema_version": "oag_context_inject_cache.v2", "identity": identity, "entries": {}}
+
+
+def _read_cache(path: Path, identity: dict[str, str]) -> dict[str, Any]:
     try:
-        data = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {"schema_version": "oag_context_inject_cache.v1", "entries": {}}
-    return data if isinstance(data, dict) else {"schema_version": "oag_context_inject_cache.v1", "entries": {}}
+        return _default_cache(identity)
+    if not isinstance(data, dict) or data.get("schema_version") != "oag_context_inject_cache.v2":
+        return _default_cache(identity)
+    if not identity_matches(data.get("identity"), identity):
+        return _default_cache(identity)
+    data["identity"] = identity
+    return data
 
 
-def _write_cache(cache: dict[str, Any]) -> None:
+def _write_cache(path: Path, cache: dict[str, Any]) -> None:
     try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = CACHE_PATH.with_suffix(f".{os.getpid()}.tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(CACHE_PATH)
+        tmp.replace(path)
     except Exception:
         return
 
@@ -150,7 +164,16 @@ def _cache_allows_injection(cache: dict[str, Any], key: str, digest: str, *, for
     return not isinstance(entry, dict) or entry.get("content_hash") != digest
 
 
-def _remember_injection(cache: dict[str, Any], key: str, digest: str, *, hook_event: str) -> None:
+def _remember_injection(
+    cache: dict[str, Any],
+    key: str,
+    digest: str,
+    *,
+    hook_event: str,
+    ip: Path,
+    target_source: str,
+    identity: dict[str, str],
+) -> None:
     entries = cache.setdefault("entries", {})
     if not isinstance(entries, dict):
         cache["entries"] = entries = {}
@@ -159,10 +182,16 @@ def _remember_injection(cache: dict[str, Any], key: str, digest: str, *, hook_ev
         "hook_event": hook_event,
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    ip_dir = key.rsplit("::", 1)[0]
-    if ip_dir and Path(ip_dir).is_dir():
+    workspace = Path(identity["workspace_root"])
+    authorized_outside_workspace = target_source in {"payload", "environment"}
+    if is_ip_dir(ip) and (authorized_outside_workspace or path_under(ip, workspace)):
         cache["last_target"] = {
-            "ip_dir": ip_dir,
+            "ip_dir": str(ip.resolve()),
+            "target_source": target_source,
+            "session_key": identity["session_key"],
+            "workspace_key": identity["workspace_key"],
+            "workspace_root": identity["workspace_root"],
+            "cwd": identity["cwd"],
             "hook_event": hook_event,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
@@ -259,39 +288,44 @@ def _configure_run_limit(ip: Path, *, limit: str) -> str:
     )
 
 
-def main() -> int:
-    payload = read_payload()
+def _main_locked(payload: dict[str, Any], identity: dict[str, str], cache_path: Path, *, cache_enabled: bool) -> int:
     prompt = prompt_text(payload)
     hook_event = _event_name(payload)
-    cache = _read_cache()
+    cache = _read_cache(cache_path, identity) if cache_enabled else _default_cache(identity)
     if _is_post_compact_event(hook_event):
-        _mark_recovery_pending(cache, hook_event=hook_event)
-        _write_cache(cache)
+        if cache_enabled:
+            _mark_recovery_pending(cache, hook_event=hook_event)
+            _write_cache(cache_path, cache)
         return 0
     recovery_pending = _has_recovery_pending(cache)
     force = _force_reinject(payload, hook_event) or recovery_pending
     stage = str(payload.get("stage") or os.environ.get("OAG_STAGE") or infer_stage(prompt) or "")
     intent = str(payload.get("intent") or prompt[:240] or "codex prompt")
     blocks: list[str] = []
-    injected: list[tuple[str, str]] = []
+    injected: list[tuple[str, str, Path, str]] = []
     run_limit = parse_run_limit_command(prompt)
-    target_ips = target_ip_dirs(payload, require_signal=(not force and not bool(run_limit)))
+    selections = target_ip_selections(payload, require_signal=(not force and not bool(run_limit)))
     if run_limit:
-        for ip in target_ips:
+        for selection in selections:
+            ip = selection["ip_dir"]
             try:
                 configured = _configure_run_limit(ip, limit=run_limit)
             except Exception:
                 configured = ""
             if configured:
                 blocks.append(configured)
-                injected.append((_cache_key(ip, stage=f"run-limit:{run_limit}"), _content_hash(configured)))
+                injected.append((_cache_key(ip, stage=f"run-limit:{run_limit}"), _content_hash(configured), ip, str(selection["source"])))
         if blocks:
-            for key, digest in injected:
-                _remember_injection(cache, key, digest, hook_event=hook_event)
-            _write_cache(cache)
+            if cache_enabled:
+                for key, digest, ip, target_source in injected:
+                    _remember_injection(
+                        cache, key, digest, hook_event=hook_event, ip=ip, target_source=target_source, identity=identity
+                    )
+                _write_cache(cache_path, cache)
             print(json.dumps(hook_additional_context("\n\n".join(blocks), hook_event), ensure_ascii=False))
         return 0
-    for ip in target_ips:
+    for selection in selections:
+        ip = selection["ip_dir"]
         try:
             context = _context_for(ip, stage=stage, intent=intent)
             active = _active_run_block(ip)
@@ -311,16 +345,37 @@ def main() -> int:
         if not _cache_allows_injection(cache, key, digest, force=force):
             continue
         blocks.append(block)
-        injected.append((key, digest))
+        injected.append((key, digest, ip, str(selection["source"])))
 
     if blocks:
-        if recovery_pending:
-            _clear_recovery_pending(cache)
-        for key, digest in injected:
-            _remember_injection(cache, key, digest, hook_event=hook_event)
-        _write_cache(cache)
+        if cache_enabled:
+            if recovery_pending:
+                _clear_recovery_pending(cache)
+            for key, digest, ip, target_source in injected:
+                _remember_injection(
+                    cache, key, digest, hook_event=hook_event, ip=ip, target_source=target_source, identity=identity
+                )
+            _write_cache(cache_path, cache)
         print(json.dumps(hook_additional_context("\n\n".join(blocks), hook_event), ensure_ascii=False))
     return 0
+
+
+def main() -> int:
+    payload = read_payload()
+    identity = hook_identity(payload)
+    cache_path = hook_cache_path(payload, hook_name="context_inject", exact_env="OAG_CONTEXT_INJECT_CACHE")
+    cache_enabled = bool(
+        identity["session_id"]
+        or os.environ.get("OAG_CONTEXT_INJECT_CACHE")
+        or os.environ.get("OAG_HOOK_CACHE_DIR")
+    )
+    if not cache_enabled:
+        return _main_locked(payload, identity, cache_path, cache_enabled=False)
+    try:
+        with cache_file_lock(cache_path):
+            return _main_locked(payload, identity, cache_path, cache_enabled=True)
+    except Exception:
+        return 0
 
 
 if __name__ == "__main__":

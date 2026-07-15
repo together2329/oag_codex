@@ -523,9 +523,15 @@ contract: incomplete active runs print `{"decision":"block","reason":"..."}` and
 complete/no-run cases stay silent.
 The Codex context hook in `hooks/codex_context_inject.py` adapts
 `oag.context` to `UserPromptSubmit`: identical context is deduped by content
-hash under `.codex/.cache/`. The PostCompact hook stays silent for Codex's
-stateless output contract and records a recovery marker that the next
-UserPromptSubmit consumes to force one context re-injection.
+hash in a session/workspace-scoped cache under `.codex/.cache/`. The
+PostCompact hook stays silent for Codex's stateless output contract and records
+a same-session recovery marker that the next UserPromptSubmit consumes to force
+one context re-injection. `OAG_HOOK_CACHE_DIR` selects an isolated base for both
+hooks; `OAG_CONTEXT_INJECT_CACHE` and `OAG_STOP_GATE_CACHE` are exact-file test
+or manual overrides. Evaluators and smoke tests must always use an isolated
+cache base. Cache location never overrides identity validation, legacy v1
+`last_target` records are non-authoritative, and Stop may consume cached target
+state only when session and invocation-workspace identity match.
 The Codex deep-interview prompt guard in
 `hooks/codex_deep_interview_prompt_guard.py` also runs from
 `UserPromptSubmit`, but stays silent unless an OAG deep interview is explicitly

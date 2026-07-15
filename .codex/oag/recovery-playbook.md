@@ -3,6 +3,30 @@
 Use this playbook when an agent finds weak evidence, missing oracle refs, stale
 gates, or over/under-modeled IP work.
 
+## Stop Hook Names The Wrong IP
+
+Symptom:
+
+```text
+The Stop hook reports a locked-write or active-run blocker for an evaluator,
+temporary fixture, sibling workspace, or another session's IP.
+```
+
+Action:
+
+- do not create a waiver or subagent receipt for the foreign IP;
+- confirm the hook payload `cwd` and `session_id` identify the current session;
+- run evaluators with `OAG_HOOK_CACHE_DIR` pointing inside their temporary root;
+- use `OAG_CONTEXT_INJECT_CACHE` or `OAG_STOP_GATE_CACHE` only as isolated
+  exact-file overrides;
+- ignore legacy v1 global `last_target` state as target authority;
+- run `python3 .codex/scripts/oag_hook_cache_isolation_test.py` before the full
+  smoke and evaluation suites.
+
+Deleting a cache is cleanup hygiene, not an isolation fix. Session/workspace
+identity and an authoritative target source must match before cached context can
+drive the Stop main-write gate.
+
 ## Missing Behavior Oracle
 
 Symptom:

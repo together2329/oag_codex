@@ -66,9 +66,10 @@ def _run_limit_case(case: dict[str, Any], root: Path) -> dict[str, Any]:
     )
     run_id = str(started["result"]["run_id"])
     prompt = str((case.get("input") or {}).get("prompt") or "")
-    context_proc = smoke_test.context_hook({"ip_dir": str(ip), "prompt": prompt})
+    hook_identity = {"session_id": f"answer-key-{case['id']}", "cwd": str(root)}
+    context_proc = smoke_test.context_hook({**hook_identity, "ip_dir": str(ip), "prompt": prompt})
     stop = smoke_test.call({"tool": "oag.stop_check", "arguments": {"ip_dir": str(ip), "run_id": run_id}})
-    stop_proc = smoke_test.stop_gate({"ip_dir": str(ip), "run_id": run_id})
+    stop_proc = smoke_test.stop_gate({**hook_identity, "ip_dir": str(ip), "run_id": run_id})
     policy = stop["result"].get("policy") if isinstance(stop["result"].get("policy"), dict) else {}
     return {
         "ip": str(ip),
@@ -207,6 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         temp_dir = cleanup.name
 
     root = Path(temp_dir)
+    smoke_test.HOOK_CACHE_DIR = root / ".hook-cache"
     cases = [_run_case(case, root, speed_scale=max(0.0, args.speed_scale)) for case in suite["cases"]]
     passed = sum(1 for case in cases if case["ok"])
     score = sum(float(case["score"]) for case in cases) / len(cases) if cases else 1.0

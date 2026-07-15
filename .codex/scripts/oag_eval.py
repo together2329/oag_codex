@@ -35,6 +35,7 @@ import smoke_test  # noqa: E402
 CaseFn = Callable[[Path], dict[str, Any]]
 HOOKS_DIR = smoke_test.ROOT / "hooks"
 PROJECT = smoke_test.ROOT.parent
+HOOK_CACHE_DIR: Path | None = None
 
 
 def _approve_eval_protected_update(ip: Path, *, summary: str) -> dict[str, Any]:
@@ -176,6 +177,9 @@ def _hook_json(ip: Path, run_id: str) -> tuple[int, dict[str, Any] | None, str]:
 
 
 def _run_hook(script: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any] | None, str]:
+    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if HOOK_CACHE_DIR is not None:
+        env["OAG_HOOK_CACHE_DIR"] = str(HOOK_CACHE_DIR)
     proc = subprocess.run(
         [sys.executable, str(HOOKS_DIR / script)],
         input=json.dumps(payload),
@@ -183,7 +187,7 @@ def _run_hook(script: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]
         capture_output=True,
         check=False,
         cwd=PROJECT,
-        env={**os.environ, "OAG_DISABLE_BACKEND": "1"},
+        env=env,
     )
     if not proc.stdout.strip():
         return proc.returncode, None, proc.stderr
@@ -1396,11 +1400,11 @@ def case_completion_requires_decision_receipt(root: Path) -> dict[str, Any]:
 
 def case_context_injection_before_work(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "context_injection")
-    cache_path = smoke_test.ROOT / ".cache" / "context_inject.json"
-    cache_path.unlink(missing_ok=True)
+    hook_identity = {"session_id": "oag-eval-context", "cwd": str(root)}
     rc, payload, stderr = _run_hook(
         "codex_context_inject.py",
         {
+            **hook_identity,
             "ip_dir": str(ip),
             "stage": "rtl",
             "prompt": f"Start rtl stage work for {ip.name}. Please inspect the OAG context first.",
@@ -1414,6 +1418,7 @@ def case_context_injection_before_work(root: Path) -> dict[str, Any]:
     rc_duplicate, duplicate_payload, duplicate_stderr = _run_hook(
         "codex_context_inject.py",
         {
+            **hook_identity,
             "ip_dir": str(ip),
             "stage": "rtl",
             "prompt": f"Start rtl stage work for {ip.name}. Please inspect the OAG context first.",
@@ -1424,6 +1429,7 @@ def case_context_injection_before_work(root: Path) -> dict[str, Any]:
     rc_high_pressure, high_pressure_payload, high_pressure_stderr = _run_hook(
         "codex_context_inject.py",
         {
+            **hook_identity,
             "ip_dir": str(ip),
             "stage": "rtl",
             "context_pressure": "high",
@@ -1435,6 +1441,7 @@ def case_context_injection_before_work(root: Path) -> dict[str, Any]:
     rc_post_compact, post_compact_payload, post_compact_stderr = _run_hook(
         "codex_context_inject.py",
         {
+            **hook_identity,
             "ip_dir": str(ip),
             "stage": "rtl",
             "hook_event_name": "PostCompact",
@@ -1446,6 +1453,7 @@ def case_context_injection_before_work(root: Path) -> dict[str, Any]:
     rc_recovery, recovery_payload, recovery_stderr = _run_hook(
         "codex_context_inject.py",
         {
+            **hook_identity,
             "ip_dir": str(ip),
             "stage": "rtl",
             "prompt": f"Start rtl stage work for {ip.name}. Please inspect the OAG context first.",
@@ -2507,6 +2515,7 @@ def _format_text(report: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global HOOK_CACHE_DIR
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="print JSON report")
     parser.add_argument("--keep-temp", action="store_true", help="keep the temporary evaluation IPs on disk")
@@ -2526,6 +2535,8 @@ def main(argv: list[str] | None = None) -> int:
         temp_dir = cleanup.name
 
     root = Path(temp_dir)
+    HOOK_CACHE_DIR = root / ".hook-cache"
+    smoke_test.HOOK_CACHE_DIR = HOOK_CACHE_DIR
     selected = CASES
     if args.case:
         needles = [str(item).strip() for item in args.case if str(item).strip()]

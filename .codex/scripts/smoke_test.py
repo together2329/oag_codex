@@ -75,6 +75,7 @@ ROLE_HEALTH = ROOT / "scripts" / "oag_role_health.py"
 ORCHESTRATION_GUARD = ROOT / "scripts" / "oag_orchestration_guard.py"
 WINDOWS_SMOKE = ROOT / "scripts" / "oag_windows_smoke.py"
 SELECTIVE_HARDENING_TEST = ROOT / "scripts" / "oag_selective_hardening_test.py"
+HOOK_CACHE_ISOLATION_TEST = ROOT / "scripts" / "oag_hook_cache_isolation_test.py"
 REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
 GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
@@ -112,6 +113,7 @@ OAG_SESSION_START = ROOT / "hooks" / "codex_oag_session_start.py"
 CONTEXT_HOOK = ROOT / "hooks" / "codex_context_inject.py"
 DRAFT_HOOK = ROOT / "hooks" / "codex_draft_pressure.py"
 HOOKS_JSON = ROOT / "hooks.json"
+HOOK_CACHE_DIR: Path | None = None
 SCHEMA_FILES = [
     ROOT / "schemas" / "oag_dispatch.schema.json",
     ROOT / "schemas" / "oag_subagent_receipt.schema.json",
@@ -1816,10 +1818,17 @@ def run_pack_release_check() -> subprocess.CompletedProcess[str]:
     )
 
 
-def stop_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def hook_test_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
     env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+    if HOOK_CACHE_DIR is not None:
+        env["OAG_HOOK_CACHE_DIR"] = str(HOOK_CACHE_DIR)
     if extra_env:
         env.update(extra_env)
+    return env
+
+
+def stop_gate(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = hook_test_env(extra_env)
     return subprocess.run(
         [sys.executable, str(STOP_GATE)],
         input=json.dumps(payload),
@@ -1861,8 +1870,8 @@ def subagent_start(payload: dict, extra_env: dict[str, str] | None = None) -> su
     )
 
 
-def context_hook(payload: dict) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "OAG_DISABLE_BACKEND": "1"}
+def context_hook(payload: dict, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    env = hook_test_env(extra_env)
     return subprocess.run(
         [sys.executable, str(CONTEXT_HOOK)],
         input=json.dumps(payload),
@@ -1942,7 +1951,7 @@ def hook_target_names(project: Path, payload: dict, *, require_signal: bool = Tr
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.PROJECT = project
-    return [path.name for path in module.target_ip_dirs(payload, require_signal=require_signal)]
+    return [path.name for path in module.target_ip_dirs(payload, require_signal=require_signal, workspace_root=project)]
 
 
 def sha256(path: Path) -> str:
@@ -5742,7 +5751,9 @@ def write_closure_reports(ip: Path, *, gate_decision: str = "PASS") -> None:
 
 
 def main() -> int:
+    global HOOK_CACHE_DIR
     with tempfile.TemporaryDirectory() as tmp:
+        HOOK_CACHE_DIR = Path(tmp) / ".hook-cache"
         selective = subprocess.run(
             [sys.executable, str(SELECTIVE_HARDENING_TEST)],
             text=True,
@@ -5751,6 +5762,14 @@ def main() -> int:
             cwd=ROOT,
         )
         assert selective.returncode == 0, selective.stderr or selective.stdout
+        hook_cache_isolation = subprocess.run(
+            [sys.executable, str(HOOK_CACHE_ISOLATION_TEST)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert hook_cache_isolation.returncode == 0, hook_cache_isolation.stderr or hook_cache_isolation.stdout
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         def win_hook(script: str) -> str:
             return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script
@@ -8014,9 +8033,13 @@ def main() -> int:
         context = call({"tool": "oag.context", "arguments": {"ip_dir": str(ip), "stage": "sim", "intent": "scoreboard"}})
         assert "IP KNOWLEDGE LEDGER" in context["result"]["prompt_block"], context
         assert "scope_lock=locked" in context["result"]["prompt_block"], context
-        cache_path = ROOT / ".cache" / "context_inject.json"
-        cache_path.unlink(missing_ok=True)
-        context_payload = {"ip_dir": str(ip), "stage": "sim", "prompt": f"Continue sim work for {ip.name}"}
+        context_payload = {
+            "session_id": "smoke-context-session",
+            "cwd": str(Path(tmp)),
+            "ip_dir": str(ip),
+            "stage": "sim",
+            "prompt": f"Continue sim work for {ip.name}",
+        }
         context_first = context_hook(context_payload)
         assert context_first.returncode == 0, context_first.stderr or context_first.stdout
         assert "OAG CONTEXT INJECTION" in hook_context(context_first), context_first.stdout

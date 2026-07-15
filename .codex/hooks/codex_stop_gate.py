@@ -34,30 +34,50 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[1]  # .codex/
-PROJECT = ROOT.parent  # project root that holds the IP folders
-CACHE_PATH = Path(os.environ.get("OAG_STOP_GATE_CACHE") or ROOT / ".cache" / "stop_gate.json")
 sys.path.insert(0, str(ROOT / "scripts"))
 INACTIVE_RUN_STATUSES = {"complete", "parked", "needs_human"}
 
 import oag_cli  # noqa: E402
 import oag_main_write_gate  # noqa: E402
-from oag_hook_utils import scan_ip_dirs, state_path  # noqa: E402
+from oag_hook_utils import (  # noqa: E402
+    active_run_ips,
+    cache_file_lock,
+    has_oag_work_signal,
+    hook_cache_path,
+    hook_identity,
+    identity_matches,
+    invocation_cwd,
+    is_ip_dir,
+    path_under,
+    project_path,
+    prompt_text,
+    state_path,
+)
 
 
-def _read_cache() -> dict:
+def _default_cache(identity: dict[str, str]) -> dict:
+    return {"schema_version": "oag_stop_gate_cache.v2", "identity": identity, "entries": {}}
+
+
+def _read_cache(path: Path, identity: dict[str, str]) -> dict:
     try:
-        data = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {"schema_version": "oag_stop_gate_cache.v1", "entries": {}}
-    return data if isinstance(data, dict) else {"schema_version": "oag_stop_gate_cache.v1", "entries": {}}
+        return _default_cache(identity)
+    if not isinstance(data, dict) or data.get("schema_version") != "oag_stop_gate_cache.v2":
+        return _default_cache(identity)
+    if not identity_matches(data.get("identity"), identity):
+        return _default_cache(identity)
+    data["identity"] = identity
+    return data
 
 
-def _write_cache(cache: dict) -> None:
+def _write_cache(path: Path, cache: dict) -> None:
     try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = CACHE_PATH.with_suffix(f".{os.getpid()}.tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
         tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(CACHE_PATH)
+        tmp.replace(path)
     except Exception:
         return
 
@@ -117,14 +137,56 @@ def _read_payload() -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _project_path(value: str) -> str:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = PROJECT / path
-    return str(path.resolve())
+def _selected_target(ip_dir: Path, run_id: str, source: str) -> dict[str, str]:
+    return {"ip_dir": str(ip_dir.resolve()), "run_id": run_id, "source": source}
 
 
-def _target_runs(payload: dict) -> list[dict[str, str]]:
+def _active_run_id(ip_dir: Path) -> str:
+    active = state_path(ip_dir, "ontology/runs/active_run.json")
+    if not active.is_file():
+        return ""
+    try:
+        data = json.loads(active.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(data, dict) or str(data.get("status") or "") in INACTIVE_RUN_STATUSES:
+        return ""
+    return str(data.get("run_id") or "")
+
+
+def _session_context_target(payload: dict, identity: dict[str, str]) -> list[dict[str, str]]:
+    if not identity["session_id"]:
+        return []
+    cache_path = hook_cache_path(payload, hook_name="context_inject", exact_env="OAG_CONTEXT_INJECT_CACHE")
+    try:
+        with cache_file_lock(cache_path):
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(data, dict) or data.get("schema_version") != "oag_context_inject_cache.v2":
+        return []
+    if not identity_matches(data.get("identity"), identity):
+        return []
+    target = data.get("last_target")
+    if not isinstance(target, dict):
+        return []
+    if any(str(target.get(key) or "") != identity[key] for key in ("session_key", "workspace_key", "workspace_root")):
+        return []
+    source = str(target.get("target_source") or "")
+    if source not in {"payload", "environment", "prompt", "workspace_cwd", "workspace_scan"}:
+        return []
+    raw_ip = str(target.get("ip_dir") or "").strip()
+    if not raw_ip:
+        return []
+    ip_dir = Path(raw_ip).expanduser().resolve()
+    if not is_ip_dir(ip_dir):
+        return []
+    if source not in {"payload", "environment"} and not path_under(ip_dir, Path(identity["workspace_root"])):
+        return []
+    return [_selected_target(ip_dir, "", "session_context")]
+
+
+def _target_runs(payload: dict, identity: dict[str, str]) -> list[dict[str, str]]:
     payload_ip = str(payload.get("ip_dir") or "").strip()
     env_ip = os.environ.get("OAG_IP_DIR", "").strip()
     payload_run = str(payload.get("run_id") or "").strip()
@@ -133,32 +195,26 @@ def _target_runs(payload: dict) -> list[dict[str, str]]:
 
     explicit_ip = payload_ip or env_ip
     if explicit_ip:
-        return [{"ip_dir": _project_path(explicit_ip), "run_id": run_id}]
+        ip_dir = project_path(explicit_ip, base=invocation_cwd(payload))
+        return [_selected_target(ip_dir, run_id, "payload" if payload_ip else "environment")]
 
-    found: list[dict[str, str]] = []
-    for ip_dir in scan_ip_dirs():
-        active = state_path(ip_dir, "ontology/runs/active_run.json")
-        if not active.is_file():
-            continue
-        try:
-            data = json.loads(active.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-        active_run = str(data.get("run_id") or "") if isinstance(data, dict) else ""
-        status = str(data.get("status") or "") if isinstance(data, dict) else ""
-        if not status and active_run:
-            run_state_path = state_path(ip_dir, f"ontology/runs/{active_run}/run_state.json")
-            try:
-                state = json.loads(run_state_path.read_text(encoding="utf-8"))
-            except Exception:
-                state = {}
-            status = str(state.get("status") or "") if isinstance(state, dict) else ""
-        if status in INACTIVE_RUN_STATUSES:
-            continue
-        if run_id and active_run != run_id:
-            continue
-        found.append({"ip_dir": str(ip_dir), "run_id": active_run})
-    return found
+    context_targets = _session_context_target(payload, identity)
+    if context_targets:
+        context_targets[0]["run_id"] = run_id or _active_run_id(Path(context_targets[0]["ip_dir"]))
+        return context_targets
+
+    cwd = Path(identity["cwd"])
+    if is_ip_dir(cwd):
+        return [_selected_target(cwd, run_id or _active_run_id(cwd), "workspace_cwd")]
+
+    workspace = Path(identity["workspace_root"])
+    active = active_run_ips(workspace)
+    if run_id:
+        matches = [ip for ip in active if _active_run_id(ip) == run_id]
+        return [_selected_target(matches[0], run_id, "workspace_scan")] if len(matches) == 1 else []
+    if has_oag_work_signal(prompt_text(payload)) and len(active) == 1 and identity["session_id"]:
+        return [_selected_target(active[0], _active_run_id(active[0]), "workspace_scan")]
+    return []
 
 
 def _dedupe_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -171,28 +227,6 @@ def _dedupe_targets(targets: list[dict[str, str]]) -> list[dict[str, str]]:
         seen.add(key)
         unique.append(target)
     return unique
-
-
-def _recent_context_targets() -> list[dict[str, str]]:
-    cache_path = ROOT / ".cache" / "context_inject.json"
-    try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, dict):
-        return []
-    target = data.get("last_target")
-    if not isinstance(target, dict):
-        return []
-    ip_dir = str(target.get("ip_dir") or "").strip()
-    if not ip_dir:
-        return []
-    path = Path(ip_dir).expanduser()
-    if not path.is_absolute():
-        path = PROJECT / path
-    if not path.is_dir():
-        return []
-    return [{"ip_dir": str(path.resolve()), "run_id": ""}]
 
 
 def _stop_check(target: dict[str, str]) -> dict:
@@ -210,12 +244,9 @@ def _main_write_gate(target: dict[str, str]) -> dict:
     return oag_main_write_gate.check_ip(Path(target["ip_dir"]))
 
 
-def main() -> int:
-    payload = _read_payload()
-    cache = _read_cache()
+def _run_gate(payload: dict, targets: list[dict[str, str]], cache: dict, cache_path: Path, *, write_cache: bool) -> int:
     cache_changed = False
     blocks: list[str] = []
-    targets = _dedupe_targets(_target_runs(payload))
     for target in targets:
         try:
             result = _stop_check(target)
@@ -231,14 +262,13 @@ def main() -> int:
         reason_code = str(result.get("reason") or "")
         name = result.get("ip") or Path(target["ip_dir"]).name
         prompt = str(result.get("prompt_block") or "").strip()
-        header = f"[OAG:{name}] run incomplete ({reason_code})."
+        header = f"[OAG:{name}] run incomplete ({reason_code}; target_source={target.get('source') or 'unknown'})."
         block = f"{header}\n{prompt}".strip()
         key = f"{Path(target['ip_dir']).resolve()}::{target.get('run_id') or result.get('run_id') or ''}"
         if _block_allowed(cache, key=key, digest=_digest(block), max_repeats=_max_block_repeats(result)):
             blocks.append(block)
         cache_changed = True
-    write_gate_targets = targets or _recent_context_targets()
-    for target in _dedupe_targets(write_gate_targets):
+    for target in targets:
         try:
             result = _main_write_gate(target)
         except Exception as exc:
@@ -248,7 +278,10 @@ def main() -> int:
         if result.get("status") != "fail":
             continue
         name = result.get("ip") or Path(target["ip_dir"]).name
-        lines = [f"[OAG:{name}] locked implementation write requires native subagent evidence."]
+        lines = [
+            f"[OAG:{name}] locked implementation write requires native subagent evidence "
+            f"(target_source={target.get('source') or 'unknown'}; ip_dir={target['ip_dir']})."
+        ]
         for item in result.get("issues", [])[:8]:
             if isinstance(item, dict):
                 path = f" ({item.get('path')})" if item.get("path") else ""
@@ -267,13 +300,25 @@ def main() -> int:
 
     if blocks:
         reason = (
-            "Active OAG run(s) still require closure. "
-            "Do not stop until the prompt below is handled:\n\n" + "\n\n".join(blocks)
+            "OAG stop gate blocked this response. Resolve the matching item below:\n\n" + "\n\n".join(blocks)
         )
         print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
-    if cache_changed:
-        _write_cache(cache)
+    if cache_changed and write_cache:
+        _write_cache(cache_path, cache)
     return 0
+
+
+def main() -> int:
+    payload = _read_payload()
+    identity = hook_identity(payload)
+    targets = _dedupe_targets(_target_runs(payload, identity))
+    cache_path = hook_cache_path(payload, hook_name="stop_gate", exact_env="OAG_STOP_GATE_CACHE")
+    try:
+        with cache_file_lock(cache_path):
+            cache = _read_cache(cache_path, identity)
+            return _run_gate(payload, targets, cache, cache_path, write_cache=True)
+    except Exception:
+        return _run_gate(payload, targets, _default_cache(identity), cache_path, write_cache=False)
 
 
 if __name__ == "__main__":

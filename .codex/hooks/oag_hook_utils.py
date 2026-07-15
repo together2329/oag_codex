@@ -3,11 +3,23 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - non-Windows fallback
+    msvcrt = None
 
 ROOT = Path(__file__).resolve().parents[1]  # .codex/
 PROJECT = ROOT.parent
@@ -133,11 +145,116 @@ def prompt_text(payload: dict[str, Any]) -> str:
     return first_text(payload, ("prompt", "user_prompt", "userPrompt", "message", "content", "input"))
 
 
-def project_path(value: str) -> Path:
+def project_path(value: str, *, base: Path | None = None) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
-        path = PROJECT / path
+        path = (base or PROJECT) / path
     return path.resolve()
+
+
+def payload_session_id(payload: dict[str, Any]) -> str:
+    return first_text(payload, ("session_id", "sessionId", "conversation_id", "conversationId")).strip()
+
+
+def invocation_cwd(payload: dict[str, Any]) -> Path:
+    raw = first_text(payload, ("cwd", "working_directory", "workingDirectory")).strip()
+    path = Path(raw).expanduser() if raw else Path.cwd()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return Path.cwd().resolve()
+    return resolved if resolved.is_dir() else Path.cwd().resolve()
+
+
+def invocation_workspace(payload: dict[str, Any], *, cwd: Path | None = None) -> Path:
+    explicit = first_text(payload, ("workspace_root", "workspaceRoot")).strip()
+    explicit = explicit or os.environ.get("OAG_WORKSPACE_ROOT", "").strip()
+    if explicit:
+        return project_path(explicit, base=cwd or invocation_cwd(payload))
+    current = (cwd or invocation_cwd(payload)).resolve()
+    candidates = (current, *current.parents)
+    for candidate in candidates:
+        if is_ip_dir(candidate):
+            return candidate
+    for marker in (".git", ".codex"):
+        for candidate in candidates:
+            if (candidate / marker).exists():
+                return candidate
+    return current
+
+
+def _identity_digest(*parts: str) -> str:
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
+def hook_identity(payload: dict[str, Any]) -> dict[str, str]:
+    cwd = invocation_cwd(payload)
+    workspace = invocation_workspace(payload, cwd=cwd)
+    session_id = payload_session_id(payload)
+    workspace_key = _identity_digest(str(workspace))
+    session_key = _identity_digest(session_id, str(workspace)) if session_id else f"anonymous-{workspace_key}"
+    return {
+        "session_id": session_id,
+        "session_key": session_key,
+        "workspace_key": workspace_key,
+        "cwd": str(cwd),
+        "workspace_root": str(workspace),
+    }
+
+
+def hook_cache_path(payload: dict[str, Any], *, hook_name: str, exact_env: str) -> Path:
+    identity = hook_identity(payload)
+    exact = os.environ.get(exact_env, "").strip()
+    if exact:
+        return project_path(exact, base=Path(identity["cwd"]))
+    base_raw = os.environ.get("OAG_HOOK_CACHE_DIR", "").strip()
+    base = project_path(base_raw, base=Path(identity["cwd"])) if base_raw else ROOT / ".cache"
+    return base / hook_name / f"{identity['session_key']}.json"
+
+
+@contextmanager
+def cache_file_lock(cache_path: Path):
+    lock_path = cache_path.with_suffix(cache_path.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        elif msvcrt is not None:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:  # pragma: no cover - supported runtime platforms provide one backend
+            raise RuntimeError("platform file locking is unavailable for OAG hook cache")
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            elif msvcrt is not None:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def identity_matches(value: Any, identity: dict[str, str]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(
+        str(value.get(key) or "") == identity[key]
+        for key in ("session_id", "session_key", "workspace_key", "workspace_root")
+    )
+
+
+def path_under(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def state_root(ip_dir: Path) -> Path:
@@ -160,13 +277,14 @@ def is_ip_dir(path: Path) -> bool:
     )
 
 
-def scan_ip_dirs() -> list[Path]:
+def scan_ip_dirs(root_path: Path | None = None) -> list[Path]:
+    scan_root = (root_path or PROJECT).expanduser().resolve()
     ips: list[Path] = []
     seen: set[Path] = set()
-    for root, dirnames, _filenames in os.walk(PROJECT):
+    for root, dirnames, _filenames in os.walk(scan_root):
         current = Path(root)
         try:
-            rel_parts = current.relative_to(PROJECT).parts
+            rel_parts = current.relative_to(scan_root).parts
         except ValueError:
             dirnames[:] = []
             continue
@@ -188,9 +306,9 @@ def scan_ip_dirs() -> list[Path]:
     return ips
 
 
-def active_run_ips() -> list[Path]:
+def active_run_ips(root_path: Path | None = None) -> list[Path]:
     ips: list[Path] = []
-    for ip in scan_ip_dirs():
+    for ip in scan_ip_dirs(root_path):
         active = state_path(ip, "ontology/runs/active_run.json")
         if not active.is_file():
             continue
@@ -294,11 +412,11 @@ def _ip_has_bare_file_ref(ip: Path, ref: str) -> bool:
     return False
 
 
-def _target_ip_dirs_from_paths(prompt: str, ips: list[Path]) -> list[Path]:
+def _target_ip_dirs_from_paths(prompt: str, ips: list[Path], *, base: Path | None = None) -> list[Path]:
     matches: list[Path] = []
     for ref in prompt_path_refs(prompt):
         try:
-            resolved = project_path(ref)
+            resolved = project_path(ref, base=base)
         except (OSError, RuntimeError):
             continue
         for ip in ips:
@@ -311,29 +429,56 @@ def _target_ip_dirs_from_paths(prompt: str, ips: list[Path]) -> list[Path]:
     return matches if len(matches) == 1 else []
 
 
-def target_ip_dirs(payload: dict[str, Any], *, require_signal: bool = True) -> list[Path]:
+def target_ip_selections(
+    payload: dict[str, Any],
+    *,
+    require_signal: bool = True,
+    workspace_root: Path | None = None,
+) -> list[dict[str, Any]]:
     prompt = prompt_text(payload)
-    explicit = str(payload.get("ip_dir") or os.environ.get("OAG_IP_DIR") or "").strip()
+    cwd = invocation_cwd(payload)
+    if workspace_root is not None and not first_text(payload, ("cwd", "working_directory", "workingDirectory")).strip():
+        cwd = workspace_root.resolve()
+    workspace = (workspace_root or invocation_workspace(payload, cwd=cwd)).resolve()
+    payload_ip = str(payload.get("ip_dir") or "").strip()
+    env_ip = os.environ.get("OAG_IP_DIR", "").strip()
+    explicit = payload_ip or env_ip
     if explicit:
-        path = project_path(explicit)
-        return [path] if path.exists() else []
+        path = project_path(explicit, base=cwd)
+        return [{"ip_dir": path, "source": "payload" if payload_ip else "environment"}] if path.exists() else []
 
-    ips = scan_ip_dirs()
-    path_matches = _target_ip_dirs_from_paths(prompt, ips)
+    ips = scan_ip_dirs(workspace)
+    path_matches = _target_ip_dirs_from_paths(prompt, ips, base=cwd)
     if path_matches:
-        return path_matches
+        return [{"ip_dir": path, "source": "prompt"} for path in path_matches]
 
     matches = [ip for ip in ips if _ip_name_in_prompt(ip.name, prompt)]
     if matches:
-        return matches if len(matches) == 1 else []
+        return [{"ip_dir": matches[0], "source": "prompt"}] if len(matches) == 1 else []
 
     if _is_approval_only(prompt):
         return []
 
-    active = active_run_ips()
+    if is_ip_dir(cwd) and (not require_signal or has_oag_work_signal(prompt)):
+        return [{"ip_dir": cwd, "source": "workspace_cwd"}]
+
+    active = active_run_ips(workspace)
     if len(active) == 1 and (not require_signal or has_oag_work_signal(prompt)):
-        return active
+        return [{"ip_dir": active[0], "source": "workspace_scan"}]
     return []
+
+
+def target_ip_dirs(
+    payload: dict[str, Any],
+    *,
+    require_signal: bool = True,
+    workspace_root: Path | None = None,
+) -> list[Path]:
+    return [
+        item["ip_dir"]
+        for item in target_ip_selections(payload, require_signal=require_signal, workspace_root=workspace_root)
+        if isinstance(item.get("ip_dir"), Path)
+    ]
 
 
 def hook_additional_context(text: str, hook_event: str = "UserPromptSubmit") -> dict[str, Any]:
