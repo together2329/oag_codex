@@ -85,10 +85,13 @@ def _ip_dir_from_payload(payload: dict[str, Any]) -> Path | None:
     for key in ("ip_dir", "ipDir", "target_ip_dir", "targetIpDir"):
         value = payload.get(key)
         if isinstance(value, str) and value.strip():
-            return Path(value).expanduser()
+            path = Path(value).expanduser()
+            if not path.is_absolute():
+                path = Path(str(payload.get("cwd") or ".")).expanduser() / path
+            return path.resolve()
     env_value = os.environ.get("OAG_IP_DIR")
     if env_value:
-        return Path(env_value).expanduser()
+        return Path(env_value).expanduser().resolve()
     return None
 
 
@@ -129,14 +132,18 @@ def _payload_has_lock_blocker(payload: dict[str, Any]) -> bool:
 
 
 def _state_has_lock_blocker(ip_dir: Path) -> bool:
-    decision_doc = _yaml_doc(ip_dir / "ontology" / "decision_matrix.yaml")
+    def state_path(relative: str) -> Path:
+        hidden = ip_dir / ".oag" / relative
+        return hidden if hidden.exists() else ip_dir / relative
+
+    decision_doc = _yaml_doc(state_path("ontology/decision_matrix.yaml"))
     for decision in _as_list(decision_doc.get("decisions")):
         if not isinstance(decision, dict):
             continue
         if decision.get("lock_required") is True and _text(decision.get("status")).lower() not in {"decided", "waived"}:
             return True
 
-    ambiguity_doc = _yaml_doc(ip_dir / "req" / "ambiguity_register.yaml")
+    ambiguity_doc = _yaml_doc(state_path("req/ambiguity_register.yaml"))
     for row in _as_list(ambiguity_doc.get("ambiguities") or ambiguity_doc.get("items")):
         if not isinstance(row, dict):
             continue

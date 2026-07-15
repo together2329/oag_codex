@@ -77,6 +77,19 @@ def semantic_projection_regression(root: Path) -> None:
     passed, payload = run_json(SEMANTIC_CHECK, "--ip-dir", str(ip), "--phase", "lock", "--json")
     assert passed.returncode == 0 and payload.get("status") == "pass", passed.stdout + passed.stderr
 
+    projection["projections"][0]["input_hashes"] = {rel: sha256(ip / rel).upper() for rel in documents}
+    write_json(ip / "ontology/semantic_projection.yaml", projection)
+    uppercase, payload = run_json(SEMANTIC_CHECK, "--ip-dir", str(ip), "--phase", "lock", "--json")
+    assert uppercase.returncode == 0 and payload.get("status") == "pass", uppercase.stdout + uppercase.stderr
+
+    projection["projections"][0]["input_hashes"]["../outside.json"] = "0" * 64
+    write_json(ip / "ontology/semantic_projection.yaml", projection)
+    outside, payload = run_json(SEMANTIC_CHECK, "--ip-dir", str(ip), "--phase", "lock", "--json")
+    assert outside.returncode != 0, outside.stdout
+    assert any(item.get("code") == "SEMANTIC_PROJECTION_INPUT_OUTSIDE_IP" for item in payload.get("issues", [])), payload
+    projection["projections"][0]["input_hashes"].pop("../outside.json")
+    write_json(ip / "ontology/semantic_projection.yaml", projection)
+
     write_json(ip / "ontology/contracts.yaml", {"contracts": [{"id": "CONTRACT_1", "status": "locked", "changed": True}]})
     stale, payload = run_json(SEMANTIC_CHECK, "--ip-dir", str(ip), "--phase", "lock", "--json")
     assert stale.returncode != 0, stale.stdout
@@ -108,6 +121,14 @@ def closure_gate_regression(root: Path) -> None:
     passed, payload = run_json(CLOSURE_GATE, "--ip-dir", str(ip), "--profile", "signoff", "--manifest", str(manifest), "--json")
     assert passed.returncode == 0 and payload.get("status") == "pass", passed.stdout + passed.stderr
 
+    outside_report = root / "outside-report.json"
+    write_json(outside_report, {"status": "pass"})
+    outside_manifest = ip / "outside_manifest.json"
+    write_json(outside_manifest, {"required_reports": [{"name": "outside", "path": str(outside_report)}]})
+    outside, payload = run_json(CLOSURE_GATE, "--ip-dir", str(ip), "--manifest", str(outside_manifest), "--json")
+    assert outside.returncode != 0, outside.stdout
+    assert any(item.get("code") == "MISSING_CHECK_OUTPUT" for item in payload.get("issues", [])), payload
+
     write_json(validator, {"status": "pass", "actor": {"id": "validator"}, "checked_reports": ["semantic_projection"]})
     forged, payload = run_json(CLOSURE_GATE, "--ip-dir", str(ip), "--profile", "signoff", "--manifest", str(manifest), "--json")
     assert forged.returncode != 0, forged.stdout
@@ -118,6 +139,19 @@ def hook_regressions(root: Path) -> None:
     ip = root / "blocked_ip"
     write_json(ip / "ontology/decision_matrix.yaml", {"decisions": [{"id": "DEC_1", "lock_required": True, "status": "open"}]})
     guard, payload = run_json(DEEP_INTERVIEW_GUARD, input_payload={"prompt": "implement this IP", "ip_dir": str(ip)})
+    assert guard.returncode == 0, guard.stderr
+    assert "OAG DEEP INTERVIEW PROMPT GUARD" in json.dumps(payload), payload
+
+    hidden_ip = root / "hidden_blocked_ip"
+    write_json(hidden_ip / ".oag/ontology/decision_matrix.yaml", {"decisions": [{"id": "DEC_2", "lock_required": True, "status": "open"}]})
+    guard, payload = run_json(DEEP_INTERVIEW_GUARD, input_payload={"prompt": "implement this hidden-layout IP", "ip_dir": str(hidden_ip)})
+    assert guard.returncode == 0, guard.stderr
+    assert "OAG DEEP INTERVIEW PROMPT GUARD" in json.dumps(payload), payload
+
+    mixed_ip = root / "hidden_ontology_legacy_req_ip"
+    write_json(mixed_ip / ".oag/ontology/scope_lock.json", {"state": "draft"})
+    write_json(mixed_ip / "req/ambiguity_register.yaml", {"ambiguities": [{"id": "AMB_1", "lock_blocker": True, "status": "open"}]})
+    guard, payload = run_json(DEEP_INTERVIEW_GUARD, input_payload={"prompt": "lock this mixed-layout IP", "ip_dir": str(mixed_ip)})
     assert guard.returncode == 0, guard.stderr
     assert "OAG DEEP INTERVIEW PROMPT GUARD" in json.dumps(payload), payload
 

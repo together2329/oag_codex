@@ -127,7 +127,13 @@ def candidate_paths(item: dict[str, Any]) -> list[str]:
 
 def find_report(ip_dir: Path, item: dict[str, Any]) -> Path | None:
     for rel in candidate_paths(item):
-        path = logical_or_hidden(ip_dir, rel)
+        try:
+            candidate = logical_or_hidden(ip_dir, rel)
+        except (OSError, ValueError):
+            continue
+        path = resolve_inside_ip(ip_dir, candidate)
+        if path is None:
+            continue
         if path.is_file():
             return path
     return None
@@ -167,15 +173,22 @@ def report_freshness_issues(
     if require_hashes and not inputs:
         issues.append(issue("CHECK_OUTPUT_INPUT_HASHES_REQUIRED", f"{report_name} must bind its source inputs for signoff freshness."))
     for rel, expected in inputs:
-        path = resolve_inside_ip(ip_dir, logical_or_hidden(ip_dir, rel))
+        try:
+            candidate = logical_or_hidden(ip_dir, rel)
+        except (OSError, ValueError):
+            candidate = rel
+        path = resolve_inside_ip(ip_dir, candidate)
         if path is None:
             issues.append(issue("CHECK_OUTPUT_INPUT_OUTSIDE_IP", f"{report_name} input resolves outside the IP workspace.", rel))
             continue
         if not path.is_file():
             issues.append(issue("CHECK_OUTPUT_INPUT_MISSING", f"{report_name} input is missing.", rel))
             continue
+        if len(expected) != 64 or any(char not in "0123456789abcdefABCDEF" for char in expected):
+            issues.append(issue("CHECK_OUTPUT_INPUT_HASH_INVALID", f"{report_name} input needs a full SHA-256 digest.", rel))
+            continue
         current = sha256(path)
-        if current != expected:
+        if current != expected.lower():
             issues.append(issue("CHECK_OUTPUT_INPUT_HASH_MISMATCH", f"{report_name} input hash is stale.", rel))
     return issues
 

@@ -179,11 +179,11 @@ def stale_input_hash_issues(ip_dir: Path, projection: dict[str, Any], base: str,
         expected_text = text(expected)
         if not rel_text or not expected_text:
             continue
-        candidate = oag_paths.legacy_or_hidden(ip_dir, rel_text)
         try:
+            candidate = oag_paths.legacy_or_hidden(ip_dir, rel_text)
             path = candidate.resolve(strict=False)
             path.relative_to(ip_dir.resolve())
-        except Exception:
+        except (OSError, ValueError):
             issues.append(issue("SEMANTIC_PROJECTION_INPUT_OUTSIDE_IP", f"{rel_text} resolves outside the IP workspace.", base))
             continue
         if not path.is_file():
@@ -193,7 +193,7 @@ def stale_input_hash_issues(ip_dir: Path, projection: dict[str, Any], base: str,
             issues.append(issue("SEMANTIC_PROJECTION_INPUT_HASH_INVALID", f"{rel_text} needs a full SHA-256 digest.", base))
             continue
         current = sha256(path)
-        if current != expected_text:
+        if current != expected_text.lower():
             issues.append(issue("SEMANTIC_PROJECTION_INPUT_STALE", f"{rel_text} hash changed after semantic projection.", base))
     return issues
 
