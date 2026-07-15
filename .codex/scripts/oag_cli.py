@@ -1813,6 +1813,41 @@ def _assert_ledger_append_allowed(ip: Path, *, action: str, actor: dict[str, Any
         raise ValueError(f"protected fields changed without human approval: {', '.join(changed_protected)}")
 
 
+def _append_ledger_locked(
+    ip: Path,
+    *,
+    action: str,
+    actor: dict[str, Any],
+    subject: str,
+    payload: dict[str, Any],
+    monotonic_subjects: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Append while the caller holds ``_ledger_append_lock``."""
+    _assert_ledger_append_allowed(ip, action=action, actor=actor, payload=payload)
+    path = _ledger_path(ip)
+    last = _last_ledger_entry(ip)
+    prev_hash = str(last.get("event_hash")) if isinstance(last, dict) and last.get("event_hash") else "GENESIS"
+    body = {
+        "schema_version": "oag_evidence_ledger_event.v1",
+        "event_id": f"LEDGER_{_stamp()}_{_slug(action)}",
+        "created_at": _now(),
+        "ip": ip.name,
+        "action": action,
+        "actor": actor,
+        "subject": subject,
+        "payload": payload,
+        "payload_hash": _hash_value(payload),
+        "prev_hash": prev_hash,
+        "protected_snapshot": _protected_snapshot(ip),
+        "monotonic_subjects": monotonic_subjects or [],
+    }
+    body["event_hash"] = _hash_value({key: value for key, value in body.items() if key != "event_hash"})
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n")
+    return body
+
+
 def _append_ledger(
     ip: Path,
     *,
@@ -1824,30 +1859,14 @@ def _append_ledger(
 ) -> dict[str, Any]:
     _ensure_knowledge(ip)
     with _ledger_append_lock(ip):
-        _assert_ledger_append_allowed(ip, action=action, actor=actor, payload=payload)
-
-        path = _ledger_path(ip)
-        last = _last_ledger_entry(ip)
-        prev_hash = str(last.get("event_hash")) if isinstance(last, dict) and last.get("event_hash") else "GENESIS"
-        body = {
-            "schema_version": "oag_evidence_ledger_event.v1",
-            "event_id": f"LEDGER_{_stamp()}_{_slug(action)}",
-            "created_at": _now(),
-            "ip": ip.name,
-            "action": action,
-            "actor": actor,
-            "subject": subject,
-            "payload": payload,
-            "payload_hash": _hash_value(payload),
-            "prev_hash": prev_hash,
-            "protected_snapshot": _protected_snapshot(ip),
-            "monotonic_subjects": monotonic_subjects or [],
-        }
-        body["event_hash"] = _hash_value({key: value for key, value in body.items() if key != "event_hash"})
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(body, ensure_ascii=False, sort_keys=True) + "\n")
-    return body
+        return _append_ledger_locked(
+            ip,
+            action=action,
+            actor=actor,
+            subject=subject,
+            payload=payload,
+            monotonic_subjects=monotonic_subjects,
+        )
 
 
 def _ledger_issues(ip: Path) -> list[str]:
@@ -3284,17 +3303,19 @@ def _write_scope_lock_with_ledger(
     subject: str,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    path = _scope_lock_path(ip)
-    previous = path.read_bytes() if path.is_file() else None
-    _write_scope_lock(ip, doc)
-    try:
-        return _append_ledger(ip, action=action, actor=actor, subject=subject, payload=payload)
-    except Exception:
-        if previous is None:
-            path.unlink(missing_ok=True)
-        else:
-            path.write_bytes(previous)
-        raise
+    _ensure_knowledge(ip)
+    with _ledger_append_lock(ip):
+        path = _scope_lock_path(ip)
+        previous = path.read_bytes() if path.is_file() else None
+        _write_scope_lock(ip, doc)
+        try:
+            return _append_ledger_locked(ip, action=action, actor=actor, subject=subject, payload=payload)
+        except Exception:
+            if previous is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(previous)
+            raise
 
 
 def _scope_lock(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5602,6 +5623,13 @@ def _decision_metrics(ip: Path) -> dict[str, Any]:
         if item.get("independent") is True
         and item.get("allowed") is True
         and _normal_status(item.get("verdict") or item.get("status")) in {"pass", "approved", "closed", "validated"}
+        and str(item.get("action") or "") in VALID_COMPLETION_ACTIONS
+        and _producer_actor_known(
+            ip,
+            item.get("producer_actor") if isinstance(item.get("producer_actor"), dict) else {},
+        )
+        and _reviewer_receipt_ledger_event(ip, item) is not None
+        and _reviewer_receipt_current(ip, item, str(item.get("action") or ""))
     ]
     return {
         "receipts": len(decisions),
@@ -7307,6 +7335,103 @@ def _reviewer_receipts(ip: Path, action: str = "") -> list[dict[str, Any]]:
     return receipts
 
 
+def _review_context_artifacts(ip: Path) -> dict[str, str]:
+    logical_paths: set[str] = {
+        str(SCOPE_LOCK_REL),
+        str(TRUTH_GRAPH_REL),
+        str(DESIGN_FACTS_REL),
+        "signoff/truth_coverage.json",
+    }
+    logical_paths.update(path.as_posix() for path in oag_closure_check.DEVELOPMENT_CLOSURE_ARTIFACTS)
+    logical_paths.update(path.as_posix() for path in oag_closure_check.DEFAULT_VALIDATION_REPORTS)
+    logical_paths.update(path.as_posix() for path in oag_closure_check.DEFAULT_GATE_REPORTS)
+    receipts_dir = oag_paths.legacy_or_hidden(ip, str(STAGE_RECEIPTS_REL))
+    if receipts_dir.is_dir():
+        for path in receipts_dir.glob("*.json"):
+            rel = path.relative_to(ip)
+            if rel.parts[:1] == (oag_paths.HIDDEN_DIR,):
+                rel = Path(*rel.parts[1:])
+            logical_paths.add(rel.as_posix())
+    artifacts: dict[str, str] = {}
+    for rel in sorted(logical_paths):
+        path = _resolve_state_rel(ip, rel)
+        if path.is_file():
+            artifacts[rel] = _sha256(path)
+    return artifacts
+
+
+def _review_context(ip: Path, action: str, producer_actor: dict[str, Any]) -> dict[str, Any]:
+    scope_lock = _scope_lock_doc(ip)
+    context = {
+        "schema_version": "oag_review_context.v1",
+        "ip": ip.name,
+        "action": action,
+        "producer_actor": producer_actor,
+        "lock_id": str(scope_lock.get("lock_id") or ""),
+        "scope_lock_hash": _hash_value(scope_lock),
+        "protected_snapshot": _protected_snapshot(ip),
+        "closure_matrix_hash": _hash_value(_closure_matrix(ip)),
+        "artifacts": _review_context_artifacts(ip),
+    }
+    context["context_hash"] = _hash_value(context)
+    return context
+
+
+def _producer_actor_known(ip: Path, producer_actor: dict[str, Any]) -> bool:
+    if not str(producer_actor.get("kind") or "").strip() or not str(producer_actor.get("id") or "").strip():
+        return False
+    for record in _knowledge_records(ip):
+        actor = record.get("actor") if isinstance(record.get("actor"), dict) else {}
+        if not _same_actor(actor, producer_actor):
+            continue
+        validation = record.get("validation") if isinstance(record.get("validation"), dict) else {}
+        rocev = record.get("rocev") if isinstance(record.get("rocev"), dict) else {}
+        if not validation:
+            validation = rocev.get("validation") if isinstance(rocev.get("validation"), dict) else {}
+        status = _normal_status(validation.get("status") or record.get("status"))
+        if status in CLOSED_STATUSES:
+            return True
+    return False
+
+
+def _reviewer_receipt_ledger_event(ip: Path, receipt: dict[str, Any]) -> dict[str, Any] | None:
+    if _ledger_issues(ip):
+        return None
+    event_hash = str(receipt.get("ledger_event") or "").strip()
+    if not event_hash:
+        return None
+    event = next((item for item in _ledger_entries(ip) if item.get("event_hash") == event_hash), None)
+    if not isinstance(event, dict):
+        return None
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    recorded_receipt = payload.get("reviewer_receipt") if isinstance(payload.get("reviewer_receipt"), dict) else {}
+    expected_receipt = {key: value for key, value in receipt.items() if key not in {"_path", "ledger_event"}}
+    actor = receipt.get("actor") if isinstance(receipt.get("actor"), dict) else {}
+    if (
+        event.get("schema_version") != "oag_evidence_ledger_event.v1"
+        or event.get("ip") != ip.name
+        or event.get("action") != "review"
+        or event.get("subject") != receipt.get("id")
+        or event.get("actor") != actor
+        or recorded_receipt != expected_receipt
+        or event.get("payload_hash") != _hash_value(payload)
+    ):
+        return None
+    return event
+
+
+def _reviewer_receipt_current(ip: Path, receipt: dict[str, Any], action: str) -> bool:
+    producer_actor = receipt.get("producer_actor") if isinstance(receipt.get("producer_actor"), dict) else {}
+    recorded_context = receipt.get("review_context") if isinstance(receipt.get("review_context"), dict) else {}
+    if not producer_actor or not recorded_context:
+        return False
+    current_context = _review_context(ip, action, producer_actor)
+    return (
+        str(receipt.get("review_context_hash") or "") == str(recorded_context.get("context_hash") or "")
+        and recorded_context == current_context
+    )
+
+
 def _passing_reviewer_receipts(ip: Path, action: str) -> list[dict[str, Any]]:
     receipts = []
     for receipt in _reviewer_receipts(ip, action):
@@ -7319,7 +7444,12 @@ def _passing_reviewer_receipts(ip: Path, action: str) -> list[dict[str, Any]]:
             and receipt.get("independent") is True
             and verdict in {"pass", "approved", "closed", "validated"}
             and actor_role == "oag-gate-reviewer"
-            and str(receipt.get("ledger_event") or "")
+            and _producer_actor_known(
+                ip,
+                receipt.get("producer_actor") if isinstance(receipt.get("producer_actor"), dict) else {},
+            )
+            and _reviewer_receipt_ledger_event(ip, receipt) is not None
+            and _reviewer_receipt_current(ip, receipt, action)
         ):
             receipts.append(receipt)
     return receipts
@@ -7367,6 +7497,7 @@ def _write_reviewer_receipt(
     rel = DECISION_RECEIPTS_REL / f"{receipt_id}.json"
     path = oag_paths.state_path(ip, str(rel))
     path.parent.mkdir(parents=True, exist_ok=True)
+    review_context = _review_context(ip, action, producer_actor)
     receipt = {
         "schema_version": "oag_reviewer_receipt.v1",
         "id": receipt_id,
@@ -7379,6 +7510,8 @@ def _write_reviewer_receipt(
         "actor": actor,
         "producer_actor": producer_actor,
         "independent": not _same_actor(actor, producer_actor),
+        "review_context": review_context,
+        "review_context_hash": review_context["context_hash"],
         "findings": findings,
         "created_at": _now(),
         "evidence": {
@@ -7414,6 +7547,15 @@ def _review(arguments: dict[str, Any]) -> dict[str, Any]:
     if str(actor.get("id") or "") != "oag-gate-reviewer":
         allowed = False
         reason = "reviewer_not_authorized"
+    elif not producer_actor:
+        allowed = False
+        reason = "producer_actor_required"
+    elif not str(producer_actor.get("kind") or "").strip() or not str(producer_actor.get("id") or "").strip():
+        allowed = False
+        reason = "producer_actor_identity_incomplete"
+    elif not _producer_actor_known(ip, producer_actor):
+        allowed = False
+        reason = "producer_actor_not_bound_to_closed_record"
     elif _same_actor(actor, producer_actor):
         allowed = False
         reason = "reviewer_not_independent"

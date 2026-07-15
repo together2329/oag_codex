@@ -8030,6 +8030,24 @@ def main() -> int:
         assert hook_target_names(single_route_root, {"prompt": "please use oag for rtl work"}, require_signal=True) == []
         assert hook_target_names(single_route_root, {"prompt": "oag rtl work"}, require_signal=True) == ["solo_route"]
         write_closure_reports(ip)
+        stale_claim_review = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
+        assert stale_claim_review["result"]["allowed"] is False, stale_claim_review
+        assert stale_claim_review["result"]["reason"] == "reviewer_receipt_required", stale_claim_review
+        refreshed_claim_review = call(
+            {
+                "tool": "oag.review",
+                "arguments": {
+                    "ip_dir": str(ip),
+                    "action": "claim_complete",
+                    "stage": "sim",
+                    "verdict": "pass",
+                    "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "smoke"},
+                    "producer_actor": {"kind": "ai", "id": "codex", "surface": "smoke"},
+                    "findings": [],
+                },
+            }
+        )
+        assert refreshed_claim_review["result"]["allowed"] is True, refreshed_claim_review
         undecided = call({"tool": "oag.decide", "arguments": {"ip_dir": str(ip), "action": "claim_complete", "stage": "sim"}})
         assert undecided["result"]["allowed"] is False, undecided
         assert undecided["result"]["reason"] == "decision_receipt_required", undecided

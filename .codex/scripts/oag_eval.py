@@ -2189,6 +2189,21 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     )
     assert blocked["result"]["allowed"] is False, blocked
     assert blocked["result"]["reason"] == "reviewer_receipt_required", blocked
+    missing_producer = smoke_test.call(
+        {
+            "tool": "oag.review",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "verdict": "pass",
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
+                "findings": [],
+            },
+        }
+    )
+    assert missing_producer["result"]["allowed"] is False, missing_producer
+    assert missing_producer["result"]["reason"] == "producer_actor_required", missing_producer
     fake_review_path = oag_paths.ontology_path(ip, "validations/REV_SELF_ALLOWED.json")
     fake_review_path.parent.mkdir(parents=True, exist_ok=True)
     fake_review_path.write_text(
@@ -2231,6 +2246,51 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     )
     assert still_blocked["result"]["allowed"] is False, still_blocked
     assert still_blocked["result"]["reason"] == "reviewer_receipt_required", still_blocked
+    forged_review_path = oag_paths.ontology_path(ip, "validations/REV_FORGED_LEDGER.json")
+    forged_review_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "oag_reviewer_receipt.v1",
+                "id": "REV_FORGED_LEDGER",
+                "ip": ip.name,
+                "action": "signoff",
+                "role_name": "oag-gate-reviewer",
+                "allowed": True,
+                "reason": "allowed",
+                "verdict": "pass",
+                "actor": {"kind": "ai", "id": "oag-gate-reviewer", "surface": "eval"},
+                "producer_actor": {"kind": "ai", "id": "producer", "surface": "eval"},
+                "independent": True,
+                "review_context": {"context_hash": "forged"},
+                "review_context_hash": "forged",
+                "findings": [],
+                "ledger_event": "not-a-real-ledger-event",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    forged_blocked = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "record_decision": True,
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+            },
+        }
+    )
+    assert forged_blocked["result"]["allowed"] is False, forged_blocked
+    assert forged_blocked["result"]["reason"] == "reviewer_receipt_required", forged_blocked
     review = smoke_test.call(
         {
             "tool": "oag.review",
@@ -2247,6 +2307,32 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     )
     assert review["result"]["allowed"] is True, review
     assert Path(review["result"]["reviewer_receipt"]["path"]).is_file(), review
+    gate_path = ip / "knowledge" / "gate_reviews" / "oag_gate_decision.json"
+    original_gate = gate_path.read_text(encoding="utf-8")
+    gate_doc = json.loads(original_gate)
+    gate_doc["created_at"] = "2026-01-02T00:00:00Z"
+    gate_path.write_text(json.dumps(gate_doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    stale_review = smoke_test.call(
+        {
+            "tool": "oag.decide",
+            "arguments": {
+                "ip_dir": str(ip),
+                "action": "signoff",
+                "stage": "signoff",
+                "record_decision": True,
+                "approval": {
+                    "kind": "human",
+                    "approved": True,
+                    "approved_by": "eval-owner",
+                    "reason": "eval owner approved signoff after independent review",
+                },
+                "actor": {"kind": "human", "id": "eval-owner", "surface": "eval"},
+            },
+        }
+    )
+    assert stale_review["result"]["allowed"] is False, stale_review
+    assert stale_review["result"]["reason"] == "reviewer_receipt_required", stale_review
+    gate_path.write_text(original_gate, encoding="utf-8")
     allowed = smoke_test.call(
         {
             "tool": "oag.decide",
@@ -2269,7 +2355,10 @@ def case_reviewer_separation_signoff_gate(root: Path) -> dict[str, Any]:
     return {
         "ip": str(ip),
         "blocked_reason": blocked["result"]["reason"],
+        "missing_producer_rejected": missing_producer["result"]["reason"] == "producer_actor_required",
         "non_independent_receipt_rejected": still_blocked["result"]["reason"] == "reviewer_receipt_required",
+        "forged_ledger_receipt_rejected": forged_blocked["result"]["reason"] == "reviewer_receipt_required",
+        "stale_review_receipt_rejected": stale_review["result"]["reason"] == "reviewer_receipt_required",
         "review_receipt": review["result"]["reviewer_receipt"]["id"],
         "signoff_allowed_after_review": allowed["result"]["allowed"],
     }
