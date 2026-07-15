@@ -183,6 +183,35 @@ def clear_attempt(payload: dict) -> None:
         write_cache(cache)
 
 
+def terminal_state_path(payload: dict) -> Path:
+    cwd = Path(str(payload.get("cwd") or ".")).expanduser().resolve()
+    digest = cache_key(payload)[:16]
+    return cwd / ".codex" / "oag" / "subagent-terminal-states" / f"{digest}.json"
+
+
+def write_terminal_state(payload: dict, reason: str, attempts: int) -> Path:
+    path = terminal_state_path(payload)
+    state = {
+        "schema_version": "oag_subagent_terminal_state.v1",
+        "product_name": "IP Dev Agent",
+        "internal_gateway": "Ontology Agent Gateway",
+        "agent_type": str(payload.get("agent_type") or "oag-subagent"),
+        "agent_id": str(payload.get("agent_id") or ""),
+        "session_id": str(payload.get("session_id") or ""),
+        "status": "INCONCLUSIVE",
+        "reason": reason,
+        "attempts": attempts,
+        "quarantine": True,
+        "evidence_usable_for_closure": False,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
 def transcript_has_context_pressure(path: str) -> bool:
     try:
         text = Path(path).read_text(encoding="utf-8", errors="ignore").lower()
@@ -455,12 +484,14 @@ def main() -> int:
     if transcript_has_context_pressure(str(payload.get("transcript_path") or "")):
         reason = f"{reason}; context pressure does not waive the durable receipt requirement"
     attempt = record_attempt(payload)
-    if attempt > MAX_ATTEMPTS:
-        reason = (
-            f"{reason}; receipt retry budget exhausted after {attempt} attempts. "
-            "Record a valid BLOCKED/INCONCLUSIVE diagnostic receipt or escalate to the parent; the gate remains closed"
-        )
-    print(json.dumps({"decision": "block", "reason": directive(payload, reason)}, ensure_ascii=False))
+    if attempt <= MAX_ATTEMPTS:
+        print(json.dumps({"decision": "block", "reason": directive(payload, reason)}, ensure_ascii=False))
+        return 0
+    reason = (
+        f"{reason}; receipt retry budget exhausted after {attempt} attempts. "
+        "The result is quarantined as INCONCLUSIVE and cannot be used as closure evidence"
+    )
+    write_terminal_state(payload, reason, attempt)
     return 0
 
 

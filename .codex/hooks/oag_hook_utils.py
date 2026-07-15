@@ -12,6 +12,17 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]  # .codex/
 PROJECT = ROOT.parent
 INACTIVE_RUN_STATUSES = {"complete", "parked", "needs_human"}
+IP_SCAN_EXCLUDED_DIRS = {
+    ".cache",
+    ".codex",
+    ".git",
+    ".tmp",
+    ".venv",
+    "__pycache__",
+    "node_modules",
+    "venv",
+}
+IP_SCAN_MAX_DEPTH = 6
 
 STAGE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "req": ("req", "requirement", "requirements", "interview", "locked truth"),
@@ -151,9 +162,29 @@ def is_ip_dir(path: Path) -> bool:
 
 def scan_ip_dirs() -> list[Path]:
     ips: list[Path] = []
-    for child in sorted(PROJECT.iterdir()):
-        if child.is_dir() and is_ip_dir(child):
-            ips.append(child.resolve())
+    seen: set[Path] = set()
+    for root, dirnames, _filenames in os.walk(PROJECT):
+        current = Path(root)
+        try:
+            rel_parts = current.relative_to(PROJECT).parts
+        except ValueError:
+            dirnames[:] = []
+            continue
+        if len(rel_parts) > IP_SCAN_MAX_DEPTH:
+            dirnames[:] = []
+            continue
+        dirnames[:] = sorted(
+            dirname
+            for dirname in dirnames
+            if dirname not in IP_SCAN_EXCLUDED_DIRS
+        )
+        if not is_ip_dir(current):
+            continue
+        resolved = current.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            ips.append(resolved)
+        dirnames[:] = []
     return ips
 
 

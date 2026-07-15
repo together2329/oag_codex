@@ -65,6 +65,7 @@ ARCH_SELECT_AND_DECIDE_ACTION = "ACT_ARCH_SELECT_AND_DECIDE"
 CHARTER_INTERVIEW_ACTION = "ACT_CHARTER_INTERVIEW"
 CHECKPOINT_REVIEW_ACTION = "ACT_CHECKPOINT_REVIEW"
 EXPLORATION_CLEANUP_ACTION = "ACT_EXPLORATION_CLEANUP"
+RTL_CONFORMANCE_REVIEW_ACTION = "ACT_RTL_CONFORMANCE_REVIEW"
 TERMINAL_ARCH_DECISION_STATUSES = {"decided", "waived"}
 
 
@@ -524,6 +525,17 @@ def self_explore_sources_available(ip_dir: Path) -> bool:
     return any(_source_fingerprint(ip_dir, rel_path).get("exists") is True for rel_path in SELF_EXPLORE_SOURCE_RELS)
 
 
+def rtl_sources_summary(ip_dir: Path) -> JsonObject:
+    rtl_dir = oag_paths.legacy_or_hidden(ip_dir, "rtl")
+    rtl_files = sorted(path for path in rtl_dir.glob("*.sv") if path.is_file()) if rtl_dir.is_dir() else []
+    top = next((path for path in rtl_files if path.name == f"{ip_dir.name}.sv"), None)
+    return {
+        "rtl_file_count": len(rtl_files),
+        "rtl_files": [run_common.rel_to_ip(ip_dir, path) for path in rtl_files[:24]],
+        "top_module_file": run_common.rel_to_ip(ip_dir, top) if top else "",
+    }
+
+
 def stuck_action_instances(ip_dir: Path, *, stuck_seconds: int) -> list[JsonObject]:
     now = run_common.parse_utc(run_common.utc_now())
     rows: list[JsonObject] = []
@@ -545,6 +557,14 @@ def stuck_action_instances(ip_dir: Path, *, stuck_seconds: int) -> list[JsonObje
             }
         )
     return rows
+
+
+def action_type_has_status(ip_dir: Path, action_type: str, statuses: set[str]) -> bool:
+    for path in action_instance_paths(ip_dir):
+        payload = read_json(path)
+        if payload.get("action_type") == action_type and payload.get("status") in statuses:
+            return True
+    return False
 
 
 def role_health_by_role(role_health: JsonObject) -> dict[str, JsonObject]:
@@ -817,7 +837,7 @@ def build_plan(
             open_item_ids=[item_id],
             preconditions={"authored_ontology_available": True},
             expected_effects={"writes": ["ontology/generated/*"], "creates": ["compile_manifest", "authoring_packets"]},
-            command="python3 .codex/scripts/oag_cli.py call --json '{\"tool\":\"oag.compile\",\"arguments\":{\"ip_dir\":\"<ip>\"}}'",
+            command="python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>",
             mission_template=mission_id,
         )
 
@@ -1224,13 +1244,69 @@ def build_plan(
             open_item_ids=[item_id],
             preconditions={"human_scope_approval_present": False},
             expected_effects={"writes": ["ontology/scope_lock.json"], "creates": ["decision_receipt"]},
-            command="python3 .codex/scripts/oag_cli.py call --json '{\"tool\":\"oag.lock\",\"arguments\":{\"ip_dir\":\"<ip>\",\"summary\":\"<human-confirmed scope>\",\"confirmed_scope\":[],\"actor\":{\"kind\":\"human\",\"id\":\"user\",\"surface\":\"codex\"}}}'",
+            command="python3 .codex/scripts/oag_cli.py call oag.lock --file <lock_args.json>",
             mission_template=mission_id,
         )
 
     if locked and not active_locks and not pending_gates and not gate_stale:
         packet_status = checker_results.get("authoring_packet", {}).get("status")
         if packet_status == "pass" and compile_status == "pass":
+            rtl_summary = rtl_sources_summary(ip_dir)
+            if rtl_summary.get("rtl_file_count") and not action_type_has_status(ip_dir, RTL_CONFORMANCE_REVIEW_ACTION, {"accepted"}):
+                item_id = add_open_item(
+                    open_items,
+                    "RTL_CONFORMANCE_REVIEW_READY",
+                    "Current RTL exists and needs a contract-linked RTL conformance review before formal target authoring or closure.",
+                    severity="P1",
+                    source="action_plan",
+                    target_objects={
+                        "scope_lock": "locked",
+                        "authoring_packet": "pass",
+                        "rtl": rtl_summary,
+                    },
+                )
+                make_candidate(
+                    candidates,
+                    action_types,
+                    action_type=RTL_CONFORMANCE_REVIEW_ACTION,
+                    priority="P1",
+                    status="ready",
+                    reason="RTL conformance review is ready because scope, authoring packets, and current RTL are available with no active wavefront lock.",
+                    target_objects={
+                        "rtl": rtl_summary,
+                        "contracts": "ontology/contracts.yaml",
+                        "obligations": "ontology/obligations.yaml",
+                        "authoring_packets": "ontology/generated/authoring_packets",
+                        "expected_review_matrix": "knowledge/reviews/rtl_conformance_review_matrix.json",
+                        "implementation_review_report": "knowledge/gap_matrix/implementation_review.json",
+                    },
+                    open_item_ids=[item_id],
+                    preconditions={
+                        "scope_locked": True,
+                        "authoring_packet_check": "pass",
+                        "active_lock_count": 0,
+                        "rtl_file_count": rtl_summary.get("rtl_file_count"),
+                    },
+                    expected_effects={
+                        "creates": [
+                            "rtl_conformance_review_matrix",
+                            "implementation_review_gap_matrix",
+                            "reviewer_receipt",
+                        ],
+                        "writes": [
+                            "knowledge/reviews/*",
+                            "knowledge/gap_matrix/implementation_review.json",
+                            "knowledge/subagents/*review*.json",
+                        ],
+                        "does_not_write": [
+                            "rtl/*",
+                            "tb/*",
+                            "formal/*",
+                        ],
+                    },
+                    command="python3 .codex/scripts/oag_implementation_review_check.py --ip-dir <ip> --json",
+                    mission_template=mission_id,
+                )
             item_id = add_open_item(
                 open_items,
                 "IMPLEMENTATION_READY",

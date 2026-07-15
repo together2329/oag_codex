@@ -224,16 +224,16 @@ Before meaningful IP work, identify `ip_dir`, `stage`, and `intent`, then load
 OAG context from disk:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.inspect","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.context","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
+python3 .codex/scripts/oag_cli.py call oag.inspect --file <inspect_args.json>
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
+python3 .codex/scripts/oag_cli.py call oag.context --file <context_args.json>
 ```
 
 Before canonical ontology enrichment, RTL, TB, validation, gate review, or
 closure, check the scope lock:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.lock_status --file <lock_status_args.json>
 ```
 
 If `state=draft`, stop at interview/draft work. Ask the user to confirm scope.
@@ -302,8 +302,8 @@ compile again; do not hand-edit generated packets.
 For work that should continue across turns, use the OAG run loop:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.start","arguments":{"ip_dir":"<ip>","stage":"<stage>","intent":"<task>"}}'
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.run.next","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.run.start --file <run_start_args.json>
+python3 .codex/scripts/oag_cli.py call oag.run.next --file <run_next_args.json>
 ```
 
 ## Execution Loop

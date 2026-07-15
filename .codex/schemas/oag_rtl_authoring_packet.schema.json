@@ -10,7 +10,8 @@
     "ip",
     "allowed_truth_sources",
     "forbidden_sources",
-    "contract_refs_to_implement"
+    "contract_refs_to_implement",
+    "decision_refs_to_honor"
   ],
   "properties": {
     "schema_version": {

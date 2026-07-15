@@ -56,7 +56,7 @@ python3 .codex/scripts/oag_gate_frame.py create --ip-dir <ip> --stage deep-inter
 1. Check OAG state if an IP workspace exists:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.lock_status","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.lock_status --file <lock_status_args.json>
 ```
 
 2. If the workspace is missing and the user only gave a short IP request, create
@@ -311,18 +311,7 @@ intent to create a new boundary?
 After each meaningful answer or before a long transition, call `oag.draft`:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{
-  "tool": "oag.draft",
-  "arguments": {
-    "ip_dir": "<ip>",
-    "stage": "interview",
-    "title": "requirement interview round",
-    "summary": "<confirmed facts and decisions>",
-    "assumptions": ["<still-draft assumption>"],
-    "open_questions": ["<remaining question>"],
-    "actor": {"kind": "ai", "id": "codex", "surface": "oag-deep-interview"}
-  }
-}'
+python3 .codex/scripts/oag_cli.py call oag.draft --file <draft_args.json>
 ```
 
 Use the draft to update or propose:

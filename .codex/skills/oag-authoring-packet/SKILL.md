@@ -23,7 +23,7 @@ evidence-producing subagents.
 Generate packets:
 
 ```bash
-python3 .codex/scripts/oag_cli.py call --json '{"tool":"oag.compile","arguments":{"ip_dir":"<ip>"}}'
+python3 .codex/scripts/oag_cli.py call oag.compile --file <compile_args.json>
 ```
 
 Validate packets:

@@ -215,6 +215,11 @@ record compact checkpoints at meaningful OAG stage boundaries. The helper calls
 PowerShell when Git for Windows is installed. Do not force-add large transient
 tool output; the managed IP-local `.gitignore` keeps waveforms, simulator
 builds, logs, caches, and bulky generated reports out of routine commits.
+Use `oag/windows-portability-policy.md` and
+`python3 .codex/scripts/oag_windows_smoke.py --json` before pack publication or
+Windows-sensitive hook changes. This covers hook launchers, shell assumptions,
+argv splitting, Windows filename/path constraints across the `.codex` source
+database, Git for Windows discovery, and path escape guards.
 `oag-ip-workflow` is the umbrella router skill. Use the narrower skills for
 their specific lanes: `oag-deep-semantic-intake` for source claims and
 ambiguity, `oag-decision-matrix` for lock-blocking decisions,

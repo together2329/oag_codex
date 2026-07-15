@@ -12,7 +12,8 @@
     "forbidden_expected_sources",
     "scenario_refs",
     "scoreboard_row_refs",
-    "contract_refs"
+    "contract_refs",
+    "decision_refs_to_honor"
   ],
   "properties": {
     "schema_version": {
