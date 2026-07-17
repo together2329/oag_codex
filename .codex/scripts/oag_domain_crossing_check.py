@@ -41,6 +41,20 @@ def item_id(item: dict[str, Any], *fallback: str) -> str:
     return ""
 
 
+def field_value(item: dict[str, Any], *keys: str) -> str:
+    """Return the first non-empty field so old and explicit domain names coexist."""
+    for key in keys:
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def domain_ref_resolves(ref: str, known: set[str], prefix: str) -> bool:
+    clean = ref.split(".", 1)[1] if ref.startswith(f"{prefix}.") else ref
+    return clean in known
+
+
 def rtl_clock_reset_inventory(paths: list[Path]) -> dict[str, Any]:
     edge_re = re.compile(r"@\s*\(([^)]*)\)")
     clockish: set[str] = set()
@@ -73,6 +87,16 @@ def domain_intent_issues(intent: dict[str, Any], *, require_domain_intent: bool)
         return issues
     if intent.get("schema_version") != "oag_domain_intent.v1":
         issues.append("ontology/domain_intent.yaml: schema_version must be oag_domain_intent.v1")
+    clock_ids = {
+        item_id(clock, "clock")
+        for clock in as_list(intent.get("clock_domains"))
+        if isinstance(clock, dict) and item_id(clock, "clock")
+    }
+    reset_ids = {
+        item_id(reset, "reset")
+        for reset in as_list(intent.get("reset_domains"))
+        if isinstance(reset, dict) and item_id(reset, "reset")
+    }
     for clock in as_list(intent.get("clock_domains")):
         if isinstance(clock, dict) and (not item_id(clock, "clock") or not str(clock.get("clock") or "").strip()):
             issues.append("clock domain entries require id and clock")
@@ -87,6 +111,11 @@ def domain_intent_issues(intent: dict[str, Any], *, require_domain_intent: bool)
         if not isinstance(entry, dict):
             continue
         signal = str(entry.get("signal") or item_id(entry) or "<async_input>")
+        destination = field_value(entry, "destination_domain", "destination_clock_domain", "destination")
+        if not destination:
+            issues.append(f"CHECK_ASYNC_INPUT_DESTINATION_PRESENT: {signal}: async input missing destination domain")
+        elif not domain_ref_resolves(destination, clock_ids, "clock_domains"):
+            issues.append(f"CHECK_ASYNC_INPUT_DESTINATION_REFS_RESOLVE: {signal}: destination domain not found: {destination}")
         if not str(entry.get("classification") or "").strip():
             issues.append(f"{signal}: async input missing classification")
         if not str(entry.get("required_mitigation") or entry.get("allowed_pattern") or entry.get("stable_assumption") or "").strip():
@@ -97,6 +126,17 @@ def domain_intent_issues(intent: dict[str, Any], *, require_domain_intent: bool)
         cid = item_id(crossing, "source") or "<cdc_crossing>"
         ctype = str(crossing.get("crossing_type") or crossing.get("classification") or "").lower()
         pattern = str(crossing.get("allowed_pattern") or crossing.get("mitigation") or "").lower()
+        if not field_value(crossing, "source", "payload"):
+            issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid}: CDC crossing missing source or payload")
+        for label, aliases in (
+            ("source_domain", ("source_domain", "source_clock_domain")),
+            ("destination_domain", ("destination_domain", "destination_clock_domain")),
+        ):
+            ref = field_value(crossing, *aliases)
+            if not ref:
+                issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid}: CDC crossing missing {label}")
+            elif not domain_ref_resolves(ref, clock_ids, "clock_domains"):
+                issues.append(f"CHECK_CDC_CROSSING_REFS_RESOLVE: {cid}: {label} not found: {ref}")
         if not ctype:
             issues.append(f"{cid}: CDC crossing missing crossing_type")
         if pattern in {"direct", "none", "no_sync", "unsynchronized"}:
@@ -112,6 +152,15 @@ def domain_intent_issues(intent: dict[str, Any], *, require_domain_intent: bool)
             if not (as_list(crossing.get("basis")) or str(crossing.get("rationale") or "").strip()):
                 issues.append(f"{rid}: no-known-RDC classification needs basis")
             continue
+        for label, aliases in (
+            ("source_reset_domain", ("source_reset_domain", "source_reset")),
+            ("destination_reset_domain", ("destination_reset_domain", "destination_reset")),
+        ):
+            ref = field_value(crossing, *aliases)
+            if not ref:
+                issues.append(f"CHECK_RDC_RELATION_PRESENT: {rid}: RDC crossing missing {label}")
+            elif not domain_ref_resolves(ref, reset_ids, "reset_domains"):
+                issues.append(f"CHECK_RDC_CROSSING_REFS_RESOLVE: {rid}: {label} not found: {ref}")
         if not str(crossing.get("mitigation") or crossing.get("reset_sequence") or crossing.get("isolation") or crossing.get("synchronizer") or crossing.get("qualifier") or "").strip():
             issues.append(f"{rid}: RDC crossing needs sequencing, isolation, synchronizer, or qualifier")
     return issues

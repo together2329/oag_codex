@@ -76,6 +76,7 @@ ORCHESTRATION_GUARD = ROOT / "scripts" / "oag_orchestration_guard.py"
 WINDOWS_SMOKE = ROOT / "scripts" / "oag_windows_smoke.py"
 SELECTIVE_HARDENING_TEST = ROOT / "scripts" / "oag_selective_hardening_test.py"
 HOOK_CACHE_ISOLATION_TEST = ROOT / "scripts" / "oag_hook_cache_isolation_test.py"
+COMPILE_FINGERPRINT_TEST = ROOT / "scripts" / "oag_compile_fingerprint_test.py"
 REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
 GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
@@ -3212,6 +3213,30 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
         project_root=project,
     )
     assert claim.returncode == 0, claim.stderr or claim.stdout
+    guard_fresh = run_oag_orchestration_guard(
+        "audit",
+        "--ip-dir",
+        str(ip),
+        "--run-id",
+        run_id,
+        "--stale-seconds",
+        "0",
+        "--json",
+        project_root=project,
+    )
+    assert guard_fresh.returncode == 0, guard_fresh.stderr or guard_fresh.stdout
+    guard_fresh_payload = json.loads(guard_fresh.stdout)
+    assert guard_fresh_payload["status"] == "pass", guard_fresh_payload
+    assert not any(item["code"] == "STALE_ACTIVE_LOCK" for item in guard_fresh_payload["issues"]), guard_fresh_payload
+    assert not any(item["code"] == "GATE_REVIEWER_STUCK" for item in guard_fresh_payload["issues"]), guard_fresh_payload
+
+    graph_path = ip / "ontology" / "runs" / run_id / "wavefront_task_graph.json"
+    graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    gate_task = next(task for task in graph["tasks"] if task["task_id"] == "GATE_REVIEW_SMOKE")
+    assert gate_task.get("heartbeat_deadline_at"), gate_task
+    gate_task["heartbeat_deadline_at"] = "2000-01-01T00:00:00Z"
+    graph_path.write_text(json.dumps(graph, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
     guard_locked = run_oag_orchestration_guard(
         "audit",
         "--ip-dir",
@@ -5770,6 +5795,14 @@ def main() -> int:
             cwd=ROOT,
         )
         assert hook_cache_isolation.returncode == 0, hook_cache_isolation.stderr or hook_cache_isolation.stdout
+        compile_fingerprints = subprocess.run(
+            [sys.executable, str(COMPILE_FINGERPRINT_TEST)],
+            text=True,
+            capture_output=True,
+            check=False,
+            cwd=ROOT,
+        )
+        assert compile_fingerprints.returncode == 0, compile_fingerprints.stderr or compile_fingerprints.stdout
         hooks = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
         def win_hook(script: str) -> str:
             return "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\" + script
@@ -5893,6 +5926,7 @@ def main() -> int:
         assert RUN_FRAME.is_file(), RUN_FRAME
         assert ORCHESTRATION_GUARD.is_file(), ORCHESTRATION_GUARD
         assert WINDOWS_SMOKE.is_file(), WINDOWS_SMOKE
+        assert COMPILE_FINGERPRINT_TEST.is_file(), COMPILE_FINGERPRINT_TEST
         assert REVIEW_FRAME.is_file(), REVIEW_FRAME
         assert GATE_FRAME.is_file(), GATE_FRAME
         assert SSOT_SECTION_CHECK.is_file(), SSOT_SECTION_CHECK

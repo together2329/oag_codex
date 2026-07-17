@@ -41,6 +41,10 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--wavefront-run-id")
     create.add_argument("--task-id")
     create.add_argument("--ownership-mode", choices=["none", "exclusive_file", "integration_owner"])
+    create.add_argument("--complexity", choices=["simple", "medium", "complex"])
+    create.add_argument("--max-total-tokens", type=int)
+    create.add_argument("--max-review-attempts", type=int, default=1)
+    create.add_argument("--model-tier", choices=["mechanical", "balanced", "reasoning"])
     create.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify a dispatch against a child receipt and actual path delta.")

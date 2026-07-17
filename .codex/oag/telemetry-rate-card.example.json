@@ -1,0 +1,16 @@
+{
+  "schema_version": "oag_model_rate_card.v1",
+  "currency": "USD",
+  "billing_basis": "replace_with_api_contract_or_internal_credit_rate",
+  "rates": [
+    {
+      "model": "replace-with-runtime-model-id",
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": null,
+      "input_usd_per_million": 0.0,
+      "cached_input_usd_per_million": 0.0,
+      "output_usd_per_million": 0.0,
+      "reasoning_output_usd_per_million": 0.0
+    }
+  ]
+}

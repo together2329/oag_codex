@@ -19,6 +19,8 @@ def json_strings(value: JsonValue) -> list[str]:
 
 
 def build_prompt_contract(dispatch: JsonObject) -> str:
+    budget = dispatch.get("execution_budget") if isinstance(dispatch.get("execution_budget"), dict) else {}
+    context = dispatch.get("context_contract") if isinstance(dispatch.get("context_contract"), dict) else {}
     lines = [
         "OAG DISPATCH",
         f"- dispatch_id: {dispatch['dispatch_id']}",
@@ -29,6 +31,21 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
         f"- receipt_path: {dispatch['receipt_path']}",
         f"- allowed_write_paths: {', '.join(json_strings(dispatch['allowed_write_paths'])) or '(none)'}",
         f"- allowed_tool_side_effects: {', '.join(json_strings(dispatch['allowed_tool_side_effects'])) or '(none)'}",
+        "Execution budget:",
+        f"- complexity: {budget.get('complexity') or 'unspecified'}",
+        f"- max_total_tokens: {budget.get('max_total_tokens') or 'unspecified'}",
+        f"- warning_total_tokens: {budget.get('warning_total_tokens') or 'unspecified'}",
+        f"- max_review_attempts: {budget.get('max_review_attempts') if budget else 'unspecified'}",
+        f"- model_tier: {budget.get('model_tier') or 'unspecified'}",
+        "- at the warning threshold, finish the current bounded check and report remaining work",
+        "- at the hard limit, stop and return BLOCKED with a replan request; do not silently continue",
+        "Compact context contract:",
+        f"- fork_turns: {context.get('fork_turns') or 'none'}",
+        f"- input_mode: {context.get('input_mode') or 'explicit_file_list'}",
+        f"- max_direct_source_files: {context.get('max_direct_source_files') or 'unspecified'}",
+        "- use the dispatch authoring packet and explicit file/hash list as the task context",
+        "- do not request or replay the full parent transcript",
+        "- repeat review only when the target content hash changed",
         "Subagent implementation boundary:",
         "- you own only the assigned implementation, verification, or evidence deliverable inside this dispatch",
         "- the parent owns OAG orchestration state: dispatch creation, wavefront claims, barrier decisions, and validation decisions",

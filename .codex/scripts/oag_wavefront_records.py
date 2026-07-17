@@ -40,6 +40,10 @@ from oag_wavefront_validation import verify_invariants
 
 ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
 REVIEW_DECISION_STATUSES = {"handoff_pass", "closed", "waived"}
+HEARTBEAT_RECOVERABLE_ISSUE_CODES = {
+    "TASK_HEARTBEAT_DEADLINE_MISSING",
+    "TASK_HEARTBEAT_STALE",
+}
 
 
 @dataclass(frozen=True)
@@ -98,8 +102,9 @@ def record_wavefront_task(request: RecordRequest) -> JsonObject:
         issues.extend(decision_issues)
         if issues:
             return result("fail", "oag_wavefront_record_result.v1", issues=issues)
+        recorded_at = utc_now()
         task["status"] = request.status
-        task["recorded_at"] = utc_now()
+        task["recorded_at"] = recorded_at
         if request.receipt:
             task["receipt_path"] = ip_rel_path(request.receipt, request.run.ip_dir)
         if decision_path:
@@ -133,6 +138,7 @@ def record_wavefront_task(request: RecordRequest) -> JsonObject:
                 task_id=request.task_id,
                 status=request.status,
                 details={"barrier_outputs": request.barrier_outputs, "receipt": request.receipt, "decision": request.decision},
+                created_at=recorded_at,
             )
         )
         return result(
@@ -161,7 +167,12 @@ def record_wavefront_heartbeat(request: HeartbeatRequest) -> JsonObject:
                 issues=[issue("TASK_NOT_ACTIVE", f"heartbeat requires active task status, got {current_status}", request.task_id)],
             )
         issues = verify_invariants(graph, locks, barriers)
-        if issues:
+        blocking_issues = [
+            item
+            for item in issues
+            if str(item.get("code") or "") not in HEARTBEAT_RECOVERABLE_ISSUE_CODES
+        ]
+        if blocking_issues:
             return result("fail", "oag_wavefront_heartbeat_result.v1", issues=issues)
         heartbeat_at = utc_now()
         task["heartbeat_at"] = heartbeat_at
@@ -175,6 +186,7 @@ def record_wavefront_heartbeat(request: HeartbeatRequest) -> JsonObject:
                 task_id=request.task_id,
                 status=current_status,
                 details={"message": request.message, "heartbeat_at": heartbeat_at},
+                created_at=heartbeat_at,
             )
         )
         return result("pass", "oag_wavefront_heartbeat_result.v1", task=task, active_locks=locks.get("locks", []))
@@ -296,7 +308,16 @@ def close_wavefront_run(run: WavefrontRun, allow_open: bool) -> JsonObject:
         issues.append(issue("OPEN_TASKS", "cannot close wavefront with open tasks"))
     if issues:
         return result("fail", "oag_wavefront_close_result.v1", issues=issues, open_tasks=open_tasks, active_locks=active)
-    graph["closed_at"] = utc_now()
+    closed_at = utc_now()
+    graph["closed_at"] = closed_at
     write_graph(run, graph)
-    append_event(WavefrontEvent(run, "closed", status="pass", details={"open_tasks": [task.get("task_id") for task in open_tasks]}))
+    append_event(
+        WavefrontEvent(
+            run,
+            "closed",
+            status="pass",
+            details={"open_tasks": [task.get("task_id") for task in open_tasks]},
+            created_at=closed_at,
+        )
+    )
     return result("pass", "oag_wavefront_close_result.v1", open_tasks=open_tasks, active_locks=active)

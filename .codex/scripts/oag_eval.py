@@ -971,7 +971,51 @@ def _domain_intent_template(ip: Path, *, crossing_type: str = "multi_bit_level_s
 def case_domain_intent_scaffold_seed(root: Path) -> dict[str, Any]:
     ip = smoke_test.make_ip(root / "domain_intent_seed")
     policies = _read_yaml(oag_paths.legacy_or_hidden(ip, "ontology/policies.yaml"))
-    domain_intent = _read_yaml(oag_paths.legacy_or_hidden(ip, "ontology/domain_intent.yaml"))
+    domain_intent = _domain_intent_template(ip)
+    domain_intent["clock_domains"].append(
+        {"id": "qclk_domain", "clock": "QCLK", "kind": "secondary"}
+    )
+    domain_intent["async_inputs"] = [
+        {
+            "id": "RESET_N_TO_PCLK",
+            "signal": "reset_n",
+            "destination_clock_domain": "pclk_domain",
+            "classification": "asynchronous_reset",
+            "required_mitigation": "asynchronous_assertion_with_synchronous_deassertion",
+        },
+        {
+            "id": "RESET_N_TO_QCLK",
+            "signal": "reset_n",
+            "destination_clock_domain": "qclk_domain",
+            "classification": "asynchronous_reset",
+            "required_mitigation": "asynchronous_assertion_with_synchronous_deassertion",
+        },
+    ]
+    domain_intent["reset_domains"].append(
+        {
+            "id": "por_domain",
+            "reset": "PORn",
+            "polarity": "active_low",
+            "assertion": "asynchronous",
+            "deassertion": "synchronous",
+            "clock_domain": "pclk_domain",
+        }
+    )
+    cdc = domain_intent["cdc_crossings"][0]
+    cdc["payload"] = cdc.pop("source")
+    cdc["source_clock_domain"] = cdc.pop("source_domain")
+    cdc["destination_clock_domain"] = cdc.pop("destination_domain")
+    domain_intent["rdc_crossings"] = [
+        {
+            "id": "RDC_POR_TO_PRESETN",
+            "classification": "async_reset_crossing",
+            "source_reset_domain": "por_domain",
+            "destination_reset_domain": "presetn_domain",
+            "mitigation": "independent_local_synchronous_release",
+        }
+    ]
+    _write_yaml(oag_paths.ontology_path(ip, "domain_intent.yaml"), domain_intent)
+    _approve_eval_protected_update(ip, summary="eval covers explicit clock/reset domain endpoint aliases")
     domain_policy = policies.get("domain_crossing_policy") if isinstance(policies.get("domain_crossing_policy"), dict) else {}
     assert domain_policy.get("canonical_domain_intent_file") == "ontology/domain_intent.yaml", policies
     assert domain_policy.get("domain_intent_required") is True, policies
@@ -980,12 +1024,82 @@ def case_domain_intent_scaffold_seed(root: Path) -> dict[str, Any]:
     assert compiled["result"]["status"] == "pass", compiled
     matrix = json.loads(oag_paths.legacy_or_hidden(ip, "ontology/generated/domain_crossing_matrix.json").read_text(encoding="utf-8"))
     assert matrix["schema_version"] == "oag_domain_crossing_matrix.v1", matrix
+    assert matrix["cdc_crossings"][0]["source"] == "gpio_i", matrix
+    assert matrix["cdc_crossings"][0]["source_domain"] == "external_async_domain", matrix
+    assert matrix["cdc_crossings"][0]["destination_domain"] == "pclk_domain", matrix
+    assert matrix["rdc_crossings"][0]["source_reset_domain"] == "por_domain", matrix
+    assert matrix["rdc_crossings"][0]["destination_reset_domain"] == "presetn_domain", matrix
+    async_by_id = {row["id"]: row for row in matrix["async_inputs"]}
+    assert async_by_id["RESET_N_TO_PCLK"]["signal"] == "reset_n", matrix
+    assert async_by_id["RESET_N_TO_PCLK"]["destination_domain"] == "pclk_domain", matrix
+    assert async_by_id["RESET_N_TO_QCLK"]["signal"] == "reset_n", matrix
+    assert async_by_id["RESET_N_TO_QCLK"]["destination_domain"] == "qclk_domain", matrix
     return {
         "ip": str(ip),
         "domain_intent": domain_intent.get("schema_version"),
         "domain_crossing_policy": domain_policy.get("profile"),
         "matrix_status": matrix["status"],
     }
+
+
+def case_domain_intent_empty_endpoints_fail(root: Path) -> dict[str, Any]:
+    ip = smoke_test.make_ip(root / "domain_intent_empty_endpoints")
+    domain_intent = _domain_intent_template(ip)
+    domain_intent["async_inputs"] = [
+        {
+            "id": "RESET_MISSING_DESTINATION",
+            "signal": "reset_missing_n",
+            "classification": "asynchronous_reset",
+            "required_mitigation": "asynchronous_assertion_with_synchronous_deassertion",
+        },
+        {
+            "id": "RESET_UNRESOLVED_DESTINATION",
+            "signal": "reset_unresolved_n",
+            "destination_clock_domain": "unknown_clock_domain",
+            "classification": "asynchronous_reset",
+            "required_mitigation": "asynchronous_assertion_with_synchronous_deassertion",
+        },
+    ]
+    cdc = domain_intent["cdc_crossings"][0]
+    cdc.pop("source")
+    cdc.pop("source_domain")
+    cdc.pop("destination_domain")
+    domain_intent["rdc_crossings"] = [
+        {
+            "id": "RDC_EMPTY_ENDPOINTS",
+            "classification": "async_reset_crossing",
+            "mitigation": "independent_local_synchronous_release",
+        }
+    ]
+    _write_yaml(oag_paths.ontology_path(ip, "domain_intent.yaml"), domain_intent)
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_DIR / "oag_domain_crossing_check.py"),
+            "--ip-dir",
+            str(ip),
+            "--require-domain-intent",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    report = json.loads(proc.stdout)
+    issues = [str(item) for item in report["issues"]]
+    expected = [
+        "reset_missing_n: async input missing destination domain",
+        "reset_unresolved_n: destination domain not found: unknown_clock_domain",
+        "CDC crossing missing source or payload",
+        "CDC crossing missing source_domain",
+        "CDC crossing missing destination_domain",
+        "RDC crossing missing source_reset_domain",
+        "RDC crossing missing destination_reset_domain",
+    ]
+    for fragment in expected:
+        assert any(fragment in issue for issue in issues), issues
+    return {"ip": str(ip), "matched_issues": expected}
 
 
 def case_tb_methodology_scaffold_seed(root: Path) -> dict[str, Any]:
@@ -2441,6 +2555,7 @@ CASES: list[tuple[str, CaseFn]] = [
     ("skill_router_split_contract", case_skill_router_split_contract),
     ("lock_readiness_scaffold_seed", case_lock_readiness_scaffold_seed),
     ("domain_intent_scaffold_seed", case_domain_intent_scaffold_seed),
+    ("domain_intent_empty_endpoints_fail", case_domain_intent_empty_endpoints_fail),
     ("tb_methodology_scaffold_seed", case_tb_methodology_scaffold_seed),
     ("random_without_coverage_goals_fails", case_random_without_coverage_goals_fails),
     ("failed_scoreboard_row_with_coverage_ref_fails", case_failed_scoreboard_row_with_coverage_ref_fails),

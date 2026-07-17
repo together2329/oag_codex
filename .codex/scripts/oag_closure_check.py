@@ -31,10 +31,9 @@ DEFAULT_GATE_REPORTS = (
     Path("ontology/decisions/oag_gate_decision.json"),
     Path("reports/oag_gate_decision.json"),
 )
-CUSTOM_RECEIPT_DIRS = (
-    Path("knowledge/subagents"),
-    Path(".codex/oag/subagent-receipts"),
-)
+CANONICAL_CUSTOM_RECEIPT_DIR = Path("knowledge/subagents")
+OPTIONAL_LEGACY_CUSTOM_RECEIPT_DIRS = (Path(".codex/oag/subagent-receipts"),)
+CUSTOM_RECEIPT_DIRS = (CANONICAL_CUSTOM_RECEIPT_DIR, *OPTIONAL_LEGACY_CUSTOM_RECEIPT_DIRS)
 PASS_STATUSES = {"pass", "passed", "ok"}
 PASS_OR_WAIVED_STATUSES = PASS_STATUSES | {"waived", "waived_with_risk"}
 DEVELOPMENT_CLOSURE_ARTIFACTS = (
@@ -121,6 +120,17 @@ def resolve_inside_ip(ip_dir: Path, raw: str | Path, code: str, issues: list[dic
         resolved.relative_to(ip_resolved)
     except ValueError:
         issues.append(issue(code, "Path must stay inside ip-dir after symlink resolution.", str(raw)))
+        return None
+    return resolved
+
+
+def resolve_optional_legacy_receipt_root(ip_dir: Path, raw: str | Path) -> Path | None:
+    raw_path = Path(raw).expanduser()
+    candidate = raw_path if raw_path.is_absolute() else ip_dir / raw_path
+    try:
+        resolved = candidate.resolve(strict=False)
+        resolved.relative_to(ip_dir.resolve())
+    except (OSError, RuntimeError, ValueError):
         return None
     return resolved
 
@@ -370,6 +380,9 @@ def scan_custom_completion_claims(ip_dir: Path, issues: list[dict[str, str]]) ->
     for receipt_dir in CUSTOM_RECEIPT_DIRS:
         if _is_oag_in_scope(receipt_dir):
             root = resolve_inside_ip(ip_dir, oag_paths.legacy_or_hidden(ip_dir, receipt_dir), "CUSTOM_RECEIPT_PATH", issues)
+        elif receipt_dir in OPTIONAL_LEGACY_CUSTOM_RECEIPT_DIRS:
+            # A shared .codex symlink is tooling, not IP-local receipt evidence.
+            root = resolve_optional_legacy_receipt_root(ip_dir, receipt_dir)
         else:
             root = resolve_inside_ip(ip_dir, receipt_dir, "CUSTOM_RECEIPT_PATH", issues)
         if not root or not root.exists():

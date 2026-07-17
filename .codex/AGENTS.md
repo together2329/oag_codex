@@ -74,6 +74,8 @@ Primary assets:
 - `oag/agent-catalog.toml`
 - `oag/ip-dev-agent.md`
 - `oag/subagent-workflows.md`
+- `oag/telemetry-cost-attribution.md`
+- `oag/execution-efficiency-policy.md`
 - `hooks/oag_pre_work.py`
 - `hooks/oag_interview_draft.py`
 - `hooks/oag_stop_check.py`
@@ -129,6 +131,9 @@ Primary assets:
 - `scripts/oag_pack_release_check.py`
 - `scripts/oag_workflow_whole_db.py`
 - `scripts/oag_exec_auto_research.py`
+- `scripts/oag_otel_receiver.py`
+- `scripts/oag_otel_cost.py`
+- `scripts/oag_execution_efficiency_check.py`
 - `schemas/*.schema.json`
 - `config.toml`
 

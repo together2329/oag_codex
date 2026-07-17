@@ -1080,6 +1080,7 @@ def _write_domain_crossing_matrix(ip: Path) -> dict[str, Any]:
             {
                 "id": _domain_item_id(item, "signal"),
                 "signal": str(item.get("signal") or ""),
+                "destination_domain": _domain_field_value(item, "destination_domain", "destination_clock_domain", "destination"),
                 "classification": str(item.get("classification") or ""),
                 "required_mitigation": str(item.get("required_mitigation") or item.get("allowed_pattern") or ""),
             }
@@ -1088,9 +1089,9 @@ def _write_domain_crossing_matrix(ip: Path) -> dict[str, Any]:
         "cdc_crossings": [
             {
                 "id": _domain_item_id(item, "source"),
-                "source": str(item.get("source") or ""),
-                "source_domain": str(item.get("source_domain") or item.get("source") or ""),
-                "destination_domain": str(item.get("destination_domain") or item.get("destination") or ""),
+                "source": _domain_field_value(item, "source", "payload"),
+                "source_domain": _domain_field_value(item, "source_domain", "source_clock_domain", "source"),
+                "destination_domain": _domain_field_value(item, "destination_domain", "destination_clock_domain", "destination"),
                 "crossing_type": str(item.get("crossing_type") or item.get("classification") or ""),
                 "allowed_pattern": str(item.get("allowed_pattern") or item.get("mitigation") or ""),
             }
@@ -1100,8 +1101,8 @@ def _write_domain_crossing_matrix(ip: Path) -> dict[str, Any]:
             {
                 "id": _domain_item_id(item, "classification"),
                 "classification": str(item.get("classification") or ""),
-                "source_reset_domain": str(item.get("source_reset_domain") or item.get("source_reset") or ""),
-                "destination_reset_domain": str(item.get("destination_reset_domain") or item.get("destination_reset") or ""),
+                "source_reset_domain": _domain_field_value(item, "source_reset_domain", "source_reset"),
+                "destination_reset_domain": _domain_field_value(item, "destination_reset_domain", "destination_reset"),
                 "mitigation": str(item.get("mitigation") or item.get("reset_sequence") or item.get("isolation") or ""),
             }
             for item in rdc
@@ -2111,6 +2112,15 @@ def _closed_records_reference_scoreboard(ip: Path) -> bool:
 
 def _domain_item_id(item: dict[str, Any], *fallback_keys: str) -> str:
     for key in ("id", "name", *fallback_keys):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _domain_field_value(item: dict[str, Any], *keys: str) -> str:
+    """Return the first non-empty domain-intent field, including legacy aliases."""
+    for key in keys:
         value = str(item.get(key) or "").strip()
         if value:
             return value
@@ -3881,9 +3891,19 @@ def _compile_input_fingerprints(ip: Path) -> list[dict[str, str]]:
         "ontology/policies.yaml",
         str(PROTECTION_REL),
     ]
+    optional_authored_rels = [
+        "ontology/ipxact_projection.yaml",
+        "ontology/actions.yaml",
+        "req/mctp_rx_assembler_v0_3_lock_spec.md",
+        "req/evidence_plan.yaml",
+    ]
     unique: dict[str, Path] = {}
     for rel in ontology_rels:
         unique[rel] = oag_paths.legacy_or_hidden(ip, rel)
+    for rel in optional_authored_rels:
+        path = oag_paths.legacy_or_hidden(ip, rel)
+        if path.is_file():
+            unique[rel] = path
     candidates = [
         ip / "list" / "rtl.f",
     ]
@@ -4497,15 +4517,15 @@ def _compile_graph(arguments: dict[str, Any]) -> dict[str, Any]:
             status = str(item.get("status") or "declared")
             nodes.append({"id": node_id, "type": node_type, "label": item_id, "status": status})
             edges.append({"source": f"ip::{ip.name}", "target": node_id, "type": f"has_{node_type}", "load_bearing": kind in {"cdc_crossings", "rdc_crossings"}})
-            for ref_key, target_kind, edge_type in (
-                ("clock_domain", "clock_domains", "uses_clock_domain"),
-                ("source_domain", "clock_domains", "source_clock_domain"),
-                ("destination_domain", "clock_domains", "destination_clock_domain"),
-                ("reset_domain", "reset_domains", "uses_reset_domain"),
-                ("source_reset_domain", "reset_domains", "source_reset_domain"),
-                ("destination_reset_domain", "reset_domains", "destination_reset_domain"),
+            for ref_keys, target_kind, edge_type in (
+                (("clock_domain",), "clock_domains", "uses_clock_domain"),
+                (("source_domain", "source_clock_domain"), "clock_domains", "source_clock_domain"),
+                (("destination_domain", "destination_clock_domain"), "clock_domains", "destination_clock_domain"),
+                (("reset_domain",), "reset_domains", "uses_reset_domain"),
+                (("source_reset_domain", "source_reset"), "reset_domains", "source_reset_domain"),
+                (("destination_reset_domain", "destination_reset"), "reset_domains", "destination_reset_domain"),
             ):
-                ref = str(item.get(ref_key) or "").strip()
+                ref = _domain_field_value(item, *ref_keys)
                 if ref and _domain_ref_resolves(ref, domain_refs, (target_kind,)):
                     clean_ref = ref.split(".", 1)[1] if ref.startswith(f"{target_kind}.") else ref
                     edges.append({"source": node_id, "target": f"{target_kind[:-1]}::{clean_ref}", "type": edge_type, "load_bearing": True})
@@ -5362,6 +5382,11 @@ def _domain_intent_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]
         mitigation = _safe_domain_crossing_pattern(async_input.get("required_mitigation") or async_input.get("allowed_pattern"))
         if not signal:
             issues.append(f"{DOMAIN_INTENT_REL}: async input missing signal")
+        destination = _domain_field_value(async_input, "destination_domain", "destination_clock_domain", "destination")
+        if not destination:
+            issues.append(f"CHECK_ASYNC_INPUT_DESTINATION_PRESENT: {signal or '<async_input>'}: async input missing destination domain")
+        elif not _domain_ref_resolves(destination, known, ("clock_domains",)):
+            issues.append(f"CHECK_ASYNC_INPUT_DESTINATION_REFS_RESOLVE: {signal or '<async_input>'}: destination domain not found: {destination}")
         if not classification:
             issues.append(f"CHECK_ASYNC_INPUT_CLASSIFIED: {signal or '<async_input>'}: async input missing classification")
         if not mitigation and not str(async_input.get("stable_assumption") or async_input.get("decision_receipt_id") or "").strip():
@@ -5376,8 +5401,13 @@ def _domain_intent_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]
         pattern = _safe_domain_crossing_pattern(crossing.get("allowed_pattern") or crossing.get("mitigation"))
         if not cid:
             issues.append(f"{DOMAIN_INTENT_REL}: CDC crossing missing id")
-        for field in ("source_domain", "destination_domain"):
-            ref = str(crossing.get(field) or "").strip()
+        if not _domain_field_value(crossing, "source", "payload"):
+            issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid or '<cdc_crossing>'}: CDC crossing missing source or payload")
+        for field, aliases in (
+            ("source_domain", ("source_domain", "source_clock_domain")),
+            ("destination_domain", ("destination_domain", "destination_clock_domain")),
+        ):
+            ref = _domain_field_value(crossing, *aliases)
             if not ref:
                 issues.append(f"CHECK_CDC_CROSSING_CLASSIFIED: {cid or '<cdc_crossing>'}: CDC crossing missing {field}")
             elif not _domain_ref_resolves(ref, known, ("clock_domains",)):
@@ -5408,8 +5438,11 @@ def _domain_intent_issues(ip: Path, closure_matrix: dict[str, Any]) -> list[str]
             if not _str_items(crossing.get("basis")) and not str(crossing.get("rationale") or "").strip():
                 issues.append(f"CHECK_RDC_RELATION_PRESENT: {rid or '<rdc_crossing>'}: no-known-RDC classification needs basis")
             continue
-        for field in ("source_reset_domain", "destination_reset_domain"):
-            ref = str(crossing.get(field) or "").strip()
+        for field, aliases in (
+            ("source_reset_domain", ("source_reset_domain", "source_reset")),
+            ("destination_reset_domain", ("destination_reset_domain", "destination_reset")),
+        ):
+            ref = _domain_field_value(crossing, *aliases)
             if not ref:
                 issues.append(f"CHECK_RDC_RELATION_PRESENT: {rid or '<rdc_crossing>'}: RDC crossing missing {field}")
             elif not _domain_ref_resolves(ref, known, ("reset_domains",)):

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import sys
 from pathlib import Path
@@ -22,7 +23,16 @@ AUDIT_SCHEMA_VERSION = "oag_orchestration_guard_audit.v1"
 ABORT_SCHEMA_VERSION = "oag_orchestration_guard_abort.v1"
 FALLBACK_SCHEMA_VERSION = "oag_gate_fallback_plan.v1"
 TERMINAL_ABORT_STATUSES = {"blocked", "failed", "inconclusive"}
-GATE_MARKERS = ("gate", "GATE", "gate-reviewer", "GATE_REVIEW")
+RESOLVED_TASK_STATUSES = {"handoff_pass", "closed", "waived"}
+TERMINAL_RECEIPT_STATUSES = {
+    "HANDOFF_PASS",
+    "STATIC_HANDOFF_PASS",
+    "RTL_HANDOFF_PASS",
+    "FAIL",
+    "BLOCKED",
+    "INCONCLUSIVE",
+}
+GATE_REVIEWER_ID = "oag-gate-reviewer"
 DEFAULT_PROGRESS_SECONDS = 600
 DEFAULT_PARENT_WAIT_CYCLES = 3
 
@@ -86,9 +96,91 @@ def _project_rel(path: Path) -> str:
     return str(path)
 
 
-def _contains_gate_marker(*values: Any) -> bool:
-    text = " ".join(str(value or "") for value in values)
-    return any(marker in text for marker in GATE_MARKERS)
+def _is_dedicated_gate_reviewer(dispatch: JsonObject) -> bool:
+    identities = {
+        str(dispatch.get("agent_type") or "").strip(),
+        str(dispatch.get("role_name") or "").strip(),
+        str(dispatch.get("registered_id") or "").strip(),
+    }
+    return GATE_REVIEWER_ID in identities
+
+
+def _latest_review_events(ip_dir: Path, run_id: str, *, now: dt.datetime) -> dict[str, dt.datetime]:
+    path = oag_paths.legacy_or_hidden(ip_dir, f"knowledge/wavefront/{run_id}/events.jsonl")
+    if not path.is_file():
+        return {}
+    latest: dict[str, dt.datetime] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for raw in lines:
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if (
+            not isinstance(event, dict)
+            or event.get("schema_version") != "oag_wavefront_event.v1"
+            or str(event.get("run_id") or "") != run_id
+            or str(event.get("event") or "") != "recorded"
+            or str(event.get("status") or "") != "review_pending"
+        ):
+            continue
+        task_id = str(event.get("task_id") or "").strip()
+        recorded_at = parse_utc(event.get("created_at"))
+        if not task_id or recorded_at is None or recorded_at > now:
+            continue
+        previous = latest.get(task_id)
+        if previous is None or recorded_at > previous:
+            latest[task_id] = recorded_at
+    return latest
+
+
+def _live_active_dispatches(ip_dir: Path, *, stale_seconds: int) -> dict[tuple[str, str], str]:
+    now = parse_utc(utc_now())
+    if now is None:
+        return {}
+    live: dict[tuple[str, str], str] = {}
+    for run_dir in _iter_run_dirs(ip_dir):
+        graph = _load_json(run_dir / "wavefront_task_graph.json")
+        review_events = _latest_review_events(ip_dir, run_dir.name, now=now)
+        tasks = graph.get("tasks") if isinstance(graph.get("tasks"), list) else []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            status = str(task.get("status") or "")
+            task_id = str(task.get("task_id") or "").strip()
+            if not task_id:
+                continue
+            if status == "claimed":
+                deadline = parse_utc(task.get("heartbeat_deadline_at"))
+                if deadline is None or deadline <= now:
+                    continue
+            elif status == "review_pending":
+                claimed_at = parse_utc(task.get("claimed_at"))
+                if claimed_at is None:
+                    continue
+                progress = [
+                    candidate
+                    for candidate in (parse_utc(task.get("recorded_at")), review_events.get(task_id))
+                    if candidate is not None and claimed_at <= candidate <= now
+                ]
+                if not progress or (now - max(progress)).total_seconds() >= stale_seconds:
+                    continue
+            else:
+                continue
+            live[(run_dir.name, task_id)] = str(task.get("dispatch_id") or "").strip()
+    return live
+
+
+def _lock_has_live_task(lock: JsonObject, live: dict[tuple[str, str], str]) -> bool:
+    key = (str(lock.get("run_id") or "").strip(), str(lock.get("task_id") or "").strip())
+    if key not in live:
+        return False
+    task_dispatch = live[key]
+    lock_dispatch = str(lock.get("dispatch_id") or "").strip()
+    return not (task_dispatch and lock_dispatch and task_dispatch != lock_dispatch)
 
 
 def _gate_lock_candidates(ip_dir: Path, locks: list[JsonObject], *, stale_seconds: int) -> list[JsonObject]:
@@ -101,7 +193,7 @@ def _gate_lock_candidates(ip_dir: Path, locks: list[JsonObject], *, stale_second
             continue
         dispatch_id = str(lock.get("dispatch_id") or "").strip()
         dispatch_path, dispatch = _find_dispatch(ip_dir, dispatch_id)
-        if not _contains_gate_marker(lock.get("task_id"), lock.get("run_id"), lock.get("claimed_by"), dispatch_id, dispatch.get("agent_type"), dispatch.get("role_name"), dispatch.get("stage")):
+        if not dispatch_path or not _is_dedicated_gate_reviewer(dispatch):
             continue
         rows.append(
             {
@@ -253,10 +345,15 @@ def audit(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 1800, progress
     issues: list[dict[str, str]] = []
     recommendations: list[JsonObject] = []
 
+    live_tasks = _live_active_dispatches(ip_dir, stale_seconds=stale_seconds)
     stale_locks: list[JsonObject] = []
     for lock in state.get("wavefront", {}).get("active_locks", []):
         age = lock.get("age_seconds")
-        if isinstance(age, (int, float)) and age >= stale_seconds:
+        if (
+            isinstance(age, (int, float))
+            and age >= stale_seconds
+            and not _lock_has_live_task(lock, live_tasks)
+        ):
             stale_locks.append(lock)
             issues.append(
                 issue(
@@ -368,7 +465,8 @@ def gate_fallback_plan(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 9
     late_receipts = [
         row
         for row in audit_payload.get("late_receipts", [])
-        if isinstance(row, dict) and _contains_gate_marker(row.get("run_id"), row.get("task_id"), row.get("dispatch_id"), row.get("receipt_path"))
+        if isinstance(row, dict)
+        and _is_dedicated_gate_reviewer(_find_dispatch(ip_dir, str(row.get("dispatch_id") or ""))[1])
     ]
     fallback_actions: list[JsonObject] = []
     for index, row in enumerate(gate_locks, start=1):
@@ -438,12 +536,23 @@ def gate_fallback_plan(ip_dir: Path, *, run_id: str = "", stale_seconds: int = 9
 
 def detect_late_receipts(ip_dir: Path, *, run_id: str = "") -> list[JsonObject]:
     receipts = _find_subagent_receipts(ip_dir)
+    receipt_payloads: dict[Path, JsonObject] = {}
     by_dispatch: dict[str, list[Path]] = {}
     for receipt in receipts:
         payload = _load_json(receipt)
         dispatch_id = str(payload.get("dispatch_id") or "").strip()
-        if dispatch_id:
-            by_dispatch.setdefault(dispatch_id, []).append(receipt)
+        receipt_time = parse_utc(payload.get("created_at"))
+        receipt_status = str(payload.get("status") or "").strip()
+        if (
+            payload.get("schema_version") != "oag_subagent_receipt.v1"
+            or not dispatch_id
+            or receipt_time is None
+            or receipt_status not in TERMINAL_RECEIPT_STATUSES
+        ):
+            continue
+        normalized = receipt.resolve()
+        receipt_payloads[normalized] = payload
+        by_dispatch.setdefault(dispatch_id, []).append(normalized)
     late: list[JsonObject] = []
     for run_dir in _iter_run_dirs(ip_dir, run_id):
         graph = _load_json(run_dir / "wavefront_task_graph.json")
@@ -453,25 +562,60 @@ def detect_late_receipts(ip_dir: Path, *, run_id: str = "") -> list[JsonObject]:
             abort_marker = task.get("abort_marker") if isinstance(task.get("abort_marker"), dict) else {}
             if not abort_marker:
                 continue
+            abort_status = str(abort_marker.get("status") or "").strip()
             abort_time = parse_utc(abort_marker.get("recorded_at"))
-            dispatch_id = str(task.get("dispatch_id") or abort_marker.get("dispatch_id") or "").strip()
-            candidate_receipts = list(by_dispatch.get(dispatch_id, []))
-            receipt_path = str(task.get("receipt_path") or abort_marker.get("receipt_path") or "").strip()
-            if receipt_path:
-                candidate = oag_paths.legacy_or_hidden(ip_dir, receipt_path)
-                if candidate.is_file():
-                    candidate_receipts.append(candidate)
+            marker_dispatch_id = str(abort_marker.get("dispatch_id") or "").strip()
+            if abort_status not in TERMINAL_ABORT_STATUSES or abort_time is None or not marker_dispatch_id:
+                continue
+            candidate_receipts = list(by_dispatch.get(marker_dispatch_id, []))
+            receipt_paths = [abort_marker.get("receipt_path")]
+            if str(task.get("dispatch_id") or "").strip() == marker_dispatch_id:
+                receipt_paths.append(task.get("receipt_path"))
+            for raw_receipt_path in receipt_paths:
+                receipt_path = str(raw_receipt_path or "").strip()
+                if not receipt_path:
+                    continue
+                try:
+                    candidate = oag_paths.legacy_or_hidden(ip_dir, receipt_path).resolve()
+                except ValueError:
+                    continue
+                if not candidate.is_file():
+                    continue
+                payload = receipt_payloads.get(candidate) or _load_json(candidate)
+                if str(payload.get("dispatch_id") or "").strip() != marker_dispatch_id:
+                    continue
+                receipt_time = parse_utc(payload.get("created_at"))
+                receipt_status = str(payload.get("status") or "").strip()
+                if (
+                    payload.get("schema_version") != "oag_subagent_receipt.v1"
+                    or receipt_time is None
+                    or receipt_status not in TERMINAL_RECEIPT_STATUSES
+                ):
+                    continue
+                receipt_payloads[candidate] = payload
+                candidate_receipts.append(candidate)
             for receipt in sorted(set(candidate_receipts)):
-                if abort_time is None or receipt.stat().st_mtime >= abort_time.timestamp():
-                    late.append(
-                        {
-                            "run_id": run_dir.name,
-                            "task_id": task.get("task_id") or "",
-                            "dispatch_id": dispatch_id,
-                            "abort_status": abort_marker.get("status") or task.get("status") or "",
-                            "receipt_path": _rel_to_ip(ip_dir, receipt),
-                        }
-                    )
+                payload = receipt_payloads.get(receipt) or _load_json(receipt)
+                if str(payload.get("dispatch_id") or "").strip() != marker_dispatch_id:
+                    continue
+                receipt_time = parse_utc(payload.get("created_at"))
+                # Equal second-resolution timestamps do not prove that the receipt followed the abort.
+                if receipt_time is None or receipt_time <= abort_time:
+                    continue
+                late.append(
+                    {
+                        "run_id": run_dir.name,
+                        "task_id": task.get("task_id") or "",
+                        "dispatch_id": marker_dispatch_id,
+                        "current_dispatch_id": str(task.get("dispatch_id") or "").strip(),
+                        "task_status": str(task.get("status") or "").strip(),
+                        "abort_status": abort_status,
+                        "abort_recorded_at": str(abort_marker.get("recorded_at") or ""),
+                        "receipt_status": str(payload.get("status") or "").strip(),
+                        "receipt_created_at": str(payload.get("created_at") or ""),
+                        "receipt_path": _rel_to_ip(ip_dir, receipt),
+                    }
+                )
     return late
 
 
@@ -479,6 +623,15 @@ def detect_repeated_blockers(ip_dir: Path, *, run_id: str = "", threshold: int =
     counts: dict[str, int] = {}
     latest: dict[str, str] = {}
     for run_dir in _iter_run_dirs(ip_dir, run_id):
+        graph = _load_json(run_dir / "wavefront_task_graph.json")
+        if str(graph.get("closed_at") or "").strip():
+            continue
+        raw_tasks = graph.get("tasks") if isinstance(graph.get("tasks"), list) else []
+        tasks = {
+            str(task.get("task_id") or "").strip(): task
+            for task in raw_tasks
+            if isinstance(task, dict) and str(task.get("task_id") or "").strip()
+        }
         events_path = oag_paths.legacy_or_hidden(ip_dir, f"knowledge/wavefront/{run_dir.name}/events.jsonl")
         if not events_path.is_file():
             continue
@@ -491,23 +644,37 @@ def detect_repeated_blockers(ip_dir: Path, *, run_id: str = "", threshold: int =
                 continue
             if not isinstance(event, dict):
                 continue
+            task_id = str(event.get("task_id") or "").strip()
+            task = tasks.get(task_id)
+            if task is None or str(task.get("status") or "").strip() in RESOLVED_TASK_STATUSES:
+                continue
             status = str(event.get("status") or "")
             if status not in TERMINAL_ABORT_STATUSES and event.get("event") != "blocked":
                 continue
+            event_time = parse_utc(event.get("created_at"))
+            if event_time is None:
+                continue
             details = event.get("details") if isinstance(event.get("details"), dict) else {}
             raw_issues = details.get("issues") if isinstance(details.get("issues"), list) else []
+            event_keys: set[str] = set()
             if raw_issues:
                 for item in raw_issues:
                     if not isinstance(item, dict):
                         continue
-                    key = f"{run_dir.name}:{event.get('task_id', '')}:{item.get('code', '')}:{item.get('path', '')}"
-                    counts[key] = counts.get(key, 0) + 1
-                    latest[key] = str(event.get("created_at") or "")
+                    event_keys.add(f"{run_dir.name}:{task_id}:{item.get('code', '')}:{item.get('path', '')}")
             else:
-                key = f"{run_dir.name}:{event.get('task_id', '')}:{status or event.get('event')}"
+                event_keys.add(f"{run_dir.name}:{task_id}:{status or event.get('event')}")
+            created_at = str(event.get("created_at") or "")
+            for key in event_keys:
                 counts[key] = counts.get(key, 0) + 1
-                latest[key] = str(event.get("created_at") or "")
-    return [{"key": key, "count": count, "latest_at": latest.get(key, "")} for key, count in sorted(counts.items()) if count >= threshold]
+                previous_time = parse_utc(latest.get(key))
+                if previous_time is None or event_time > previous_time:
+                    latest[key] = created_at
+    return [
+        {"key": key, "count": count, "latest_at": latest.get(key, "")}
+        for key, count in sorted(counts.items())
+        if count >= threshold
+    ]
 
 
 def abort_task(ip_dir: Path, *, run_id: str, task_id: str, status: str, receipt: str = "") -> JsonObject:

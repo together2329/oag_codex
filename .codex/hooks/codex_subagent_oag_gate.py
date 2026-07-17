@@ -34,6 +34,8 @@ import sys
 import time
 from pathlib import Path
 
+from oag_telemetry import append_execution_event
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DISPATCH = ROOT / "scripts" / "oag_dispatch.py"
@@ -479,17 +481,30 @@ def main() -> int:
         return 0
     valid, reason = valid_receipt(payload)
     if valid:
+        append_execution_event(payload, "subagent_stop", gate_outcome="accepted")
         clear_attempt(payload)
         return 0
     if transcript_has_context_pressure(str(payload.get("transcript_path") or "")):
         reason = f"{reason}; context pressure does not waive the durable receipt requirement"
     attempt = record_attempt(payload)
     if attempt <= MAX_ATTEMPTS:
+        append_execution_event(
+            payload,
+            "subagent_stop_attempt",
+            gate_outcome="blocked",
+            gate_reason=reason,
+        )
         print(json.dumps({"decision": "block", "reason": directive(payload, reason)}, ensure_ascii=False))
         return 0
     reason = (
         f"{reason}; receipt retry budget exhausted after {attempt} attempts. "
         "The result is quarantined as INCONCLUSIVE and cannot be used as closure evidence"
+    )
+    append_execution_event(
+        payload,
+        "subagent_stop",
+        gate_outcome="quarantined",
+        gate_reason=reason,
     )
     write_terminal_state(payload, reason, attempt)
     return 0

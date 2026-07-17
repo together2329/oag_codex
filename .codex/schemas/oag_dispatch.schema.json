@@ -103,6 +103,31 @@
     "ownership_mode": {
       "type": "string"
     },
+    "execution_budget": {
+      "type": "object",
+      "required": ["schema_version", "complexity", "max_total_tokens", "warning_total_tokens", "max_review_attempts", "over_budget_action", "model_tier"],
+      "properties": {
+        "schema_version": {"const": "oag_execution_budget.v1"},
+        "complexity": {"enum": ["simple", "medium", "complex"]},
+        "max_total_tokens": {"type": "integer", "minimum": 100000, "maximum": 25000000},
+        "warning_total_tokens": {"type": "integer", "minimum": 80000, "maximum": 20000000},
+        "max_review_attempts": {"type": "integer", "minimum": 0, "maximum": 2},
+        "over_budget_action": {"const": "stop_and_replan"},
+        "model_tier": {"enum": ["mechanical", "balanced", "reasoning"]}
+      }
+    },
+    "context_contract": {
+      "type": "object",
+      "required": ["schema_version", "fork_turns", "input_mode", "max_direct_source_files", "require_source_hashes", "repeat_review_policy"],
+      "properties": {
+        "schema_version": {"const": "oag_context_contract.v1"},
+        "fork_turns": {"const": "none"},
+        "input_mode": {"const": "authoring_packet_or_explicit_file_list"},
+        "max_direct_source_files": {"type": "integer", "minimum": 1, "maximum": 64},
+        "require_source_hashes": {"const": true},
+        "repeat_review_policy": {"const": "content_hash_delta_only"}
+      }
+    },
     "may_claim_complete": {
       "const": false
     },

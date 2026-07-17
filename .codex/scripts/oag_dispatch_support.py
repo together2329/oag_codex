@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from oag_dispatch_prompt import build_prompt_contract
+from oag_execution_efficiency import build_execution_controls
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 CODEX_ROOT = SCRIPTS_DIR.parent
@@ -189,20 +190,27 @@ DISPATCH_INTEGRITY_FIELDS = [
     "baseline",
     "created_at",
 ]
+OPTIONAL_DISPATCH_INTEGRITY_FIELDS = ["execution_budget", "context_contract"]
 
 
-def dispatch_scope_hash(dispatch: JsonObject) -> str:
-    payload = {field: dispatch.get(field) for field in DISPATCH_INTEGRITY_FIELDS}
+def dispatch_integrity_fields(dispatch: JsonObject) -> list[str]:
+    return DISPATCH_INTEGRITY_FIELDS + [field for field in OPTIONAL_DISPATCH_INTEGRITY_FIELDS if field in dispatch]
+
+
+def dispatch_scope_hash(dispatch: JsonObject, protected_fields: list[str] | None = None) -> str:
+    fields = protected_fields or dispatch_integrity_fields(dispatch)
+    payload = {field: dispatch.get(field) for field in fields}
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
 def dispatch_integrity(dispatch: JsonObject) -> JsonObject:
+    protected_fields = dispatch_integrity_fields(dispatch)
     return {
         "schema_version": "oag_dispatch_integrity.v1",
-        "protected_fields": DISPATCH_INTEGRITY_FIELDS,
+        "protected_fields": protected_fields,
         "scope_hash_algorithm": "sha256:jcs-v1",
-        "scope_hash": dispatch_scope_hash(dispatch),
+        "scope_hash": dispatch_scope_hash(dispatch, protected_fields),
     }
 
 
@@ -412,6 +420,14 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         raise DispatchInputError(f"invalid role kind: {role_kind}")
     if not STAGE_RE.match(args.stage):
         raise DispatchInputError(f"invalid stage: {args.stage}")
+    execution_budget, context_contract = build_execution_controls(
+        agent_type=args.agent_type,
+        stage=args.stage,
+        complexity=str(getattr(args, "complexity", "") or ""),
+        max_total_tokens=int(getattr(args, "max_total_tokens", 0) or 0),
+        max_review_attempts=int(getattr(args, "max_review_attempts", 1)),
+        model_tier=str(getattr(args, "model_tier", "") or ""),
+    )
 
     allowed_write_paths = [ensure_under_ip(item, ip_dir, field="allowed_write_path") for item in (args.allowed_write_path or [])]
     allowed_tool_side_effects = [
@@ -446,6 +462,8 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
     status_raw, status_paths = git_status_paths(ip_rel)
     oag_paths.state_path(ip_dir, "knowledge/dispatches").mkdir(parents=True, exist_ok=True)
     for sequence in range(0, 100):
+        baseline_hashes = hash_known_paths([ip_rel])
+        created_at = utc_now()
         dispatch_id = safe_dispatch_id(ip_dir.name, args.agent_type, sequence=sequence)
         candidate_path = oag_paths.state_path(ip_dir, f"knowledge/dispatches/{dispatch_id}.json")
         dispatch_rel = project_rel(candidate_path)
@@ -471,8 +489,15 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
             "wavefront_run_id": args.wavefront_run_id or "",
             "task_id": args.task_id or "",
             "ownership_mode": args.ownership_mode or "",
-            "baseline": {"created_at": utc_now(), "git_status_raw": status_raw, "git_status_paths": status_paths, "file_hashes": hash_known_paths([ip_rel])},
-            "created_at": utc_now(),
+            "execution_budget": execution_budget,
+            "context_contract": context_contract,
+            "baseline": {
+                "created_at": created_at,
+                "git_status_raw": status_raw,
+                "git_status_paths": status_paths,
+                "file_hashes": baseline_hashes,
+            },
+            "created_at": created_at,
         }
         candidate["dispatch_integrity"] = dispatch_integrity(candidate)
         candidate["prompt_contract"] = build_prompt_contract(candidate)

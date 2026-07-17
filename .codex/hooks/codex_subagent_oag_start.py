@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from oag_telemetry import append_execution_event
+
 ROOT = Path(__file__).resolve().parents[1]
 START_LOG = Path(os.environ.get("OAG_SUBAGENT_START_CACHE") or ROOT / ".cache" / "subagent_oag_starts.jsonl")
 
@@ -117,6 +119,7 @@ def main() -> int:
     if not agent_type.startswith("oag-"):
         return 0
     append_start_event(payload)
+    append_execution_event(payload, "subagent_start")
     print(json.dumps(additional_context(agent_type), ensure_ascii=False))
     return 0
 

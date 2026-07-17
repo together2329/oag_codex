@@ -15,8 +15,8 @@ the stop with that run's prompt block. It also runs the main-write gate: after
 scope lock, RTL/TB/sim/lint/coverage/formal/SDC/signoff/filelist writes require
 native OAG subagent dispatch + receipt or a human waiver. Human-decision states
 stay silent because the agent has no further local action to take. Repeated
-identical failures remain blocked; the durable cache records retry exhaustion
-without turning a failed gate into permission to stop.
+identical failures remain blocked. The first occurrence prints the full
+diagnostic; unchanged repeats print only a stable issue digest and count.
 
 This is the Codex-hook-shaped sibling of scripts-driven oag.stop_check; the older
 hooks/oag_stop_check.py stays as a manual/example runner.
@@ -102,7 +102,7 @@ def _max_block_repeats(result: dict) -> int:
     return 3
 
 
-def _block_allowed(cache: dict, *, key: str, digest: str, max_repeats: int) -> bool:
+def _block_mode(cache: dict, *, key: str, digest: str, max_repeats: int) -> tuple[str, int]:
     max_repeats = max(max_repeats, 1)
     entries = cache.setdefault("entries", {})
     if not isinstance(entries, dict):
@@ -115,12 +115,19 @@ def _block_allowed(cache: dict, *, key: str, digest: str, max_repeats: int) -> b
             "retry_exhausted": False,
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        return True
+        return "full", 1
     count = int(entry.get("count") or 0) + 1
     entry["count"] = count
     entry["retry_exhausted"] = count > max_repeats
     entry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    return True
+    return "compact", count
+
+
+def _compact_block(*, label: str, digest: str, count: int) -> str:
+    return (
+        f"{label} remains blocked: issue_id={digest[:16]} repeat={count}. "
+        "The blocker is unchanged; use the prior full diagnostic or inspect the OAG gate JSON."
+    )
 
 
 def _read_payload() -> dict:
@@ -265,8 +272,9 @@ def _run_gate(payload: dict, targets: list[dict[str, str]], cache: dict, cache_p
         header = f"[OAG:{name}] run incomplete ({reason_code}; target_source={target.get('source') or 'unknown'})."
         block = f"{header}\n{prompt}".strip()
         key = f"{Path(target['ip_dir']).resolve()}::{target.get('run_id') or result.get('run_id') or ''}"
-        if _block_allowed(cache, key=key, digest=_digest(block), max_repeats=_max_block_repeats(result)):
-            blocks.append(block)
+        digest = _digest(block)
+        mode, count = _block_mode(cache, key=key, digest=digest, max_repeats=_max_block_repeats(result))
+        blocks.append(block if mode == "full" else _compact_block(label=f"[OAG:{name}] run", digest=digest, count=count))
         cache_changed = True
     for target in targets:
         try:
@@ -294,8 +302,13 @@ def _run_gate(payload: dict, targets: list[dict[str, str]], cache: dict, cache_p
         )
         block = "\n".join(lines)
         key = f"{Path(target['ip_dir']).resolve()}::main-write-gate"
-        if _block_allowed(cache, key=key, digest=_digest(block), max_repeats=3):
-            blocks.append(block)
+        digest = _digest(block)
+        mode, count = _block_mode(cache, key=key, digest=digest, max_repeats=3)
+        blocks.append(
+            block
+            if mode == "full"
+            else _compact_block(label=f"[OAG:{name}] main-write gate", digest=digest, count=count)
+        )
         cache_changed = True
 
     if blocks:

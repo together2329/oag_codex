@@ -53,6 +53,7 @@ class WavefrontEvent:
     task_id: str = ""
     status: str = ""
     details: JsonObject | None = None
+    created_at: str = ""
 
 
 def utc_now() -> str:
@@ -223,7 +224,7 @@ def append_event(event: WavefrontEvent) -> None:
         "internal_gateway": "Ontology Agent Gateway",
         "run_id": event.run.run_id,
         "event": event.event,
-        "created_at": utc_now(),
+        "created_at": event.created_at or utc_now(),
     }
     if event.task_id:
         payload["task_id"] = event.task_id

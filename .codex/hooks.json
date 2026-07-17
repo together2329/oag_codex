@@ -9,6 +9,13 @@
             "commandWindows": "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\codex_oag_session_start.py",
             "timeout": 10,
             "statusMessage": "OAG: enforcing Codex subagent config"
+          },
+          {
+            "type": "command",
+            "command": "python3 .codex/hooks/codex_oag_telemetry.py",
+            "commandWindows": "cmd.exe /d /c .codex\\bin\\oag-python.cmd .codex\\hooks\\codex_oag_telemetry.py",
+            "timeout": 10,
+            "statusMessage": "OAG: recording OTEL correlation identity"
           }
         ]
       }
