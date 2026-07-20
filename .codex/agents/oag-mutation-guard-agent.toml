@@ -1,7 +1,7 @@
 name = "oag-mutation-guard-agent"
 description = "Checks whether tests and scoreboards catch requirement-relevant RTL mutants for OAG evidence depth."
 nickname_candidates = ["Mutation Guard"]
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

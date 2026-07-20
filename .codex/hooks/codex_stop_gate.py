@@ -287,7 +287,7 @@ def _run_gate(payload: dict, targets: list[dict[str, str]], cache: dict, cache_p
             continue
         name = result.get("ip") or Path(target["ip_dir"]).name
         lines = [
-            f"[OAG:{name}] locked implementation write requires native subagent evidence "
+            f"[OAG:{name}] locked implementation write requires dispatched executor evidence "
             f"(target_source={target.get('source') or 'unknown'}; ip_dir={target['ip_dir']})."
         ]
         for item in result.get("issues", [])[:8]:
@@ -296,7 +296,7 @@ def _run_gate(payload: dict, targets: list[dict[str, str]], cache: dict, cache_p
                 lines.append(f"- {item.get('code')}: {item.get('message')}{path}")
         lines.extend(
             [
-                "Required next step: create an OAG dispatch and spawn the owning native subagent,",
+                "Required next step: create an OAG dispatch and run the owning worker thread,",
                 "or record a human main-agent subagent waiver before stopping.",
             ]
         )

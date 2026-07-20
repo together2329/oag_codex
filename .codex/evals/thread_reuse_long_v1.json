@@ -1,0 +1,87 @@
+{
+  "id": "thread-reuse-long-v1",
+  "reference": "A message receiver has AXI ingress width 256 bits at 500 MHz, APB control at 200 MHz in an asynchronous clock domain, and a 256 KiB one-cycle SRAM with 256-bit words. It supports 15 configurable queues and 15 simultaneous reassembly contexts. Completed messages use fixed 4096-byte slots. Each slot reserves 32 bytes for a descriptor, leaving 4064 payload bytes. Queue 0 owns slots 0 through 3, queue 1 owns slots 4 through 7, and the same four-slot pattern continues for every queue. Firmware may read payload bytes up to the published watermark while assembly is active. A slot becomes releasable only after completion or abort and after its reader pin count reaches zero. A release request received while pinned becomes release-pending and completes when the last pin leaves. The final 16384 bytes of SRAM are not assigned to queue slots. ECRC and poisoned-TLP handling are outside the product scope. Configuration changes cross the APB-to-core boundary through an ordered command FIFO and become visible only when the core owner applies the command. APB acceptance alone never changes core-owned policy. Reset independently clears each clock-domain interface and no command may be fabricated when either side leaves reset.",
+  "cases": [
+    {
+      "id": "capacity",
+      "instruction": "Compute the SRAM word count, total slot count for all queues, and maximum payload bytes in one slot. Return sram_words, total_slots, and slot_payload_bytes.",
+      "expected": {
+        "sram_words": 8192,
+        "total_slots": 60,
+        "slot_payload_bytes": 4064
+      }
+    },
+    {
+      "id": "queue_map",
+      "instruction": "Return the inclusive slot ranges for queues 5, 9, and 14 under q5_slots, q9_slots, and q14_slots.",
+      "expected": {
+        "q5_slots": [20, 23],
+        "q9_slots": [36, 39],
+        "q14_slots": [56, 59]
+      }
+    },
+    {
+      "id": "memory_tail",
+      "instruction": "Return assigned_slot_bytes, unassigned_tail_bytes, and total_sram_bytes.",
+      "expected": {
+        "assigned_slot_bytes": 245760,
+        "unassigned_tail_bytes": 16384,
+        "total_sram_bytes": 262144
+      }
+    },
+    {
+      "id": "queue14_addresses",
+      "instruction": "Using byte addresses from SRAM base zero, return queue 14 slot-0 descriptor address, payload start address, and exclusive slot end under descriptor_addr, payload_addr, and slot_end.",
+      "expected": {
+        "descriptor_addr": 229376,
+        "payload_addr": 229408,
+        "slot_end": 233472
+      }
+    },
+    {
+      "id": "active_read",
+      "instruction": "Return active_read_allowed, active_read_limit, and full_slot_visible_before_completion. Use a short snake_case identifier for active_read_limit.",
+      "expected": {
+        "active_read_allowed": true,
+        "active_read_limit": {
+          "$any_of": [
+            "published_watermark",
+            "watermark"
+          ]
+        },
+        "full_slot_visible_before_completion": false
+      }
+    },
+    {
+      "id": "release_lifecycle",
+      "instruction": "A completed slot has two reader pins when release is requested. Return immediate_free, release_pending, and free_after_pin_count.",
+      "expected": {
+        "immediate_free": false,
+        "release_pending": true,
+        "free_after_pin_count": 0
+      }
+    },
+    {
+      "id": "cdc_policy",
+      "instruction": "Return policy_visible_on_apb_accept, policy_visible_on_core_apply, command_transport, and fabricated_command_after_reset. command_transport must be a short snake_case identifier.",
+      "expected": {
+        "policy_visible_on_apb_accept": false,
+        "policy_visible_on_core_apply": true,
+        "command_transport": "ordered_command_fifo",
+        "fabricated_command_after_reset": false
+      }
+    },
+    {
+      "id": "contamination_reset",
+      "replacement_reference": "For this task only, ignore every earlier hardware reference. The new block has 3 queues, six 1024-byte slots total, a 16-byte descriptor in every slot, a 64-bit SRAM interface, and no active-message firmware reads.",
+      "instruction": "Return queue_count, total_slots, slot_payload_bytes, sram_word_bytes, and active_read_allowed for the new block only.",
+      "expected": {
+        "queue_count": 3,
+        "total_slots": 6,
+        "slot_payload_bytes": 1008,
+        "sram_word_bytes": 8,
+        "active_read_allowed": false
+      }
+    }
+  ]
+}

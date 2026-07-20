@@ -1,0 +1,45 @@
+{
+  "id": "thread-reuse-contract-v1",
+  "reference": "A message receiver has AXI ingress width 256 bits at 500 MHz, APB control at 200 MHz in an asynchronous clock domain, and a 256 KiB one-cycle SRAM with 256-bit words. It supports 15 configurable queues and 15 simultaneous reassembly contexts. Completed messages use fixed 4096-byte slots. Each slot reserves 32 bytes for a descriptor, leaving 4064 payload bytes. Queue 0 owns slots 0 through 3, queue 1 owns slots 4 through 7, and the same four-slot pattern continues for every queue. Firmware may read payload bytes up to the published watermark while assembly is active. A slot becomes releasable only after completion or abort and after its reader pin count reaches zero. ECRC and poisoned-TLP handling are outside the product scope. Configuration changes cross the APB-to-core boundary through an ordered command FIFO and become visible only when the core owner applies the command.",
+  "cases": [
+    {
+      "id": "capacity",
+      "instruction": "Compute the SRAM word count, total slot count for all queues, total reserved descriptor bytes, and maximum payload bytes in one slot. Return keys sram_words, total_slots, descriptor_bytes_total, and slot_payload_bytes.",
+      "expected": {
+        "sram_words": 8192,
+        "total_slots": 60,
+        "descriptor_bytes_total": 1920,
+        "slot_payload_bytes": 4064
+      }
+    },
+    {
+      "id": "queue_map",
+      "instruction": "For queues 7 and 14, return their inclusive slot ranges as two-element arrays under q7_slots and q14_slots. Also return simultaneous_context_limit.",
+      "expected": {
+        "q7_slots": [28, 31],
+        "q14_slots": [56, 59],
+        "simultaneous_context_limit": 15
+      }
+    },
+    {
+      "id": "policy_audit",
+      "instruction": "Audit these claims: (a) firmware may read the entire active slot before publication, (b) a completed pinned slot may be released immediately, (c) APB configuration is visible as soon as APB accepts it, (d) poison is required. Return invalid_claims as an ordered array of claim letters and safe_read_boundary as a short snake_case identifier.",
+      "expected": {
+        "invalid_claims": ["a", "b", "c", "d"],
+        "safe_read_boundary": "published_watermark"
+      }
+    },
+    {
+      "id": "contamination_reset",
+      "replacement_reference": "For this task only, ignore every earlier hardware reference. The new block has 8 queues numbered 0 through 7, two 2048-byte slots per queue, a 64-byte descriptor in every slot, and a 128-bit SRAM interface. Firmware cannot read a slot until completion.",
+      "instruction": "Return queue_count, total_slots, slot_payload_bytes, sram_word_bytes, and active_read_allowed for the new block only.",
+      "expected": {
+        "queue_count": 8,
+        "total_slots": 16,
+        "slot_payload_bytes": 1984,
+        "sram_word_bytes": 16,
+        "active_read_allowed": false
+      }
+    }
+  ]
+}

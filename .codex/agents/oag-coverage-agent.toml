@@ -1,7 +1,7 @@
 name = "oag-coverage-agent"
 description = "Reviews functional, scoreboard, protocol, fault-model, and coverage closure against OAG evidence."
 nickname_candidates = ["Coverage"]
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

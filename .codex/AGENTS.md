@@ -385,6 +385,17 @@ The OAG role catalog defines 14 core duties plus 3 custom dynamic duties. The
 role TOMLs are prompts and guardrails; durable state is still the IP ontology,
 ledger, records, receipts, and evidence artifacts.
 
+New write-capable OAG dispatches are thread-only by default. Create the
+dispatch with `.codex/scripts/oag_dispatch.py`, then run it through
+`.codex/scripts/oag_thread_worker.py`. The runner creates a fresh App Server
+thread, disables multi-agent and child-agent features for that thread, rejects
+observed subagent activity,
+steers once at the warning budget, interrupts at the hard budget, and writes a
+hash-linked execution manifest under `knowledge/executions/`. A worker-thread
+receipt is not write coverage until the manifest validates. Use
+`--execution-kind native_subagent` only for explicit legacy compatibility.
+See `.codex/oag/thread-worker-runtime.md`.
+
 Critical OAG reasoning lanes must use `model_reasoning_effort = "xhigh"`:
 requirement/contract, legacy/reference analysis, IP contract derivation,
 verification strategy, RTL implementation, TB implementation, evidence
@@ -392,7 +403,7 @@ validation, and gate review.
 Procedural lanes such as lint/static checks, sim execution, coverage, and custom
 worker shards may stay lower for throughput.
 
-Before using a subagent role, run:
+Before explicitly using a legacy subagent role, run:
 
 ```bash
 python3 .codex/scripts/oag_agent_catalog_check.py

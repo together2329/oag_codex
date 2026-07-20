@@ -56,6 +56,14 @@ def owner_role(payload: JsonObject) -> str:
     return str(snapshot.get("owner_role") or "unknown").strip() or "unknown"
 
 
+def has_successful_handoff(payload: JsonObject) -> bool:
+    """Return true when an aborted umbrella Action preserved a passing receipt."""
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    decisions = result.get("review_decisions") if isinstance(result.get("review_decisions"), list) else []
+    receipts = result.get("receipt_paths") if isinstance(result.get("receipt_paths"), list) else []
+    return bool(receipts) and any(str(decision).strip().upper().endswith("PASS") for decision in decisions)
+
+
 def collect_role_health(ip_dir: Path, *, stuck_seconds: int = 900, failure_threshold: int = 2) -> JsonObject:
     ip_dir = oag_paths.ip_root(ip_dir)
     now = run_common.parse_utc(run_common.utc_now())
@@ -72,6 +80,8 @@ def collect_role_health(ip_dir: Path, *, stuck_seconds: int = 900, failure_thres
                 "actions_total": 0,
                 "accepted": 0,
                 "bad_terminal": 0,
+                "bad_terminal_total": 0,
+                "recovered_terminal": 0,
                 "open": 0,
                 "stuck": 0,
                 "last_action_id": "",
@@ -86,7 +96,11 @@ def collect_role_health(ip_dir: Path, *, stuck_seconds: int = 900, failure_thres
         if status == "accepted":
             row["accepted"] += 1
         if status in BAD_TERMINAL_STATUSES:
-            row["bad_terminal"] += 1
+            row["bad_terminal_total"] += 1
+            if status == "aborted" and has_successful_handoff(payload):
+                row["recovered_terminal"] += 1
+            else:
+                row["bad_terminal"] += 1
         if status in OPEN_STATUSES:
             row["open"] += 1
             age = run_common.age_seconds(payload.get("started_at"), now=now)
@@ -109,6 +123,8 @@ def collect_role_health(ip_dir: Path, *, stuck_seconds: int = 900, failure_thres
                     "actions_total": 0,
                     "accepted": 0,
                     "bad_terminal": 0,
+                    "bad_terminal_total": 0,
+                    "recovered_terminal": 0,
                     "open": 0,
                     "stuck": 0,
                     "last_action_id": "",
@@ -126,7 +142,7 @@ def collect_role_health(ip_dir: Path, *, stuck_seconds: int = 900, failure_thres
             hazards.append({"role": role, "code": "ROLE_STUCK", "message": "role has stuck open work", "issues": role_issues})
         elif row.get("bad_terminal", 0) >= failure_threshold:
             row["status"] = "degraded"
-            hazards.append({"role": role, "code": "ROLE_REPEATED_BAD_TERMINAL", "message": "role has repeated blocked/failed/inconclusive/aborted actions", "bad_terminal": row.get("bad_terminal", 0)})
+            hazards.append({"role": role, "code": "ROLE_REPEATED_BAD_TERMINAL", "message": "role has repeated unresolved blocked/failed/inconclusive/aborted actions", "bad_terminal": row.get("bad_terminal", 0)})
 
     payload = {
         "schema_version": SCHEMA_VERSION,

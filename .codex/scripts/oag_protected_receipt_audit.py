@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit post-lock protected IP artifacts against subagent receipts.
+"""Audit post-lock protected IP artifacts against dispatched executor receipts.
 
 This check is intentionally independent of git tracking. Product IP directories
 may be ignored/untracked while `.codex` remains the durable pack repository.
@@ -26,6 +26,7 @@ SCHEMAS_DIR = CODEX_ROOT / "schemas"
 sys.path.insert(0, str(SCRIPTS_DIR))
 oag_paths = importlib.import_module("oag_paths")
 validate_document = importlib.import_module("oag_validate_json").validate_document
+oag_dispatch_verify = importlib.import_module("oag_dispatch_verify")
 
 
 PASSING_RECEIPT_STATUSES = {"HANDOFF_PASS", "STATIC_HANDOFF_PASS", "RTL_HANDOFF_PASS"}
@@ -318,6 +319,9 @@ def audit(ip_dir_arg: str, *, strict_hashes: bool, require_all_dispatch_receipts
             issues.append(issue("RECEIPT_COMPLETION_CLAIM", "subagent receipt must keep may_claim_complete=false", str(receipt.get("_path") or "")))
 
         dispatch = load_dispatch_for_receipt(receipt, ip_dir, issues)
+        execution_issues = oag_dispatch_verify.worker_thread_execution_issues(dispatch or {}, receipt)
+        for item in execution_issues:
+            issues.append(issue(item["code"], item["message"], str(receipt.get("_path") or "")))
         allowed = []
         if dispatch:
             allowed = [normalize_path(path, ip_dir) for path in string_list(dispatch, "allowed_write_paths")]
@@ -332,7 +336,7 @@ def audit(ip_dir_arg: str, *, strict_hashes: bool, require_all_dispatch_receipts
                 issues.append(issue("GENERATED_PATH_OUT_OF_SCOPE", "receipt generated side effect is outside dispatch allowed_tool_side_effects", path))
 
         hash_claims.update(hash_claims_from_payload(receipt, ip_dir))
-        if status in PASSING_RECEIPT_STATUSES:
+        if status in PASSING_RECEIPT_STATUSES and not execution_issues:
             for protected in protected_files:
                 if path_matches(protected, changed) and (not allowed or path_matches(protected, allowed)):
                     coverage[protected].append(str(receipt.get("_path") or ""))
@@ -347,7 +351,7 @@ def audit(ip_dir_arg: str, *, strict_hashes: bool, require_all_dispatch_receipts
 
     for path, covering_receipts in coverage.items():
         if not covering_receipts:
-            issues.append(issue("UNCOVERED_PROTECTED_ARTIFACT", "protected artifact has no passing subagent receipt coverage", path))
+            issues.append(issue("UNCOVERED_PROTECTED_ARTIFACT", "protected artifact has no passing executor receipt coverage", path))
             continue
         claimed_hash = hash_claims.get(path)
         if strict_hashes and not claimed_hash:
@@ -374,7 +378,7 @@ def audit(ip_dir_arg: str, *, strict_hashes: bool, require_all_dispatch_receipts
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Audit protected IP artifacts against OAG subagent receipts.")
+    parser = argparse.ArgumentParser(description="Audit protected IP artifacts against OAG executor receipts.")
     parser.add_argument("--ip-dir", required=True)
     parser.add_argument("--strict-hashes", action="store_true")
     parser.add_argument("--require-all-dispatch-receipts", action="store_true")

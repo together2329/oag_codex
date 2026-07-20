@@ -1,7 +1,7 @@
 name = "oag-custom-reviewer"
 description = "Dynamic OAG reviewer shard for one bounded artifact, evidence set, gap, waveform slice, or contract."
 nickname_candidates = ["Custom Reviewer"]
-model = "gpt-5.5"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

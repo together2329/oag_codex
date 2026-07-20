@@ -86,6 +86,9 @@ def _receipt_metadata(payload: dict[str, Any]) -> dict[str, Any]:
         "ownership_mode",
         "mission_id",
         "action_id",
+        "execution_kind",
+        "thread_id",
+        "execution_manifest_path",
     ):
         if key in value:
             result[key] = value[key]
@@ -162,8 +165,16 @@ def append_execution_event(
         "cwd": _text(payload, "cwd"),
         "permission_mode": _text(payload, "permission_mode"),
         "gate_outcome": gate_outcome,
-        "execution_kind": "subagent" if agent_id else "main",
+        "execution_kind": os.environ.get("OAG_EXECUTION_KIND") or ("subagent" if agent_id else "main"),
     }
+    for env_name, event_name in (
+        ("OAG_DISPATCH_ID", "dispatch_id"),
+        ("OAG_DISPATCH_PATH", "dispatch_path"),
+        ("OAG_THREAD_EXECUTION_MANIFEST", "execution_manifest_path"),
+    ):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            event[event_name] = value
     if gate_reason:
         event["gate_reason"] = gate_reason[:1000]
     if phase.startswith("subagent_stop"):

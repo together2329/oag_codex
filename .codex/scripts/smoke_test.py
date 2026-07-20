@@ -77,6 +77,7 @@ WINDOWS_SMOKE = ROOT / "scripts" / "oag_windows_smoke.py"
 SELECTIVE_HARDENING_TEST = ROOT / "scripts" / "oag_selective_hardening_test.py"
 HOOK_CACHE_ISOLATION_TEST = ROOT / "scripts" / "oag_hook_cache_isolation_test.py"
 COMPILE_FINGERPRINT_TEST = ROOT / "scripts" / "oag_compile_fingerprint_test.py"
+THREAD_WORKER_TEST = ROOT / "scripts" / "oag_thread_worker_test.py"
 REVIEW_FRAME = ROOT / "scripts" / "oag_review_frame.py"
 GATE_FRAME = ROOT / "scripts" / "oag_gate_frame.py"
 SSOT_SECTION_CHECK = ROOT / "scripts" / "oag_ssot_section_check.py"
@@ -118,6 +119,7 @@ HOOK_CACHE_DIR: Path | None = None
 SCHEMA_FILES = [
     ROOT / "schemas" / "oag_dispatch.schema.json",
     ROOT / "schemas" / "oag_subagent_receipt.schema.json",
+    ROOT / "schemas" / "oag_thread_execution.schema.json",
     ROOT / "schemas" / "oag_subagent_diagnostic_receipt.schema.json",
     ROOT / "schemas" / "oag_validation_report.schema.json",
     ROOT / "schemas" / "oag_gate_decision.schema.json",
@@ -672,7 +674,7 @@ def test_dispatch_prompt_contract_subagent_boundary() -> None:
         }
     )
 
-    assert "Subagent implementation boundary:" in prompt, prompt
+    assert "Executor implementation boundary:" in prompt, prompt
     assert "Do not create a new dispatch" in prompt, prompt
     assert "Do not run decision_harness record" in prompt, prompt
     assert "Do not open or claim wavefront barriers" in prompt, prompt
@@ -690,6 +692,19 @@ def test_dispatch_prompt_contract_subagent_boundary() -> None:
     assert "plan_parse_success=true" in prompt, prompt
     assert "smoke_fallback_used=false" in prompt, prompt
     assert "results.xml" in prompt and "environment blocked" in prompt, prompt
+
+
+def test_thread_worker_protocol() -> None:
+    result = subprocess.run(
+        [sys.executable, "-B", str(THREAD_WORKER_TEST)],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "pass" and payload["tests"] == 17, payload
 
 
 def test_task5_dispatch_wavefront_matrix(tmp_root: Path) -> None:
@@ -821,6 +836,8 @@ def test_dispatch_hardening_guards(tmp_root: Path) -> None:
     )
     create = run_dispatch(
         "create",
+        "--execution-kind",
+        "native_subagent",
         "--ip-dir",
         str(ip),
         "--agent-type",
@@ -908,6 +925,8 @@ def test_dispatch_hardening_guards(tmp_root: Path) -> None:
 
     nested_create = run_dispatch(
         "create",
+        "--execution-kind",
+        "native_subagent",
         "--ip-dir",
         str(ip),
         "--agent-type",
@@ -973,6 +992,8 @@ def test_dispatch_hardening_guards(tmp_root: Path) -> None:
     )
     active_create = run_dispatch(
         "create",
+        "--execution-kind",
+        "native_subagent",
         "--ip-dir",
         str(active_ip),
         "--agent-type",
@@ -3176,6 +3197,8 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     assert plan.returncode == 0, plan.stderr or plan.stdout
     dispatch = run_dispatch(
         "create",
+        "--execution-kind",
+        "native_subagent",
         "--ip-dir",
         str(ip),
         "--agent-type",
@@ -3291,6 +3314,43 @@ def test_oag_run_control_layer(tmp_root: Path) -> None:
     status = run_wavefront("status", "--ip-dir", str(ip), "--run-id", run_id, "--json", project_root=project)
     assert status.returncode == 0, status.stderr or status.stdout
     assert json.loads(status.stdout)["active_locks"] == [], status.stdout
+
+
+def test_oag_role_health_recovered_terminal(tmp_root: Path) -> None:
+    ip = tmp_root / "role_health_recovered_terminal"
+    actions = ip / "knowledge" / "actions"
+    actions.mkdir(parents=True)
+
+    def write_action(name: str, *, role: str, status: str, recovered: bool = False) -> None:
+        result: dict[str, Any] = {"owner_role": role}
+        if recovered:
+            result.update(
+                {
+                    "review_decisions": ["STATIC_HANDOFF_PASS"],
+                    "receipt_paths": [f"knowledge/subagents/{name}.json"],
+                }
+            )
+        (actions / f"{name}.json").write_text(
+            json.dumps({"id": name, "status": status, "result": result}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    write_action("ACT_RUN_20260718T000001Z_REVIEW_001", role="reviewer", status="aborted", recovered=True)
+    write_action("ACT_RUN_20260718T000002Z_REVIEW_002", role="reviewer", status="aborted", recovered=True)
+    write_action("ACT_RUN_20260718T000003Z_WORKER_001", role="worker", status="failed")
+    write_action("ACT_RUN_20260718T000004Z_WORKER_002", role="worker", status="aborted")
+
+    health = run_oag_role_health(ip, "--no-write", "--json")
+    assert health.returncode == 0, health.stderr or health.stdout
+    payload = json.loads(health.stdout)["role_health"]
+    rows = {row["role"]: row for row in payload["roles"]}
+    assert rows["reviewer"]["status"] == "healthy", rows
+    assert rows["reviewer"]["bad_terminal"] == 0, rows
+    assert rows["reviewer"]["bad_terminal_total"] == 2, rows
+    assert rows["reviewer"]["recovered_terminal"] == 2, rows
+    assert rows["worker"]["status"] == "degraded", rows
+    assert rows["worker"]["bad_terminal"] == 2, rows
+    assert any(item["role"] == "worker" and item["code"] == "ROLE_REPEATED_BAD_TERMINAL" for item in payload["hazards"]), payload
 
 
 def test_oag_decision_autonomy_policy(tmp_root: Path) -> None:
@@ -5872,6 +5932,7 @@ def main() -> int:
         test_rtl_role_wavefront_template(Path(tmp))
         test_wavefront_scheduler(Path(tmp))
         test_dispatch_prompt_contract_subagent_boundary()
+        test_thread_worker_protocol()
         test_task5_dispatch_wavefront_matrix(Path(tmp))
         test_dispatch_hardening_guards(Path(tmp))
         test_dispatch_authoring_packet_retry_classifier()
@@ -5888,6 +5949,7 @@ def main() -> int:
         test_lock_preview_frame_preserves_verbatim_source(Path(tmp))
         test_oag_team_plan_mode(Path(tmp))
         test_oag_run_control_layer(Path(tmp))
+        test_oag_role_health_recovered_terminal(Path(tmp))
         test_oag_decision_autonomy_policy(Path(tmp))
         test_oag_arch_exploration_blocker_regressions(Path(tmp))
         test_oag_arch_exploration_remaining_review_gates(Path(tmp))
@@ -6816,6 +6878,8 @@ def main() -> int:
         (unlocked_hook_ip / "knowledge" / "subagents").mkdir(parents=True, exist_ok=True)
         unlocked_dispatch = run_dispatch(
             "create",
+            "--execution-kind",
+            "native_subagent",
             "--ip-dir",
             str(unlocked_hook_ip),
             "--agent-type",
@@ -6872,7 +6936,7 @@ def main() -> int:
         assert stop_gate_blocked.returncode == 0, stop_gate_blocked.stderr or stop_gate_blocked.stdout
         stop_gate_payload = json.loads(stop_gate_blocked.stdout)
         assert stop_gate_payload["decision"] == "block", stop_gate_payload
-        assert "locked implementation write requires native subagent evidence" in stop_gate_payload["reason"], stop_gate_payload
+        assert "locked implementation write requires dispatched executor evidence" in stop_gate_payload["reason"], stop_gate_payload
         hook_ip = hook_cwd / "smoke_ip"
         (hook_ip / "rtl").mkdir(parents=True, exist_ok=True)
         (hook_ip / "ontology").mkdir(parents=True, exist_ok=True)
@@ -6899,6 +6963,8 @@ def main() -> int:
         )
         dispatch_create_args = (
             "create",
+            "--execution-kind",
+            "native_subagent",
             "--ip-dir",
             str(hook_ip),
             "--agent-type",
@@ -6939,7 +7005,7 @@ def main() -> int:
         assert dispatch["wavefront_run_id"] == "RUN_DISPATCH_SMOKE", dispatch
         assert dispatch["task_id"] == "RTL_SMOKE_TASK", dispatch
         assert "wavefront_run_id" in dispatch["prompt_contract"], dispatch
-        assert "Subagent implementation boundary:" in dispatch["prompt_contract"], dispatch["prompt_contract"]
+        assert "Executor implementation boundary:" in dispatch["prompt_contract"], dispatch["prompt_contract"]
         assert "Do not create a new dispatch" in dispatch["prompt_contract"], dispatch["prompt_contract"]
         assert "Do not run decision_harness record" in dispatch["prompt_contract"], dispatch["prompt_contract"]
         assert "HANDOFF_PASS is only for the assigned deliverable" in dispatch["prompt_contract"], dispatch["prompt_contract"]

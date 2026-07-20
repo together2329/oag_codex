@@ -37,6 +37,7 @@ def build_execution_controls(
     stage: str,
     complexity: str = "",
     max_total_tokens: int = 0,
+    warning_total_tokens: int = 0,
     max_review_attempts: int = 1,
     model_tier: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -47,6 +48,9 @@ def build_execution_controls(
     token_limit = max_total_tokens or int(default["max_total_tokens"])
     if token_limit < 100_000 or token_limit > 25_000_000:
         raise ValueError("max_total_tokens must be between 100000 and 25000000")
+    warning_limit = warning_total_tokens or token_limit * 4 // 5
+    if warning_limit < 80_000 or warning_limit >= token_limit:
+        raise ValueError("warning_total_tokens must be between 80000 and max_total_tokens - 1")
     if max_review_attempts < 0 or max_review_attempts > 2:
         raise ValueError("max_review_attempts must be between 0 and 2")
     tier = model_tier or infer_model_tier(agent_type, stage)
@@ -57,7 +61,7 @@ def build_execution_controls(
         "schema_version": "oag_execution_budget.v1",
         "complexity": profile,
         "max_total_tokens": token_limit,
-        "warning_total_tokens": token_limit * 4 // 5,
+        "warning_total_tokens": warning_limit,
         "max_review_attempts": max_review_attempts,
         "over_budget_action": "stop_and_replan",
         "model_tier": tier,

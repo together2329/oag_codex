@@ -151,9 +151,16 @@ def files_under(path: Path) -> list[Path]:
     if not path.exists():
         return []
     if path.is_file():
-        return [path]
+        return [] if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"} else [path]
     if path.is_dir():
-        return sorted(item for item in path.rglob("*") if item.is_file() and ".git" not in item.parts)
+        return sorted(
+            item
+            for item in path.rglob("*")
+            if item.is_file()
+            and ".git" not in item.parts
+            and "__pycache__" not in item.parts
+            and item.suffix not in {".pyc", ".pyo"}
+        )
     return []
 
 
@@ -190,7 +197,7 @@ DISPATCH_INTEGRITY_FIELDS = [
     "baseline",
     "created_at",
 ]
-OPTIONAL_DISPATCH_INTEGRITY_FIELDS = ["execution_budget", "context_contract"]
+OPTIONAL_DISPATCH_INTEGRITY_FIELDS = ["execution_budget", "context_contract", "execution_actor"]
 
 
 def dispatch_integrity_fields(dispatch: JsonObject) -> list[str]:
@@ -425,9 +432,18 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         stage=args.stage,
         complexity=str(getattr(args, "complexity", "") or ""),
         max_total_tokens=int(getattr(args, "max_total_tokens", 0) or 0),
+        warning_total_tokens=int(getattr(args, "warning_total_tokens", 0) or 0),
         max_review_attempts=int(getattr(args, "max_review_attempts", 1)),
         model_tier=str(getattr(args, "model_tier", "") or ""),
     )
+    execution_kind = str(getattr(args, "execution_kind", "") or "native_subagent")
+    if execution_kind not in {"worker_thread", "native_subagent"}:
+        raise DispatchInputError(f"invalid execution kind: {execution_kind}")
+    resume_limit = int(getattr(args, "resume_limit", 1) or 0)
+    if execution_kind == "worker_thread" and not 0 <= resume_limit <= 3:
+        raise DispatchInputError("worker_thread resume_limit must be between 0 and 3")
+    if execution_kind == "native_subagent":
+        resume_limit = 0
 
     allowed_write_paths = [ensure_under_ip(item, ip_dir, field="allowed_write_path") for item in (args.allowed_write_path or [])]
     allowed_tool_side_effects = [
@@ -467,6 +483,30 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
         dispatch_id = safe_dispatch_id(ip_dir.name, args.agent_type, sequence=sequence)
         candidate_path = oag_paths.state_path(ip_dir, f"knowledge/dispatches/{dispatch_id}.json")
         dispatch_rel = project_rel(candidate_path)
+        manifest_rel = (
+            project_rel(oag_paths.state_path(ip_dir, f"knowledge/executions/{dispatch_id}.thread.json"))
+            if execution_kind == "worker_thread"
+            else ""
+        )
+        event_log_rel = (
+            project_rel(oag_paths.state_path(ip_dir, f"knowledge/executions/{dispatch_id}.events.jsonl"))
+            if execution_kind == "worker_thread"
+            else ""
+        )
+        execution_actor: JsonObject = {
+            "schema_version": "oag_execution_actor.v1",
+            "kind": execution_kind,
+            "isolation": "fresh_thread" if execution_kind == "worker_thread" else "native_child",
+            "resume_limit": resume_limit,
+            "subagents_allowed": False,
+            "manifest_path": manifest_rel,
+            "event_log_path": event_log_rel,
+        }
+        candidate_side_effects = list(allowed_tool_side_effects)
+        if manifest_rel:
+            candidate_side_effects.append(manifest_rel)
+        if event_log_rel:
+            candidate_side_effects.append(event_log_rel)
         candidate: JsonObject = {
             "schema_version": "oag_dispatch.v1",
             "product_name": "IP Dev Agent",
@@ -483,7 +523,7 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
             "owned_obligations": args.owned_obligation or [],
             "contracts": args.contract or [],
             "allowed_write_paths": sorted(set(allowed_write_paths)),
-            "allowed_tool_side_effects": sorted(set(allowed_tool_side_effects)),
+            "allowed_tool_side_effects": sorted(set(candidate_side_effects)),
             "receipt_path": receipt_path,
             "may_claim_complete": False,
             "wavefront_run_id": args.wavefront_run_id or "",
@@ -491,6 +531,7 @@ def create_dispatch(args: argparse.Namespace) -> JsonObject:
             "ownership_mode": args.ownership_mode or "",
             "execution_budget": execution_budget,
             "context_contract": context_contract,
+            "execution_actor": execution_actor,
             "baseline": {
                 "created_at": created_at,
                 "git_status_raw": status_raw,

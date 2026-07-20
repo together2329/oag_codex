@@ -1,0 +1,501 @@
+{
+  "aggregates": [
+    {
+      "all_functionally_passed": true,
+      "category": "prompt_only_long",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 3.383,
+          "fresh": 136192,
+          "reuse": 140800
+        },
+        "duration_seconds": {
+          "change_percent": -47.638,
+          "fresh": 42.187,
+          "reuse": 22.09
+        },
+        "input_tokens": {
+          "change_percent": 3.386,
+          "fresh": 140233,
+          "reuse": 144981
+        },
+        "noncached_input_tokens": {
+          "change_percent": 3.464,
+          "fresh": 4041,
+          "reuse": 4181
+        },
+        "output_tokens": {
+          "change_percent": 1.692,
+          "fresh": 532,
+          "reuse": 541
+        },
+        "reasoning_output_tokens": {
+          "change_percent": 2.996,
+          "fresh": 267,
+          "reuse": 275
+        },
+        "total_tokens": {
+          "change_percent": 3.379,
+          "fresh": 140765,
+          "reuse": 145522
+        }
+      },
+      "pair_count": 1
+    },
+    {
+      "all_functionally_passed": true,
+      "category": "prompt_only_short",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 38.346,
+          "fresh": 136192,
+          "reuse": 188416
+        },
+        "duration_seconds": {
+          "change_percent": -25.311,
+          "fresh": 53.822,
+          "reuse": 40.199
+        },
+        "input_tokens": {
+          "change_percent": 2.624,
+          "fresh": 203274,
+          "reuse": 208607
+        },
+        "noncached_input_tokens": {
+          "change_percent": -69.901,
+          "fresh": 67082,
+          "reuse": 20191
+        },
+        "output_tokens": {
+          "change_percent": 5.669,
+          "fresh": 688,
+          "reuse": 727
+        },
+        "reasoning_output_tokens": {
+          "change_percent": 13.258,
+          "fresh": 264,
+          "reuse": 299
+        },
+        "total_tokens": {
+          "change_percent": 2.634,
+          "fresh": 203962,
+          "reuse": 209334
+        }
+      },
+      "pair_count": 3
+    },
+    {
+      "all_functionally_passed": true,
+      "category": "sequential_rtl",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": -39.685,
+          "fresh": 1008896,
+          "reuse": 608512
+        },
+        "duration_seconds": {
+          "change_percent": -58.096,
+          "fresh": 362.438,
+          "reuse": 151.877
+        },
+        "input_tokens": {
+          "change_percent": -44.335,
+          "fresh": 1217329,
+          "reuse": 677627
+        },
+        "noncached_input_tokens": {
+          "change_percent": -66.841,
+          "fresh": 208433,
+          "reuse": 69115
+        },
+        "output_tokens": {
+          "change_percent": -64.831,
+          "fresh": 16108,
+          "reuse": 5665
+        },
+        "reasoning_output_tokens": {
+          "change_percent": -73.946,
+          "fresh": 8329,
+          "reuse": 2170
+        },
+        "total_tokens": {
+          "change_percent": -44.603,
+          "fresh": 1233437,
+          "reuse": 683292
+        }
+      },
+      "pair_count": 3
+    }
+  ],
+  "decision": {
+    "candidate_policy": "bounded_mission_lane_reuse",
+    "default_max_turns": 4,
+    "fresh_reviewer_required": true,
+    "production_default_changed": false,
+    "reason": "Prompt-only work favored reuse for latency but not total tokens. Sequential RTL implementation favored reuse strongly for latency and tokens, while hidden lint showed that an independent fresh quality gate remains necessary."
+  },
+  "experiment_count": 7,
+  "experiments": [
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "prompt_only_short",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {},
+      "id": "contract-terra-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 15.094,
+          "fresh": 54272,
+          "reuse": 62464
+        },
+        "duration_seconds": {
+          "change_percent": -32.458,
+          "fresh": 17.17,
+          "reuse": 11.597
+        },
+        "input_tokens": {
+          "change_percent": 1.732,
+          "fresh": 69900,
+          "reuse": 71111
+        },
+        "noncached_input_tokens": {
+          "change_percent": -44.67,
+          "fresh": 15628,
+          "reuse": 8647
+        },
+        "output_tokens": {
+          "change_percent": 37.647,
+          "fresh": 170,
+          "reuse": 234
+        },
+        "reasoning_output_tokens": {
+          "change_percent": 206.667,
+          "fresh": 30,
+          "reuse": 92
+        },
+        "total_tokens": {
+          "change_percent": 1.82,
+          "fresh": 70070,
+          "reuse": 71345
+        }
+      },
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "prompt_only_short",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {},
+      "id": "contract-luna-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 53.659,
+          "fresh": 41984,
+          "reuse": 64512
+        },
+        "duration_seconds": {
+          "change_percent": -24.665,
+          "fresh": 18.459,
+          "reuse": 13.906
+        },
+        "input_tokens": {
+          "change_percent": 4.766,
+          "fresh": 63474,
+          "reuse": 66499
+        },
+        "noncached_input_tokens": {
+          "change_percent": -90.754,
+          "fresh": 21490,
+          "reuse": 1987
+        },
+        "output_tokens": {
+          "change_percent": -12.368,
+          "fresh": 380,
+          "reuse": 333
+        },
+        "reasoning_output_tokens": {
+          "change_percent": -20.085,
+          "fresh": 234,
+          "reuse": 187
+        },
+        "total_tokens": {
+          "change_percent": 4.664,
+          "fresh": 63854,
+          "reuse": 66832
+        }
+      },
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "prompt_only_short",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {},
+      "id": "contract-sol-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 53.846,
+          "fresh": 39936,
+          "reuse": 61440
+        },
+        "duration_seconds": {
+          "change_percent": -19.222,
+          "fresh": 18.193,
+          "reuse": 14.696
+        },
+        "input_tokens": {
+          "change_percent": 1.569,
+          "fresh": 69900,
+          "reuse": 70997
+        },
+        "noncached_input_tokens": {
+          "change_percent": -68.105,
+          "fresh": 29964,
+          "reuse": 9557
+        },
+        "output_tokens": {
+          "change_percent": 15.942,
+          "fresh": 138,
+          "reuse": 160
+        },
+        "reasoning_output_tokens": {
+          "change_percent": null,
+          "fresh": 0,
+          "reuse": 20
+        },
+        "total_tokens": {
+          "change_percent": 1.598,
+          "fresh": 70038,
+          "reuse": 71157
+        }
+      },
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 8,
+      "category": "prompt_only_long",
+      "fresh_passed": 8,
+      "fresh_unique_thread_count": 8,
+      "hidden_quality": {},
+      "id": "contract-long-terra-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": 3.383,
+          "fresh": 136192,
+          "reuse": 140800
+        },
+        "duration_seconds": {
+          "change_percent": -47.638,
+          "fresh": 42.187,
+          "reuse": 22.09
+        },
+        "input_tokens": {
+          "change_percent": 3.386,
+          "fresh": 140233,
+          "reuse": 144981
+        },
+        "noncached_input_tokens": {
+          "change_percent": 3.464,
+          "fresh": 4041,
+          "reuse": 4181
+        },
+        "output_tokens": {
+          "change_percent": 1.692,
+          "fresh": 532,
+          "reuse": 541
+        },
+        "reasoning_output_tokens": {
+          "change_percent": 2.996,
+          "fresh": 267,
+          "reuse": 275
+        },
+        "total_tokens": {
+          "change_percent": 3.379,
+          "fresh": 140765,
+          "reuse": 145522
+        }
+      },
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "reuse_passed": 8,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "sequential_rtl",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 0,
+        "reuse_functional_width_warnings": 1
+      },
+      "id": "rtl-chain-terra-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": -23.814,
+          "fresh": 275200,
+          "reuse": 209664
+        },
+        "duration_seconds": {
+          "change_percent": -52.486,
+          "fresh": 97.482,
+          "reuse": 46.318
+        },
+        "input_tokens": {
+          "change_percent": -32.405,
+          "fresh": 334399,
+          "reuse": 226037
+        },
+        "noncached_input_tokens": {
+          "change_percent": -72.342,
+          "fresh": 59199,
+          "reuse": 16373
+        },
+        "output_tokens": {
+          "change_percent": -58.409,
+          "fresh": 4763,
+          "reuse": 1981
+        },
+        "reasoning_output_tokens": {
+          "change_percent": -65.949,
+          "fresh": 2693,
+          "reuse": 917
+        },
+        "total_tokens": {
+          "change_percent": -32.77,
+          "fresh": 339162,
+          "reuse": 228018
+        }
+      },
+      "model": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "sequential_rtl",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 1,
+        "reuse_functional_width_warnings": 1
+      },
+      "id": "rtl-chain-luna-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": -45.216,
+          "fresh": 409344,
+          "reuse": 224256
+        },
+        "duration_seconds": {
+          "change_percent": -65.886,
+          "fresh": 145.788,
+          "reuse": 49.734
+        },
+        "input_tokens": {
+          "change_percent": -46.924,
+          "fresh": 466734,
+          "reuse": 247722
+        },
+        "noncached_input_tokens": {
+          "change_percent": -59.111,
+          "fresh": 57390,
+          "reuse": 23466
+        },
+        "output_tokens": {
+          "change_percent": -68.992,
+          "fresh": 7053,
+          "reuse": 2187
+        },
+        "reasoning_output_tokens": {
+          "change_percent": -79.409,
+          "fresh": 3555,
+          "reuse": 732
+        },
+        "total_tokens": {
+          "change_percent": -47.253,
+          "fresh": 473787,
+          "reuse": 249909
+        }
+      },
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    },
+    {
+      "both_functionally_passed": true,
+      "case_count": 4,
+      "category": "sequential_rtl",
+      "fresh_passed": 4,
+      "fresh_unique_thread_count": 4,
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 0,
+        "reuse_functional_width_warnings": 1
+      },
+      "id": "rtl-chain-sol-medium",
+      "metrics": {
+        "cached_input_tokens": {
+          "change_percent": -46.172,
+          "fresh": 324352,
+          "reuse": 174592
+        },
+        "duration_seconds": {
+          "change_percent": -53.154,
+          "fresh": 119.168,
+          "reuse": 55.825
+        },
+        "input_tokens": {
+          "change_percent": -51.016,
+          "fresh": 416196,
+          "reuse": 203868
+        },
+        "noncached_input_tokens": {
+          "change_percent": -68.124,
+          "fresh": 91844,
+          "reuse": 29276
+        },
+        "output_tokens": {
+          "change_percent": -65.121,
+          "fresh": 4292,
+          "reuse": 1497
+        },
+        "reasoning_output_tokens": {
+          "change_percent": -74.964,
+          "fresh": 2081,
+          "reuse": 521
+        },
+        "total_tokens": {
+          "change_percent": -51.16,
+          "fresh": 420488,
+          "reuse": 205365
+        }
+      },
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "reuse_passed": 4,
+      "reuse_unique_thread_count": 1
+    }
+  ],
+  "report_id": "thread-reuse-pilot-20260719",
+  "schema_version": "oag_thread_reuse_report.v1"
+}

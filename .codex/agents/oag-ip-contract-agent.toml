@@ -1,7 +1,7 @@
 name = "oag-ip-contract-agent"
 description = "Derives per-IP evidence contracts, observables, monitor obligations, and owner routing without static profiles."
 nickname_candidates = ["IP Contract"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 

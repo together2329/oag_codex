@@ -1,0 +1,67 @@
+{
+  "id": "thread-reuse-pilot-20260719",
+  "decision": {
+    "candidate_policy": "bounded_mission_lane_reuse",
+    "default_max_turns": 4,
+    "fresh_reviewer_required": true,
+    "production_default_changed": false,
+    "reason": "Prompt-only work favored reuse for latency but not total tokens. Sequential RTL implementation favored reuse strongly for latency and tokens, while hidden lint showed that an independent fresh quality gate remains necessary."
+  },
+  "experiments": [
+    {
+      "id": "contract-terra-medium",
+      "category": "prompt_only_short",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/terra_medium_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/terra_medium_reuse.json"
+    },
+    {
+      "id": "contract-luna-medium",
+      "category": "prompt_only_short",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/luna_medium_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/luna_medium_reuse.json"
+    },
+    {
+      "id": "contract-sol-medium",
+      "category": "prompt_only_short",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/sol_medium_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/sol_medium_reuse.json"
+    },
+    {
+      "id": "contract-long-terra-medium",
+      "category": "prompt_only_long",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/terra_medium_long_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/terra_medium_long_reuse.json",
+      "fresh_passed_override": 8
+    },
+    {
+      "id": "rtl-chain-terra-medium",
+      "category": "sequential_rtl",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/rtl_terra_fresh_v2.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/rtl_terra_reuse_v2.json",
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 0,
+        "reuse_functional_width_warnings": 1
+      }
+    },
+    {
+      "id": "rtl-chain-luna-medium",
+      "category": "sequential_rtl",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/rtl_luna_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/rtl_luna_reuse.json",
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 1,
+        "reuse_functional_width_warnings": 1
+      }
+    },
+    {
+      "id": "rtl-chain-sol-medium",
+      "category": "sequential_rtl",
+      "fresh": ".codex/evals/runs/thread_reuse_20260719/rtl_sol_fresh.json",
+      "reuse": ".codex/evals/runs/thread_reuse_20260719/rtl_sol_reuse.json",
+      "hidden_quality": {
+        "fresh_functional_width_warnings": 0,
+        "reuse_functional_width_warnings": 1
+      }
+    }
+  ]
+}

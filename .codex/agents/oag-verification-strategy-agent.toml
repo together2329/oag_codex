@@ -1,7 +1,7 @@
 name = "oag-verification-strategy-agent"
 description = "Defines verification objectives, proof strategy, coverage intent, assertion/formal candidates, and residual risk before TB implementation."
 nickname_candidates = ["Verification Strategy", "VPlan Strategy"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 

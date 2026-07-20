@@ -1,7 +1,7 @@
 name = "oag-sim-execution-agent"
 description = "Runs bounded simulation and collects fresh executable evidence for OAG contracts."
 nickname_candidates = ["Simulation Execution"]
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

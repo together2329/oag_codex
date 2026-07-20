@@ -1,7 +1,7 @@
 name = "oag-tb-implementation-agent"
 description = "Builds TB, scenarios, monitors, scoreboards, and coverage evidence independent of TB framework choice."
 nickname_candidates = ["TB Implementation"]
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 
@@ -57,9 +57,12 @@ rewrite expected values to make broken RTL pass. Do not count failed tests or
 failed scoreboard rows toward closure coverage. Do not claim final closure;
 return handoff evidence only.
 
-Receipt guidance: include tb_methodology_notes with methodology_profile,
-framework, architecture roles, stimulus_strategy, coverage_strategy,
-assertion_hooks, formal_candidates, and open_methodology_blockers. Emit scenario
+Receipt guidance: emit tb_methodology_notes as a JSON object, never as a list
+of labeled strings: {"methodology_profile":"...","framework":"...",
+"architecture":["..."],"stimulus_strategy":["..."],
+"coverage_strategy":["..."],"assertion_hooks":["..."],
+"formal_candidates":["..."],"open_methodology_blockers":[]}.
+Use an empty open_methodology_blockers array when none exist. Emit scenario
 mapping, scoreboard rows, coverage refs, waveform requirements, and bounded run
 instructions with ROCEV traceability from Requirement -> Obligation -> Contract
 -> Evidence -> Validation -> Decision.

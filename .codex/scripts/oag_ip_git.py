@@ -170,7 +170,10 @@ def repository_status_paths(ip_dir: Path, project_root: Path) -> tuple[str, list
             continue
         if "R" in status or "C" in status:
             index += 1  # the following NUL field is the original path
-        absolute = (repo_root / Path(raw_path)).resolve()
+        # Git reports the repository entry that changed.  Keep that lexical path:
+        # resolving it would follow an untracked symlink and falsely attribute the
+        # change to the symlink target, which may sit outside a dispatch scope.
+        absolute = repo_root / Path(raw_path)
         try:
             normalized = absolute.relative_to(project_root).as_posix()
         except ValueError:

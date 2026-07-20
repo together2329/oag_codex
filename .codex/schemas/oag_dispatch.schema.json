@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "oag_dispatch.schema.json",
-  "title": "OAG Subagent Dispatch",
+  "title": "OAG Executor Dispatch",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -127,6 +127,30 @@
         "require_source_hashes": {"const": true},
         "repeat_review_policy": {"const": "content_hash_delta_only"}
       }
+    },
+    "execution_actor": {
+      "type": "object",
+      "required": ["schema_version", "kind", "isolation", "resume_limit", "subagents_allowed", "manifest_path"],
+      "properties": {
+        "schema_version": {"const": "oag_execution_actor.v1"},
+        "kind": {"enum": ["worker_thread", "native_subagent"]},
+        "isolation": {"enum": ["fresh_thread", "native_child"]},
+        "resume_limit": {"type": "integer", "minimum": 0, "maximum": 3},
+        "subagents_allowed": {"const": false},
+        "manifest_path": {"type": "string"},
+        "event_log_path": {"type": "string"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"const": "worker_thread"}}},
+          "then": {
+            "properties": {
+              "isolation": {"const": "fresh_thread"},
+              "manifest_path": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      ]
     },
     "may_claim_complete": {
       "const": false

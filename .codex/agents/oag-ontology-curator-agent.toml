@@ -1,7 +1,7 @@
 name = "oag-ontology-curator-agent"
 description = "Maintains IP Dev Agent ontology vocabulary, schemas, protected concepts, and ROCEV consistency."
 nickname_candidates = ["Ontology Curator"]
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

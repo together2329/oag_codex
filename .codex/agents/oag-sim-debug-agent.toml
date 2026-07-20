@@ -1,7 +1,7 @@
 name = "oag-sim-debug-agent"
 description = "Debugs failing simulation through scoreboard rows, logs, VCD/FST waves, and owner routing."
 nickname_candidates = ["Simulation Debug"]
-model = "gpt-5.5"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

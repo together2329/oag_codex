@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Block locked-stage implementation writes that bypass native OAG subagents."""
+"""Block locked-stage implementation writes that bypass dispatched OAG executors."""
 
 from __future__ import annotations
 
@@ -256,6 +256,7 @@ def static_receipt_contract(
         or str(receipt.get("status") or "") not in TERMINAL_RECEIPT_STATUSES
     ):
         errors.append("RECEIPT_FLAGS")
+    errors.extend(item["code"] for item in oag_dispatch_verify.worker_thread_execution_issues(dispatch, receipt))
 
     allowed_write_paths = {
         normalize_candidate(item, ip_dir)
@@ -860,7 +861,7 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
         issues.append(
             issue(
                 "PARENT_WRITE_WITH_ACTIVE_DISPATCH",
-                "Locked implementation/verification artifact changed while an unfinished OAG dispatch owns the same path; wait for the native child receipt or close it as INCONCLUSIVE/BLOCKED.",
+                "Locked implementation/verification artifact changed while an unfinished OAG dispatch owns the same path; wait for the executor receipt or close it as INCONCLUSIVE/BLOCKED.",
                 conflict["path"],
             )
         )
@@ -884,7 +885,7 @@ def check_ip(ip_dir: Path) -> dict[str, Any]:
         issues.append(
             issue(
                 "MAIN_AGENT_WRITE_WITHOUT_SUBAGENT",
-                "Locked implementation/verification artifact changed without a covering native OAG subagent receipt.",
+                "Locked implementation/verification artifact changed without a covering dispatched executor receipt.",
                 path,
             )
         )
@@ -927,6 +928,7 @@ def build_result(
         "ip_dir": project_rel(ip_dir),
         "scope_locked": locked,
         "implementation_changes": changes,
+        "executor_receipts": receipts,
         "subagent_receipts": receipts,
         "diagnostic_receipts": diagnostic_receipts or [],
         "waiver": waiver,
@@ -957,7 +959,7 @@ def print_result(result: dict[str, Any], as_json: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Require native OAG subagent receipts for locked implementation writes.")
+    parser = argparse.ArgumentParser(description="Require dispatched OAG executor receipts for locked implementation writes.")
     parser.add_argument("--ip-dir", action="append", required=True)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)

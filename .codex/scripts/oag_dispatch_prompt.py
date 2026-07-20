@@ -21,6 +21,8 @@ def json_strings(value: JsonValue) -> list[str]:
 def build_prompt_contract(dispatch: JsonObject) -> str:
     budget = dispatch.get("execution_budget") if isinstance(dispatch.get("execution_budget"), dict) else {}
     context = dispatch.get("context_contract") if isinstance(dispatch.get("context_contract"), dict) else {}
+    actor = dispatch.get("execution_actor") if isinstance(dispatch.get("execution_actor"), dict) else {}
+    actor_kind = str(actor.get("kind") or "native_subagent")
     lines = [
         "OAG DISPATCH",
         f"- dispatch_id: {dispatch['dispatch_id']}",
@@ -29,6 +31,9 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
         f"- ip_dir: {dispatch['ip_dir']}",
         f"- stage: {dispatch['stage']}",
         f"- receipt_path: {dispatch['receipt_path']}",
+        f"- execution_kind: {actor_kind}",
+        f"- execution_manifest_path: {actor.get('manifest_path') or '(legacy native subagent)'}",
+        f"- execution_event_log_path: {actor.get('event_log_path') or '(legacy runtime path)'}",
         f"- allowed_write_paths: {', '.join(json_strings(dispatch['allowed_write_paths'])) or '(none)'}",
         f"- allowed_tool_side_effects: {', '.join(json_strings(dispatch['allowed_tool_side_effects'])) or '(none)'}",
         "Execution budget:",
@@ -46,7 +51,7 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
         "- use the dispatch authoring packet and explicit file/hash list as the task context",
         "- do not request or replay the full parent transcript",
         "- repeat review only when the target content hash changed",
-        "Subagent implementation boundary:",
+        "Executor implementation boundary:",
         "- you own only the assigned implementation, verification, or evidence deliverable inside this dispatch",
         "- the parent owns OAG orchestration state: dispatch creation, wavefront claims, barrier decisions, and validation decisions",
         "- Do not create a new dispatch, mutate parent-owned dispatch records, or start replacement work",
@@ -73,6 +78,17 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
         "- if results.xml is written for a setup blocker, classify it as environment blocked, skipped, or error; "
         "do not imply DUT functional failure or scoreboard mismatch",
     ]
+    if actor_kind == "worker_thread":
+        lines.extend(
+            [
+                "Thread-only execution contract:",
+                "- perform this task in the current fresh top-level worker thread",
+                "- do not spawn, delegate to, or communicate with subagents",
+                f"- resume_limit: {actor.get('resume_limit') if actor else 0}",
+                "- preserve the App Server thread_id and execution_manifest_path in the receipt",
+                "- list the execution manifest and event log as generated_side_effects",
+            ]
+        )
     if dispatch.get("wavefront_run_id"):
         lines.extend(
             [
@@ -96,11 +112,15 @@ def build_prompt_contract(dispatch: JsonObject) -> str:
         [
             "Receipt requirements:",
             "- include dispatch_id and dispatch_path exactly as above",
+            "- mirror role_name, registered_id, ip_id, stage, owned_obligations, contracts, and allowed_write_paths exactly from the dispatch",
             "- include wavefront_run_id/task_id when this dispatch belongs to a wavefront task",
             "- list changed_paths and generated_side_effects separately",
+            "- changed_paths, generated_side_effects, evidence_outputs, and all methodology blocker/note collections are JSON arrays of strings",
             "- use HANDOFF_PASS, STATIC_HANDOFF_PASS, RTL_HANDOFF_PASS, FAIL, BLOCKED, or INCONCLUSIVE",
+            "- INCONCLUSIVE is a valid semantic handoff result; it is not a diagnostic receipt and must retain blocker details",
             "- HANDOFF_PASS is only for the assigned deliverable; it does not imply IP closure, canonical simulation evidence, DUT functional PASS, or barrier readiness",
-            "- set may_claim_complete=false",
+            "- dispatch-backed receipts set diagnostic_only=false and may_claim_complete=false",
+            "- worker-thread receipts leave dispatch_verified=false; the runtime sets it true only after deterministic preverification",
             "- end with OAG_EVIDENCE_RECORDED: <relative-path>",
         ]
     )

@@ -1,7 +1,7 @@
 name = "oag-rtl-lint-static-agent"
 description = "Runs and reviews DUT compile, lint, static structure, and RTL facts checks for OAG IP work."
 nickname_candidates = ["RTL Static"]
-model = "gpt-5.5"
+model = "gpt-5.6-terra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 

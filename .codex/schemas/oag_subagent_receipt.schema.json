@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "oag_subagent_receipt.schema.json",
-  "title": "OAG Subagent Receipt",
+  "title": "OAG Executor Receipt",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -54,6 +54,17 @@
       "pattern": "^DISPATCH_[A-Z0-9_]+_[0-9]{8}T[0-9]{6}Z(_[A-F0-9]{8})?$"
     },
     "dispatch_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_kind": {
+      "enum": ["worker_thread", "native_subagent"]
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execution_manifest_path": {
       "type": "string",
       "minLength": 1
     },

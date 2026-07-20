@@ -1,0 +1,43 @@
+{
+  "id": "thread-reuse-rtl-chain-v1",
+  "allow_tools": true,
+  "reference": "The evaluation workspace contains rtl/mctp_rx_context_tracker.sv, four testbenches under tb/, and a Makefile. The tracker contract is: an accepted start on an inactive context publishes expected_seq=seq_i+1 modulo SEQ_W; an in-order continuation is accepted and advances expected_seq; an out-of-order continuation emits a one-cycle seq_error and immediately clears active; explicit abort has priority over every simultaneous input and clears active without accept or seq_error; start is ignored while active; after exactly TIMEOUT_CYCLES consecutive active cycles without an accepted continuation or abort, timeout_abort pulses for one cycle and active clears. Reset clears all state and event pulses. The implementation must remain parameterized for SEQ_W and TIMEOUT_CYCLES. Do not change tests or the Makefile. Change only rtl/mctp_rx_context_tracker.sv.",
+  "cases": [
+    {
+      "id": "basic_sequence_repair",
+      "instruction": "Inspect the RTL, repair start sequencing and sequence-error cleanup, and run make test_basic. Do not report success unless it passes. Return result=pass and check=basic_sequence.",
+      "expected": {
+        "result": "pass",
+        "check": "basic_sequence"
+      },
+      "check_command": ["make", "test_basic"]
+    },
+    {
+      "id": "timeout_repair",
+      "instruction": "Implement the exact idle timeout contract without breaking the basic sequence behavior. Run make test_basic and make test_timeout. Return result=pass and check=timeout.",
+      "expected": {
+        "result": "pass",
+        "check": "timeout"
+      },
+      "check_command": ["make", "test_timeout"]
+    },
+    {
+      "id": "precedence_repair",
+      "instruction": "Enforce abort priority and the active-context start rule, preserving prior fixes. Run make test_precedence. Return result=pass and check=precedence.",
+      "expected": {
+        "result": "pass",
+        "check": "precedence"
+      },
+      "check_command": ["make", "test_precedence"]
+    },
+    {
+      "id": "parameter_regression",
+      "instruction": "Audit the parameter arithmetic and sequence wrap behavior, make any necessary RTL-only correction, and run the full make test regression. Return result=pass and check=full_regression.",
+      "expected": {
+        "result": "pass",
+        "check": "full_regression"
+      },
+      "check_command": ["make", "test"]
+    }
+  ]
+}

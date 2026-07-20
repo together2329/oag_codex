@@ -2,3 +2,4 @@ __pycache__/
 *.py[cod]
 .codex/.cache/
 .codex/runs/
+.codex/evals/runs/

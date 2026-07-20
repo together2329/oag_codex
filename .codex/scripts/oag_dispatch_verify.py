@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -608,6 +609,82 @@ def valid_dispatch_integrity(payload: JsonObject) -> bool:
         and protected_fields == expected_fields
         and str(integrity.get("scope_hash") or "") == dispatch_scope_hash(payload, protected_fields)
     )
+
+
+def execution_kind(dispatch: JsonObject) -> str:
+    actor = dispatch.get("execution_actor") if isinstance(dispatch.get("execution_actor"), dict) else {}
+    return str(actor.get("kind") or "native_subagent")
+
+
+def worker_thread_execution_issues(dispatch: JsonObject, receipt: JsonObject) -> list[Issue]:
+    actor = dispatch.get("execution_actor") if isinstance(dispatch.get("execution_actor"), dict) else {}
+    if execution_kind(dispatch) != "worker_thread":
+        return []
+
+    issues: list[Issue] = []
+    if str(receipt.get("execution_kind") or "") != "worker_thread":
+        issues.append(issue("RECEIPT_EXECUTION_KIND", "worker-thread dispatch receipt must set execution_kind=worker_thread"))
+    thread_id = str(receipt.get("thread_id") or "")
+    if not thread_id:
+        issues.append(issue("RECEIPT_THREAD_ID", "worker-thread dispatch receipt must include thread_id"))
+
+    manifest_ref = str(actor.get("manifest_path") or "")
+    receipt_manifest_ref = str(receipt.get("execution_manifest_path") or "")
+    if not manifest_ref or not receipt_manifest_ref:
+        issues.append(issue("THREAD_MANIFEST_REFERENCE", "worker-thread dispatch and receipt must reference an execution manifest"))
+        return issues
+    try:
+        if normalize_rel(manifest_ref) != normalize_rel(receipt_manifest_ref):
+            issues.append(issue("THREAD_MANIFEST_REFERENCE", "receipt execution_manifest_path does not match dispatch execution_actor.manifest_path"))
+            return issues
+        manifest_path = resolve_project_path(manifest_ref)
+    except (OSError, ValueError) as exc:
+        issues.append(issue("THREAD_MANIFEST_PATH", f"worker-thread execution manifest path is unsafe: {exc}"))
+        return issues
+    manifest = load_json_object(manifest_path, "thread execution manifest", "THREAD_MANIFEST_LOAD", issues)
+    if not manifest:
+        return issues
+    append_schema_issues(issues, "oag_thread_execution.schema.json", manifest, "THREAD_MANIFEST_SCHEMA")
+    if str(manifest.get("dispatch_id") or "") != str(dispatch.get("dispatch_id") or ""):
+        issues.append(issue("THREAD_MANIFEST_DISPATCH_ID", "thread execution manifest dispatch_id does not match dispatch"))
+    manifest_dispatch_path = str(manifest.get("dispatch_path") or "")
+    if not manifest_dispatch_path or normalize_rel(manifest_dispatch_path) != normalize_rel(str(dispatch.get("dispatch_path") or "")):
+        issues.append(issue("THREAD_MANIFEST_DISPATCH_PATH", "thread execution manifest dispatch_path does not match dispatch"))
+    if not thread_id or str(manifest.get("thread_id") or "") != thread_id:
+        issues.append(issue("THREAD_MANIFEST_THREAD_ID", "thread execution manifest thread_id does not match receipt"))
+    current_manifest_env = os.environ.get("OAG_THREAD_EXECUTION_MANIFEST", "")
+    current_dispatch_id = os.environ.get("OAG_DISPATCH_ID", "")
+    try:
+        active_current_execution = bool(
+            current_manifest_env
+            and current_dispatch_id == str(dispatch.get("dispatch_id") or "")
+            and resolve_project_path(current_manifest_env) == manifest_path
+            and str(manifest.get("status") or "") == "running"
+        )
+    except (OSError, ValueError):
+        active_current_execution = False
+    if str(manifest.get("status") or "") != "completed" and not active_current_execution:
+        issues.append(issue("THREAD_EXECUTION_STATUS", "worker-thread execution manifest must have status=completed"))
+    if manifest.get("budget_exceeded") is not False:
+        issues.append(issue("THREAD_EXECUTION_BUDGET", "budget-exceeded worker-thread execution cannot cover writes"))
+    if int(manifest.get("subagent_activity_count") or 0) != 0:
+        issues.append(issue("THREAD_EXECUTION_SUBAGENT_ACTIVITY", "thread-only execution recorded subagent activity"))
+    resume_limit = actor.get("resume_limit") if type(actor.get("resume_limit")) is int else 0
+    resume_count = manifest.get("resume_count") if type(manifest.get("resume_count")) is int else resume_limit + 1
+    if resume_count > resume_limit:
+        issues.append(issue("THREAD_EXECUTION_RESUME_LIMIT", "worker-thread execution exceeded dispatch resume_limit"))
+
+    event_ref = str(manifest.get("event_log_path") or "")
+    expected_event_hash = str(manifest.get("event_log_sha256") or "")
+    if event_ref and expected_event_hash.startswith("sha256:"):
+        try:
+            event_path = resolve_project_path(event_ref)
+            observed_event_hash = f"sha256:{sha256(event_path)}" if event_path.is_file() else ""
+        except (OSError, ValueError):
+            observed_event_hash = ""
+        if observed_event_hash != expected_event_hash and not active_current_execution:
+            issues.append(issue("THREAD_EVENT_LOG_HASH", "thread execution event log is missing or does not match its recorded hash"))
+    return issues
 
 
 def dispatch_scope_matches_task(payload: JsonObject, task: JsonObject, ip_dir: Path) -> bool:
@@ -1556,11 +1633,11 @@ def append_receipt_schema_issues(
     issues: list[Issue],
     receipt: JsonObject,
     *,
-    allow_interim_current_repair: bool,
+    allow_unverified_receipt: bool,
 ) -> None:
     for item in schema_issues("oag_subagent_receipt.schema.json", receipt):
         if (
-            allow_interim_current_repair
+            allow_unverified_receipt
             and item.get("code") == "CONST"
             and item.get("path") == "$.dispatch_verified"
             and receipt.get("dispatch_verified") is False
@@ -1658,6 +1735,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
     dispatch = load_json_object(dispatch_path, "dispatch", "DISPATCH_LOAD", issues)
     receipt = load_json_object(receipt_path, "receipt", "RECEIPT_LOAD", issues)
     allow_interim_current_repair = False
+    allow_worker_receipt_preverify = False
     if (
         dispatch
         and receipt
@@ -1668,6 +1746,16 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
             allow_interim_current_repair = current_repair_receipt_anchor(dispatch, receipt_path)
         except (OSError, RuntimeError, ValueError):
             allow_interim_current_repair = False
+    if (
+        dispatch
+        and receipt
+        and not getattr(args, "schema_only", False)
+        and getattr(args, "allow_worker_receipt_preverify", False) is True
+        and execution_kind(dispatch) == "worker_thread"
+        and receipt.get("dispatch_verified") is False
+    ):
+        allow_worker_receipt_preverify = True
+    allow_unverified_receipt = allow_interim_current_repair or allow_worker_receipt_preverify
 
     if dispatch:
         append_schema_issues(issues, "oag_dispatch.schema.json", dispatch, "DISPATCH_SCHEMA")
@@ -1675,7 +1763,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
         append_receipt_schema_issues(
             issues,
             receipt,
-            allow_interim_current_repair=allow_interim_current_repair,
+            allow_unverified_receipt=allow_unverified_receipt,
         )
 
     if getattr(args, "schema_only", False):
@@ -1727,8 +1815,9 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
             issues.append(issue("COMPLETION_CLAIM", "dispatch and receipt must keep may_claim_complete=false"))
         if receipt.get("diagnostic_only") is not False:
             issues.append(issue("RECEIPT_DIAGNOSTIC_ONLY", "dispatch-backed handoff receipt must set diagnostic_only=false"))
-        if receipt.get("dispatch_verified") is not True and not allow_interim_current_repair:
+        if receipt.get("dispatch_verified") is not True and not allow_unverified_receipt:
             issues.append(issue("RECEIPT_DISPATCH_VERIFIED", "dispatch-backed handoff receipt must set dispatch_verified=true"))
+        issues.extend(worker_thread_execution_issues(dispatch, receipt))
 
         wavefront_dispatch = dispatch_has_wavefront_metadata(dispatch)
         if wavefront_dispatch:
@@ -1899,6 +1988,7 @@ def verify_dispatch(args: argparse.Namespace) -> JsonObject:
         "receipt_path": str(receipt_path),
         "dispatch_id": dispatch.get("dispatch_id", ""),
         "receipt_status": receipt.get("status", ""),
+        "worker_receipt_preverify": allow_worker_receipt_preverify,
         "owned_changed_paths": owned,
         "generated_side_effects": generated,
         "actual_status_paths": current_paths,

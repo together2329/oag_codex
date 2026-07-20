@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +64,9 @@ def main() -> int:
                 "status": "HANDOFF_PASS",
                 "task_id": "task-evidence",
                 "wavefront_run_id": "RUN_1",
+                "execution_kind": "worker_thread",
+                "thread_id": "thread-test",
+                "execution_manifest_path": "ip/knowledge/executions/d.thread.json",
                 "output_hashes": {"ip/report.json": "sha256:" + "a" * 64},
             },
         )
@@ -75,6 +79,8 @@ def main() -> int:
         assert metadata["model_tier"] == "mechanical"
         assert metadata["max_total_tokens"] == 5_000_000
         assert metadata["fork_turns"] == "none"
+        assert metadata["execution_kind"] == "worker_thread"
+        assert metadata["thread_id"] == "thread-test"
         assert metadata["content_fingerprint"].startswith("sha256:")
         assert metadata["review_target_fingerprint"].startswith("sha256:")
 
@@ -99,7 +105,24 @@ def main() -> int:
         assert "oag-evidence-validator" in summary["by_role"]
         assert "RUN_1" in summary["by_mission"]
 
-    print('{"status":"pass","tests":11,"suite":"oag_telemetry_attribution"}')
+        correlation_log = root / "oag-executions.jsonl"
+        with mock.patch.object(oag_telemetry, "CORRELATION_LOG", correlation_log), mock.patch.dict(
+            "os.environ",
+            {
+                "OAG_EXECUTION_KIND": "worker_thread",
+                "OAG_DISPATCH_ID": "DISPATCH_TEST",
+                "OAG_DISPATCH_PATH": "ip/knowledge/dispatches/d.json",
+                "OAG_THREAD_EXECUTION_MANIFEST": "ip/knowledge/executions/d.thread.json",
+            },
+            clear=False,
+        ):
+            oag_telemetry.append_execution_event({"cwd": str(root), "session_id": "thread-test"}, "session_start")
+        event = json.loads(correlation_log.read_text(encoding="utf-8"))
+        assert event["execution_kind"] == "worker_thread"
+        assert event["dispatch_id"] == "DISPATCH_TEST"
+        assert event["execution_manifest_path"].endswith("d.thread.json")
+
+    print('{"status":"pass","tests":16,"suite":"oag_telemetry_attribution"}')
     return 0
 
 

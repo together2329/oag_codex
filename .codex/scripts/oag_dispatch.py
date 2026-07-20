@@ -23,10 +23,10 @@ def print_result(result: JsonObject, as_json: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Create or verify OAG native-subagent dispatch records.")
+    parser = argparse.ArgumentParser(description="Create or verify OAG bounded-executor dispatch records.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    create = sub.add_parser("create", help="Create a dispatch record before native subagent spawn.")
+    create = sub.add_parser("create", help="Create a dispatch record before worker execution.")
     create.add_argument("--ip-dir", required=True)
     create.add_argument("--agent-type", required=True)
     create.add_argument("--role-kind", choices=["core", "custom"])
@@ -43,8 +43,16 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--ownership-mode", choices=["none", "exclusive_file", "integration_owner"])
     create.add_argument("--complexity", choices=["simple", "medium", "complex"])
     create.add_argument("--max-total-tokens", type=int)
+    create.add_argument("--warning-total-tokens", type=int)
     create.add_argument("--max-review-attempts", type=int, default=1)
     create.add_argument("--model-tier", choices=["mechanical", "balanced", "reasoning"])
+    create.add_argument(
+        "--execution-kind",
+        choices=["worker_thread", "native_subagent"],
+        default="worker_thread",
+        help="Execution actor. New work defaults to a fresh App Server worker thread.",
+    )
+    create.add_argument("--resume-limit", type=int, default=1)
     create.add_argument("--json", action="store_true")
 
     verify = sub.add_parser("verify", help="Verify a dispatch against a child receipt and actual path delta.")
